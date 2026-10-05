@@ -1,0 +1,20 @@
+# Build output
+/bin/
+/auth-api
+/auth-api.exe
+*.test
+*.out
+coverage.txt
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# IDE and operating system
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
