@@ -72,7 +72,9 @@ docker run --rm -p 8081:8081 csp-auth-api
 
 The service stops gracefully on `SIGINT` and `SIGTERM`. In the platform, `csp-infra` includes `deploy/compose.yml`,
 which exposes the port on the `platform` network without publishing it: only the gateway reaches the service.
-Copy `.env.example` to `.env` for local values and never commit `.env`.
+Copy `.env.example` to `.env` for local values and never commit `.env`. The file lists first the variables the
+service reads today (`PORT` and the `APP_AUTH_HTTP_*` timeouts) and then, apart, the ones reserved for later features
+(database, Redis, JWT, expiries, bcrypt), which the service does not read yet.
 
 ## Branching
 
