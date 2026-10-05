@@ -1,0 +1,19 @@
+# This service only. csp-infra includes this file to compose the platform.
+# The variables of the database, Redis and the JWT keys are added by the pull requests that make the service read them.
+name: csp-auth-api
+
+services:
+  auth-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      PORT: "8081"
+    # expose, not ports: only the gateway is reachable from the host.
+    expose: ["8081"]
+    networks: [platform]
+
+networks:
+  platform:
+    name: platform
+    external: true
