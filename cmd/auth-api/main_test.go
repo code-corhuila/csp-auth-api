@@ -49,7 +49,8 @@ func TestServeAnswersHealthAndStopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- serve(ctx, discardLogger(), testConfig(t), listener) }()
+	cfg := testConfig(t)
+	go func() { done <- serve(ctx, discardLogger(), cfg, listener) }()
 
 	url := "http://" + listener.Addr().String() + "/api/v1/auth/health"
 	resp, err := http.Get(url)
