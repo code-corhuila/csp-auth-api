@@ -104,3 +104,16 @@ func TestRolesReturnsACopy(t *testing.T) {
 		t.Error("changing the returned slice must not change the user")
 	}
 }
+
+func TestUserExposesItsIdentity(t *testing.T) {
+	user := newTestUser(t, RoleClient)
+	if got := user.ID(); got != "550e8400-e29b-41d4-a716-446655440000" {
+		t.Errorf("ID() = %q, want the id given to NewUser", got)
+	}
+	if got := user.Email().String(); got != "dev@example.com" {
+		t.Errorf("Email() = %q, want dev@example.com", got)
+	}
+	if got := user.PasswordHash(); got != validHash {
+		t.Errorf("PasswordHash() = %q, want the hash given to NewUser", got)
+	}
+}

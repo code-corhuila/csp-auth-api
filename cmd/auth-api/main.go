@@ -19,14 +19,16 @@ import (
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	if err := run(logger); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx, logger, os.LookupEnv); err != nil {
 		logger.Error("auth-api stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger) error {
-	cfg, err := config.Load(os.LookupEnv)
+func run(ctx context.Context, logger *slog.Logger, lookup config.Lookup) error {
+	cfg, err := config.Load(lookup)
 	if err != nil {
 		return err
 	}
@@ -39,9 +41,6 @@ func run(logger *slog.Logger) error {
 		WriteTimeout:      cfg.WriteTimeout,
 		IdleTimeout:       cfg.IdleTimeout,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	failed := make(chan error, 1)
 	go func() {
