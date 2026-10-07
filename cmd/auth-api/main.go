@@ -33,8 +33,17 @@ func run(ctx context.Context, logger *slog.Logger, lookup config.Lookup) error {
 		return err
 	}
 
+	listener, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(cfg.Port)))
+	if err != nil {
+		return err
+	}
+	return serve(ctx, logger, cfg, listener)
+}
+
+// serve answers on listener until ctx is cancelled or the server fails. Taking the listener
+// lets a test bind its own port instead of guessing a free one.
+func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, listener net.Listener) error {
 	server := &http.Server{
-		Addr:              net.JoinHostPort("", strconv.Itoa(cfg.Port)),
 		Handler:           httpapi.NewHandler(),
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
@@ -44,8 +53,8 @@ func run(ctx context.Context, logger *slog.Logger, lookup config.Lookup) error {
 
 	failed := make(chan error, 1)
 	go func() {
-		logger.Info("auth-api listening", "addr", server.Addr)
-		failed <- server.ListenAndServe()
+		logger.Info("auth-api listening", "addr", listener.Addr().String())
+		failed <- server.Serve(listener)
 	}()
 
 	select {
