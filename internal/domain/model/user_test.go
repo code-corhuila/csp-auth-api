@@ -126,3 +126,42 @@ func TestUserExposesItsIdentity(t *testing.T) {
 		t.Errorf("PasswordHash() = %q, want the hash given to NewUser", got)
 	}
 }
+
+func TestRestoreUserKeepsTheStoredStatusAndContactData(t *testing.T) {
+	email, _ := NewEmail("dev@example.com")
+	name, _ := NewName("Ana Pérez")
+
+	user, err := RestoreUser("user-1", name, email, validHash, Phone{}, Address{}, []Role{RoleClient, RoleClient}, UserLocked)
+
+	if err != nil {
+		t.Fatalf("RestoreUser() error = %v", err)
+	}
+	if user.Status() != UserLocked || user.EnsureCanAuthenticate() != ErrUserLocked {
+		t.Errorf("status = %v, want LOCKED", user.Status())
+	}
+	if user.Phone().String() != "" || len(user.Roles()) != 1 {
+		t.Errorf("phone = %q roles = %v, want empty phone and one role", user.Phone(), user.Roles())
+	}
+}
+
+func TestRestoreUserKeepsTheInvariants(t *testing.T) {
+	email, _ := NewEmail("dev@example.com")
+	name, _ := NewName("Ana Pérez")
+	cases := map[string]struct {
+		id, hash string
+		roles    []Role
+		status   UserStatus
+		want     error
+	}{
+		"empty id":       {"", validHash, []Role{RoleClient}, UserActive, ErrInvalidUserID},
+		"plain password": {"u", "Secret123", []Role{RoleClient}, UserActive, ErrInvalidPasswordHash},
+		"no roles":       {"u", validHash, nil, UserActive, ErrNoRoles},
+		"unknown role":   {"u", validHash, []Role{"ROOT"}, UserActive, ErrUnknownRole},
+		"unknown status": {"u", validHash, []Role{RoleClient}, "DELETED", ErrInvalidUserStatus},
+	}
+	for name_, c := range cases {
+		if _, err := RestoreUser(c.id, name, email, c.hash, Phone{}, Address{}, c.roles, c.status); !errors.Is(err, c.want) {
+			t.Errorf("%s: error = %v, want %v", name_, err, c.want)
+		}
+	}
+}

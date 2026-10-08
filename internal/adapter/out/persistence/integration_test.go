@@ -254,3 +254,78 @@ func TestOutboxPayloadHasTheEnvelopeAndNoContactData(t *testing.T) {
 		t.Errorf("cleanup of the outbox row failed: %v", err)
 	}
 }
+
+func TestFindByEmailLoadsTheUserWithItsRolesAndContactData(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	user := newUser(t, uniqueEmail(t))
+	if err := f.register(t, ctx, user); err != nil {
+		t.Fatalf("register error = %v", err)
+	}
+	if _, err := f.pool.Exec(ctx, `INSERT INTO auth.user_role (user_id, role_id) SELECT $1, id FROM auth.role WHERE name = 'ADMIN'`, user.ID()); err != nil {
+		t.Fatalf("grant ADMIN error = %v", err)
+	}
+
+	found, err := f.users.FindByEmail(ctx, user.Email())
+
+	if err != nil {
+		t.Fatalf("FindByEmail() error = %v", err)
+	}
+	if found.ID() != user.ID() || found.Email() != user.Email() || found.Name().String() != "Ana Perez" || found.PasswordHash() != bcryptHash {
+		t.Errorf("found = %q %q %q, want the stored user", found.ID(), found.Email(), found.Name())
+	}
+	if found.Phone().String() != "+573001234567" || found.Address().String() != "Calle 1 # 2-3" || found.Status() != model.UserActive {
+		t.Errorf("contact data or status not loaded: %q %q %v", found.Phone(), found.Address(), found.Status())
+	}
+	if !found.HasRole(model.RoleClient) || !found.HasRole(model.RoleAdmin) || len(found.Roles()) != 2 {
+		t.Errorf("roles = %v, want CLIENT and ADMIN", found.Roles())
+	}
+}
+
+func TestFindByEmailIsCaseInsensitiveThroughTheEmailValueObject(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	user := newUser(t, uniqueEmail(t))
+	if err := f.register(t, ctx, user); err != nil {
+		t.Fatalf("register error = %v", err)
+	}
+	upper, err := model.NewEmail(strings.ToUpper(user.Email().String()))
+	if err != nil {
+		t.Fatalf("NewEmail() error = %v", err)
+	}
+
+	found, err := f.users.FindByEmail(ctx, upper)
+
+	if err != nil || found.ID() != user.ID() {
+		t.Errorf("FindByEmail(upper) = %v, %v, want the registered user", found, err)
+	}
+}
+
+func TestFindByEmailReportsAnUnknownEmailAsNotFound(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	email, _ := model.NewEmail(uniqueEmail(t))
+
+	found, err := f.users.FindByEmail(ctx, email)
+
+	if !errors.Is(err, model.ErrUserNotFound) || found != nil {
+		t.Errorf("FindByEmail() = %v, %v, want nil and model.ErrUserNotFound", found, err)
+	}
+}
+
+func TestFindByEmailLoadsALockedUserWithoutContactData(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	user := newUser(t, uniqueEmail(t))
+	if err := f.register(t, ctx, user); err != nil {
+		t.Fatalf("register error = %v", err)
+	}
+	if _, err := f.pool.Exec(ctx, `UPDATE auth.app_user SET status = 'LOCKED', phone = NULL, address = NULL WHERE id = $1`, user.ID()); err != nil {
+		t.Fatalf("update error = %v", err)
+	}
+
+	found, err := f.users.FindByEmail(ctx, user.Email())
+
+	if err != nil {
+		t.Fatalf("FindByEmail() error = %v", err)
+	}
+	if found.Status() != model.UserLocked || found.Phone().String() != "" || found.Address().String() != "" {
+		t.Errorf("status = %v phone = %q address = %q, want LOCKED without contact data", found.Status(), found.Phone(), found.Address())
+	}
+}

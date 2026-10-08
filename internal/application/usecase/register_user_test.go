@@ -31,6 +31,10 @@ func (r *fakeRepository) ExistsByEmail(_ context.Context, email model.Email) (bo
 	return r.taken[email.String()], r.existsErr
 }
 
+func (r *fakeRepository) FindByEmail(context.Context, model.Email) (*model.User, error) {
+	return nil, model.ErrUserNotFound
+}
+
 func (r *fakeRepository) Save(_ context.Context, user *model.User) error {
 	r.journal.record("save")
 	if r.saveErr != nil {
@@ -64,6 +68,8 @@ func (h *fakeHasher) Hash(password model.Password) (string, error) {
 	h.hashed = append(h.hashed, password.Reveal())
 	return hashedPassword, h.err
 }
+
+func (h *fakeHasher) Verify(string, string) bool { return false }
 
 type fakeIDs struct{ next []string }
 
