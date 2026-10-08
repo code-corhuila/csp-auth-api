@@ -9,9 +9,10 @@ import (
 func TestNewPasswordAcceptsPolicyCompliantValues(t *testing.T) {
 	cases := map[string]string{
 		"minimum length":         "Abcdef12",
-		"maximum length":         "A1" + strings.Repeat("b", 98),
+		"72 bytes":               "A1" + strings.Repeat("b", 70),
 		"with symbols":           "Secret123!",
 		"multibyte counts runes": "Ñandú123",
+		"multibyte at 72 bytes":  "A1" + strings.Repeat("ñ", 35),
 	}
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -28,12 +29,14 @@ func TestNewPasswordAcceptsPolicyCompliantValues(t *testing.T) {
 
 func TestNewPasswordRejectsWeakValues(t *testing.T) {
 	cases := map[string]string{
-		"empty":        "",
-		"too short":    "Abcde12",
-		"too long":     "A1" + strings.Repeat("b", 99),
-		"no uppercase": "abcdefg1",
-		"no digit":     "Abcdefgh",
-		"only symbols": "!!!!!!!!",
+		"empty":                          "",
+		"too short":                      "Abcde12",
+		"73 bytes":                       "A1" + strings.Repeat("b", 71),
+		"73 bytes of multibyte":          "A1" + strings.Repeat("ñ", 35) + "b",
+		"under 8 chars but over 8 bytes": "Ññ1ñññ",
+		"no uppercase":                   "abcdefg1",
+		"no digit":                       "Abcdefgh",
+		"only symbols":                   "!!!!!!!!",
 	}
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {
