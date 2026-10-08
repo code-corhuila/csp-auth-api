@@ -97,3 +97,23 @@ func TestIsDuplicateEmailOnlyMatchesTheEmailIndex(t *testing.T) {
 		})
 	}
 }
+
+func TestIsDuplicateRefreshTokenHashOnlyMatchesItsUniqueIndex(t *testing.T) {
+	cases := map[string]struct {
+		err  error
+		want bool
+	}{
+		"hash index":         {&pgconn.PgError{Code: "23505", ConstraintName: "uk_refresh_token_token_hash"}, true},
+		"primary key":        {&pgconn.PgError{Code: "23505", ConstraintName: "pk_refresh_token"}, false},
+		"foreign key":        {&pgconn.PgError{Code: "23503", ConstraintName: "fk_refresh_token_app_user"}, false},
+		"not a postgres err": {errors.New("boom"), false},
+		"no error":           {nil, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := isDuplicateRefreshTokenHash(tc.err); got != tc.want {
+				t.Errorf("isDuplicateRefreshTokenHash() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
