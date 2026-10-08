@@ -118,12 +118,12 @@ func loadDatabase(lookup Lookup, cfg *Config) error {
 func loadTokens(lookup Lookup, cfg *Config) error {
 	cfg.JWTPrivateKey, _ = lookup("APP_AUTH_JWT_PRIVATE_KEY")
 	cfg.JWTPrivateKeyFile, _ = lookup("APP_AUTH_JWT_PRIVATE_KEY_FILE")
-	ttl, err := durationValue(lookup, "APP_AUTH_JWT_EXPIRY", maxAccessTokenTTL)
+	ttl, err := secondsValue(lookup, "APP_AUTH_JWT_EXPIRY", maxAccessTokenTTL)
 	if err != nil {
 		return err
 	}
 	if ttl > maxAccessTokenTTL {
-		return fmt.Errorf("APP_AUTH_JWT_EXPIRY %s exceeds the maximum of %s", ttl, maxAccessTokenTTL)
+		return fmt.Errorf("APP_AUTH_JWT_EXPIRY %d exceeds the maximum of %d seconds", int(ttl.Seconds()), int(maxAccessTokenTTL.Seconds()))
 	}
 	cfg.AccessTokenTTL = ttl
 	cfg.RefreshTokenTTL, err = secondsValue(lookup, "APP_AUTH_REFRESH_TOKEN_EXPIRY", defaultRefreshTokenTTL)
