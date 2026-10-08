@@ -21,4 +21,7 @@ var (
 	ErrInvalidRefreshToken    = errors.New("refresh token needs an id, an opaque value and a positive lifetime")
 	ErrRefreshTokenNotFound   = errors.New("refresh token does not exist")
 	ErrRefreshTokenDuplicated = errors.New("a refresh token with this digest already exists")
+	ErrInvalidIdempotencyKey  = errors.New("idempotency key must have between 8 and 128 characters")
+	ErrIdempotencyKeyTaken    = errors.New("an idempotency key with this value already exists")
+	ErrIdempotencyKeyConflict = errors.New("the idempotency key was already used with a different request")
 )

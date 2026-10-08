@@ -3,7 +3,6 @@ package usecase
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/in"
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/out"
@@ -21,18 +20,16 @@ const absentUserHash = "$2a$12$kWQob4IFYPEufI1r3647A.zx0gCb1jFQiI8uIA3XFVz5o88kV
 
 // LoginUser implements in.LoginUser (HU-AUTH-002).
 type LoginUser struct {
-	users    out.UserRepository
-	hasher   out.PasswordHasher
-	tokens   out.TokenIssuer
-	sessions in.IssueRefreshToken
-	clock    out.Clock
+	users   out.UserRepository
+	hasher  out.PasswordHasher
+	session sessionIssuer
 }
 
 var _ in.LoginUser = (*LoginUser)(nil)
 
 // NewLoginUser wires the use case with the ports it needs.
 func NewLoginUser(users out.UserRepository, hasher out.PasswordHasher, tokens out.TokenIssuer, sessions in.IssueRefreshToken, clock out.Clock) *LoginUser {
-	return &LoginUser{users: users, hasher: hasher, tokens: tokens, sessions: sessions, clock: clock}
+	return &LoginUser{users: users, hasher: hasher, session: sessionIssuer{tokens: tokens, sessions: sessions, clock: clock}}
 }
 
 // Login checks the credentials and issues an access token and a refresh token.
@@ -46,24 +43,7 @@ func (l *LoginUser) Login(ctx context.Context, command in.LoginUserCommand) (in.
 	if err != nil {
 		return in.LoginUserResult{}, err
 	}
-	claims, err := model.NewAccessClaims(user.ID(), user.Roles())
-	if err != nil {
-		return in.LoginUserResult{}, err
-	}
-	access, err := l.tokens.IssueAccessToken(claims)
-	if err != nil {
-		return in.LoginUserResult{}, err
-	}
-	refresh, err := l.sessions.Issue(ctx, in.IssueRefreshTokenCommand{UserID: user.ID(), UserAgent: boundUserAgent(command.UserAgent)})
-	if err != nil {
-		return in.LoginUserResult{}, err
-	}
-	return in.LoginUserResult{
-		AccessToken:  access.Value,
-		RefreshToken: refresh.Token,
-		ExpiresIn:    int(access.ExpiresAt.Sub(l.clock.Now()) / time.Second),
-		User:         summarize(user, claims),
-	}, nil
+	return l.session.open(ctx, user, command.UserAgent)
 }
 
 func (l *LoginUser) authenticate(ctx context.Context, command in.LoginUserCommand) (*model.User, error) {
