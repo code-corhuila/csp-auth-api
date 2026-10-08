@@ -30,3 +30,47 @@ jobs:
       - run: go vet ./...
       - run: go build ./...
       - run: go test ./...
+
+  integration-tests:
+    # The PostgreSQL adapters run against the real schema: the migrations of csp-auth-db
+    # (develop) are applied to an empty database, the same way its own db-ci.yml does.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: csp
+          POSTGRES_USER: ci_admin
+          POSTGRES_PASSWORD: ci-only
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci_admin -d csp"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      PGPASSWORD: ci-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: code-corhuila/csp-auth-db
+          ref: develop
+          path: csp-auth-db
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Apply the csp-auth-db migrations
+        run: |
+          # csp-infra-postgres creates the login users before any executor runs (Annex J.5.5).
+          psql -v ON_ERROR_STOP=1 -h localhost -U ci_admin -d csp \
+            -c "CREATE ROLE auth_app LOGIN PASSWORD 'ci-only'; CREATE ROLE worker_app LOGIN PASSWORD 'ci-only';"
+          docker run --rm --network host -v "$PWD/csp-auth-db:/workspace:ro" \
+            -e FLYWAY_URL=jdbc:postgresql://localhost:5432/csp \
+            -e FLYWAY_USER=ci_admin -e FLYWAY_PASSWORD=ci-only \
+            flyway/flyway:11.20 -workingDirectory=/workspace -configFiles=flyway.toml migrate
+      - name: Integration tests
+        env:
+          AUTH_TEST_DATABASE_URL: postgres://auth_app:ci-only@localhost:5432/csp
+          AUTH_TEST_OUTBOX_READER_URL: postgres://worker_app:ci-only@localhost:5432/csp
+        run: go test -tags integration ./...
