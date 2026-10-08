@@ -13,6 +13,8 @@ type UserRepository interface {
 	ExistsByEmail(ctx context.Context, email model.Email) (bool, error)
 	// FindByEmail returns the active account that uses email with its roles, or model.ErrUserNotFound.
 	FindByEmail(ctx context.Context, email model.Email) (*model.User, error)
+	// FindByID returns the active account with that id and its roles, or model.ErrUserNotFound.
+	FindByID(ctx context.Context, id string) (*model.User, error)
 	Save(ctx context.Context, user *model.User) error
 }
 
