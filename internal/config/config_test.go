@@ -112,15 +112,15 @@ func TestLoadReadsTheTokenSettings(t *testing.T) {
 	}
 	cfg, err = Load(lookupFrom(map[string]string{
 		"APP_AUTH_JWT_PRIVATE_KEY_FILE": "/run/secrets/jwt.pem",
-		"APP_AUTH_JWT_EXPIRY":           "30m",
+		"APP_AUTH_JWT_EXPIRY":           "1800",
 	}))
 	if err != nil || cfg.JWTPrivateKeyFile != "/run/secrets/jwt.pem" || cfg.AccessTokenTTL != 30*time.Minute {
 		t.Fatalf("cfg = %+v, err = %v", cfg, err)
 	}
 }
 
-func TestLoadRejectsAnAccessTokenLifetimeOverOneHour(t *testing.T) {
-	for _, value := range []string{"61m", "soon", "0s"} {
+func TestLoadRejectsAnAccessTokenLifetimeThatIsNotAPositiveNumberOfSecondsUpToOneHour(t *testing.T) {
+	for _, value := range []string{"3601", "1h", "soon", "0", "-5", "1.5", "9999999999999"} {
 		if _, err := Load(lookupFrom(map[string]string{"APP_AUTH_JWT_EXPIRY": value})); err == nil {
 			t.Errorf("APP_AUTH_JWT_EXPIRY=%s: Load() error = nil", value)
 		}
