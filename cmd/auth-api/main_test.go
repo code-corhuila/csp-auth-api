@@ -2,11 +2,16 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
@@ -88,5 +93,39 @@ func TestRunFailsWhenThePortIsTaken(t *testing.T) {
 	var opErr *net.OpError
 	if !errors.As(err, &opErr) || opErr.Op != "listen" {
 		t.Fatalf("run() error = %v, want a listen error", err)
+	}
+}
+
+func TestNewHandlerPublishesJWKSOnlyWhenAKeyIsConfigured(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey() error = %v", err)
+	}
+	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+
+	statusOf := func(cfg config.Config) int {
+		handler, err := newHandler(cfg)
+		if err != nil {
+			t.Fatalf("newHandler() error = %v", err)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/auth/jwks", nil))
+		return rec.Code
+	}
+	if got := statusOf(testConfig(t)); got != http.StatusNotFound {
+		t.Errorf("without a key: status = %d, want 404", got)
+	}
+	withKey := testConfig(t)
+	withKey.JWTPrivateKey = keyPEM
+	if got := statusOf(withKey); got != http.StatusOK {
+		t.Errorf("with a key: status = %d, want 200", got)
+	}
+}
+
+func TestNewHandlerFailsFastOnAnInvalidKey(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.JWTPrivateKey = "not a key"
+	if _, err := newHandler(cfg); err == nil {
+		t.Error("newHandler() error = nil, want a key error")
 	}
 }
