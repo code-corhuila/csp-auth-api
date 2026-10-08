@@ -7,11 +7,12 @@ import (
 
 const (
 	minPasswordLength = 8
-	maxPasswordLength = 100
+	maxPasswordBytes  = 72
 )
 
-// Password is a plain-text password that satisfies the registration policy: 8 to 100
-// characters with at least one uppercase letter and one digit (value object).
+// Password is a plain-text password that satisfies the registration policy: 8 characters or
+// more and at most 72 bytes (the bcrypt limit), with at least one uppercase letter and one digit
+// (value object).
 // It exists only until it is hashed and never prints its value.
 type Password struct {
 	value string
@@ -19,8 +20,7 @@ type Password struct {
 
 // NewPassword rejects any text that does not meet the policy.
 func NewPassword(raw string) (Password, error) {
-	length := utf8.RuneCountInString(raw)
-	if length < minPasswordLength || length > maxPasswordLength {
+	if utf8.RuneCountInString(raw) < minPasswordLength || len(raw) > maxPasswordBytes {
 		return Password{}, ErrWeakPassword
 	}
 	var hasUpper, hasDigit bool
