@@ -15,6 +15,7 @@ type transactionKey struct{}
 // executor is what a repository needs from a pool or from a transaction.
 type executor interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, arguments ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, arguments ...any) pgx.Row
 }
 

@@ -48,3 +48,21 @@ func TestHashReportsAnInvalidCost(t *testing.T) {
 		t.Error("Hash() error = nil, want an error for an unsupported cost")
 	}
 }
+
+func TestVerifyAcceptsOnlyThePasswordBehindTheHash(t *testing.T) {
+	hasher := NewBcryptHasher(bcrypt.MinCost)
+	hash, _ := hasher.Hash(mustPassword(t, "Secret123"))
+
+	if !hasher.Verify(hash, "Secret123") {
+		t.Error("Verify() = false for the right password")
+	}
+	if hasher.Verify(hash, "secret123") || hasher.Verify(hash, "") {
+		t.Error("Verify() = true for a wrong password")
+	}
+}
+
+func TestVerifyTreatsAMalformedHashAsAMismatch(t *testing.T) {
+	if NewBcryptHasher(bcrypt.MinCost).Verify("not-a-hash", "Secret123") {
+		t.Error("Verify() = true for a malformed hash")
+	}
+}
