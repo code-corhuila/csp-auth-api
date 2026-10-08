@@ -126,7 +126,7 @@ func loadTokens(lookup Lookup, cfg *Config) error {
 		return fmt.Errorf("APP_AUTH_JWT_EXPIRY %d exceeds the maximum of %d seconds", int(ttl.Seconds()), int(maxAccessTokenTTL.Seconds()))
 	}
 	cfg.AccessTokenTTL = ttl
-	cfg.RefreshTokenTTL, err = durationValue(lookup, "APP_AUTH_REFRESH_TOKEN_TTL", defaultRefreshTokenTTL)
+	cfg.RefreshTokenTTL, err = secondsValue(lookup, "APP_AUTH_REFRESH_TOKEN_EXPIRY", defaultRefreshTokenTTL)
 	return err
 }
 

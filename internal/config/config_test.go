@@ -124,16 +124,16 @@ func TestLoadReadsTheRefreshTokenLifetime(t *testing.T) {
 	if err != nil || cfg.RefreshTokenTTL != 168*time.Hour {
 		t.Fatalf("default: cfg.RefreshTokenTTL = %v, err = %v; want 168h", cfg.RefreshTokenTTL, err)
 	}
-	cfg, err = Load(lookupFrom(map[string]string{"APP_AUTH_REFRESH_TOKEN_TTL": "24h"}))
+	cfg, err = Load(lookupFrom(map[string]string{"APP_AUTH_REFRESH_TOKEN_EXPIRY": "86400"}))
 	if err != nil || cfg.RefreshTokenTTL != 24*time.Hour {
 		t.Fatalf("cfg.RefreshTokenTTL = %v, err = %v; want 24h", cfg.RefreshTokenTTL, err)
 	}
 }
 
 func TestLoadRejectsAnInvalidRefreshTokenLifetime(t *testing.T) {
-	for _, value := range []string{"0s", "-1h", "a week"} {
-		if _, err := Load(lookupFrom(map[string]string{"APP_AUTH_REFRESH_TOKEN_TTL": value})); err == nil {
-			t.Errorf("APP_AUTH_REFRESH_TOKEN_TTL=%s: Load() error = nil", value)
+	for _, value := range []string{"0", "-1", "168h", "a week", "1.5"} {
+		if _, err := Load(lookupFrom(map[string]string{"APP_AUTH_REFRESH_TOKEN_EXPIRY": value})); err == nil {
+			t.Errorf("APP_AUTH_REFRESH_TOKEN_EXPIRY=%s: Load() error = nil", value)
 		}
 	}
 }

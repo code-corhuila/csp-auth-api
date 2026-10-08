@@ -3,23 +3,21 @@ package model
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"time"
 )
 
-// opaqueTokenBytes is the entropy of a refresh token: 256 bits.
-const opaqueTokenBytes = 32
-
-// NewOpaqueToken returns an unguessable URL-safe text (base64url, no padding) made of 32 random
-// bytes. It is what the client holds; only its digest is stored.
+// NewOpaqueToken returns a random (version 4) UUID from crypto/rand, the opaque refresh token
+// format of the contract. It is what the client holds; only its digest is stored.
 func NewOpaqueToken() (string, error) {
-	random := make([]byte, opaqueTokenBytes)
-	if _, err := rand.Read(random); err != nil {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
 		return "", fmt.Errorf("read random bytes: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(random), nil
+	id[6] = id[6]&0x0f | 0x40
+	id[8] = id[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", id[0:4], id[4:6], id[6:8], id[8:10], id[10:16]), nil
 }
 
 // HashOpaqueToken returns the SHA-256 digest of token in lowercase hexadecimal, the only form
