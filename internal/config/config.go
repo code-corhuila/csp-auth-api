@@ -10,14 +10,27 @@ import (
 
 const defaultPort = 8081
 
-// Config holds the settings the HTTP server needs. Every limit is explicit (Norma 5.3.10).
+// Bounds of the bcrypt cost accepted by golang.org/x/crypto/bcrypt.
+const (
+	minBcryptRounds = 4
+	maxBcryptRounds = 31
+)
+
+// Config holds the settings of the HTTP server, the database pool and the password hashing.
+// Every limit is explicit (Norma 5.3.10).
 type Config struct {
-	Port              int
-	ReadHeaderTimeout time.Duration
-	ReadTimeout       time.Duration
-	WriteTimeout      time.Duration
-	IdleTimeout       time.Duration
-	ShutdownTimeout   time.Duration
+	Port                   int
+	ReadHeaderTimeout      time.Duration
+	ReadTimeout            time.Duration
+	WriteTimeout           time.Duration
+	IdleTimeout            time.Duration
+	ShutdownTimeout        time.Duration
+	DatabaseURL            string
+	DatabaseMaxConnections int
+	DatabaseMinConnections int
+	DatabaseConnectTimeout time.Duration
+	DatabaseQueryTimeout   time.Duration
+	BcryptRounds           int
 }
 
 // Lookup returns the value of an environment variable, as os.LookupEnv does.
@@ -34,6 +47,18 @@ func Load(lookup Lookup) (Config, error) {
 	}
 
 	cfg := Config{Port: port}
+	if err := loadDatabase(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
+	rounds, err := intValue(lookup, "APP_AUTH_BCRYPT_ROUNDS", 12)
+	if err != nil {
+		return Config{}, err
+	}
+	if rounds < minBcryptRounds || rounds > maxBcryptRounds {
+		return Config{}, fmt.Errorf("APP_AUTH_BCRYPT_ROUNDS %d is out of range %d-%d", rounds, minBcryptRounds, maxBcryptRounds)
+	}
+	cfg.BcryptRounds = rounds
+
 	durations := []struct {
 		target *time.Duration
 		key    string
@@ -53,6 +78,25 @@ func Load(lookup Lookup) (Config, error) {
 		*d.target = value
 	}
 	return cfg, nil
+}
+
+func loadDatabase(lookup Lookup, cfg *Config) error {
+	cfg.DatabaseURL, _ = lookup("APP_AUTH_DATABASE_URL")
+	var err error
+	if cfg.DatabaseMaxConnections, err = intValue(lookup, "APP_AUTH_DATABASE_MAX_CONNECTIONS", 10); err != nil {
+		return err
+	}
+	if cfg.DatabaseMinConnections, err = intValue(lookup, "APP_AUTH_DATABASE_MIN_CONNECTIONS", 2); err != nil {
+		return err
+	}
+	if cfg.DatabaseMaxConnections < 1 || cfg.DatabaseMinConnections < 0 || cfg.DatabaseMinConnections > cfg.DatabaseMaxConnections {
+		return fmt.Errorf("database connections must satisfy 0 <= min (%d) <= max (%d) and max >= 1", cfg.DatabaseMinConnections, cfg.DatabaseMaxConnections)
+	}
+	if cfg.DatabaseConnectTimeout, err = durationValue(lookup, "APP_AUTH_DATABASE_CONNECT_TIMEOUT", 5*time.Second); err != nil {
+		return err
+	}
+	cfg.DatabaseQueryTimeout, err = durationValue(lookup, "APP_AUTH_DATABASE_QUERY_TIMEOUT", 5*time.Second)
+	return err
 }
 
 func intValue(lookup Lookup, key string, def int) (int, error) {
