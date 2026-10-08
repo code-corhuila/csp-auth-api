@@ -39,6 +39,21 @@ func NewUser(id string, name Name, email Email, passwordHash string, phone Phone
 	return &User{id: id, name: name, email: email, passwordHash: passwordHash, phone: phone, address: address, roles: unique, status: UserActive}, nil
 }
 
+// RestoreUser rebuilds a stored user with the status it had. It keeps the invariants of NewUser
+// (id, bcrypt hash, valid roles) and also requires a known status. Phone and address may be empty:
+// accounts that predate ADR-024 do not have them.
+func RestoreUser(id string, name Name, email Email, passwordHash string, phone Phone, address Address, roles []Role, status UserStatus) (*User, error) {
+	if status != UserActive && status != UserLocked {
+		return nil, ErrInvalidUserStatus
+	}
+	user, err := NewUser(id, name, email, passwordHash, phone, address, roles)
+	if err != nil {
+		return nil, err
+	}
+	user.status = status
+	return user, nil
+}
+
 func (u *User) ID() string           { return u.id }
 func (u *User) Name() Name           { return u.name }
 func (u *User) Email() Email         { return u.email }

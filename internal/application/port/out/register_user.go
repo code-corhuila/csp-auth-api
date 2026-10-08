@@ -11,6 +11,8 @@ import (
 // transaction carried by the context and report a duplicate email as model.ErrEmailAlreadyRegistered.
 type UserRepository interface {
 	ExistsByEmail(ctx context.Context, email model.Email) (bool, error)
+	// FindByEmail returns the active account that uses email with its roles, or model.ErrUserNotFound.
+	FindByEmail(ctx context.Context, email model.Email) (*model.User, error)
 	Save(ctx context.Context, user *model.User) error
 }
 
@@ -20,9 +22,11 @@ type OutboxWriter interface {
 	Append(ctx context.Context, event model.UserRegistered) error
 }
 
-// PasswordHasher turns a password into a bcrypt hash.
+// PasswordHasher turns a password into a bcrypt hash and checks a presented one against it.
 type PasswordHasher interface {
 	Hash(password model.Password) (string, error)
+	// Verify reports whether password is the one behind hash. A malformed hash does not match.
+	Verify(hash, password string) bool
 }
 
 // IDGenerator creates unique identifiers.
