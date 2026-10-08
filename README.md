@@ -71,6 +71,12 @@ curl http://localhost:8081/api/v1/auth/health          # {"status":"ok"}
 curl http://localhost:8081/api/v1/auth/health/ready    # {"status":"ready","dependencies":{}}
 ```
 
+`POST /api/v1/auth/register` (HU-AUTH-001) is implemented in the HTTP adapter and registered only when the
+composition root injects the use case with `httpapi.WithRegisterUser`; the next change wires it in `main.go`.
+It requires the `Idempotency-Key` header and a JSON body of at most 1 MiB; it answers `201` with the tokens and the
+user, `200` with the user alone on a replay, `400` with one `details` entry per invalid field, and `409` when the
+email is registered or the key was used by another request. `X-Correlation-Id` is echoed or generated.
+
 With Docker, from the root of the repository:
 
 ```bash
