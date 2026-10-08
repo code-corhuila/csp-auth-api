@@ -25,6 +25,42 @@ func TestLoadUsesDefaultsWhenNothingIsSet(t *testing.T) {
 	}
 }
 
+func TestLoadUsesDatabaseAndBcryptDefaults(t *testing.T) {
+	cfg, err := Load(lookupFrom(nil))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.DatabaseURL != "" || cfg.DatabaseMaxConnections != 10 || cfg.DatabaseMinConnections != 2 {
+		t.Errorf("unexpected pool defaults: %+v", cfg)
+	}
+	if cfg.DatabaseConnectTimeout != 5*time.Second || cfg.DatabaseQueryTimeout != 5*time.Second {
+		t.Errorf("unexpected database timeouts: %+v", cfg)
+	}
+	if cfg.BcryptRounds != 12 {
+		t.Errorf("BcryptRounds = %d, want 12", cfg.BcryptRounds)
+	}
+}
+
+func TestLoadReadsDatabaseAndBcryptOverrides(t *testing.T) {
+	cfg, err := Load(lookupFrom(map[string]string{
+		"APP_AUTH_DATABASE_URL":             "postgresql://u:p@db:5432/csp",
+		"APP_AUTH_DATABASE_MAX_CONNECTIONS": "20",
+		"APP_AUTH_DATABASE_MIN_CONNECTIONS": "5",
+		"APP_AUTH_DATABASE_CONNECT_TIMEOUT": "3s",
+		"APP_AUTH_DATABASE_QUERY_TIMEOUT":   "8s",
+		"APP_AUTH_BCRYPT_ROUNDS":            "10",
+	}))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.DatabaseURL != "postgresql://u:p@db:5432/csp" || cfg.DatabaseMaxConnections != 20 || cfg.DatabaseMinConnections != 5 {
+		t.Errorf("pool overrides not applied: %+v", cfg)
+	}
+	if cfg.DatabaseConnectTimeout != 3*time.Second || cfg.DatabaseQueryTimeout != 8*time.Second || cfg.BcryptRounds != 10 {
+		t.Errorf("overrides not applied: %+v", cfg)
+	}
+}
+
 func TestLoadReadsOverrides(t *testing.T) {
 	cfg, err := Load(lookupFrom(map[string]string{
 		"PORT":                           "9000",
@@ -46,10 +82,19 @@ func TestLoadReadsOverrides(t *testing.T) {
 
 func TestLoadRejectsInvalidValues(t *testing.T) {
 	cases := map[string]map[string]string{
-		"port not a number":     {"PORT": "abc"},
-		"port out of range":     {"PORT": "70000"},
-		"duration malformed":    {"APP_AUTH_HTTP_READ_TIMEOUT": "soon"},
-		"duration not positive": {"APP_AUTH_HTTP_IDLE_TIMEOUT": "0s"},
+		"port not a number":            {"PORT": "abc"},
+		"port out of range":            {"PORT": "70000"},
+		"duration malformed":           {"APP_AUTH_HTTP_READ_TIMEOUT": "soon"},
+		"duration not positive":        {"APP_AUTH_HTTP_IDLE_TIMEOUT": "0s"},
+		"max connections not a number": {"APP_AUTH_DATABASE_MAX_CONNECTIONS": "many"},
+		"max connections zero":         {"APP_AUTH_DATABASE_MAX_CONNECTIONS": "0"},
+		"min above max":                {"APP_AUTH_DATABASE_MIN_CONNECTIONS": "11"},
+		"min negative":                 {"APP_AUTH_DATABASE_MIN_CONNECTIONS": "-1"},
+		"connect timeout malformed":    {"APP_AUTH_DATABASE_CONNECT_TIMEOUT": "soon"},
+		"query timeout not positive":   {"APP_AUTH_DATABASE_QUERY_TIMEOUT": "0s"},
+		"bcrypt rounds not a number":   {"APP_AUTH_BCRYPT_ROUNDS": "strong"},
+		"bcrypt rounds too low":        {"APP_AUTH_BCRYPT_ROUNDS": "3"},
+		"bcrypt rounds too high":       {"APP_AUTH_BCRYPT_ROUNDS": "32"},
 	}
 	for name, values := range cases {
 		t.Run(name, func(t *testing.T) {
