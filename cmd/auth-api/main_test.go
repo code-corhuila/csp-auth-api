@@ -96,15 +96,24 @@ func TestRunFailsWhenThePortIsTaken(t *testing.T) {
 	}
 }
 
-func TestNewHandlerPublishesJWKSOnlyWhenAKeyIsConfigured(t *testing.T) {
+func generatedKeyPEM(t *testing.T) string {
+	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("GenerateKey() error = %v", err)
 	}
-	keyPEM := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+	return string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+}
+
+func slogTo(w io.Writer) *slog.Logger {
+	return slog.New(slog.NewTextHandler(w, nil))
+}
+
+func TestNewHandlerPublishesJWKSOnlyWhenAKeyIsConfigured(t *testing.T) {
+	keyPEM := generatedKeyPEM(t)
 
 	statusOf := func(cfg config.Config) int {
-		handler, err := newHandler(cfg)
+		handler, _, err := newHandler(context.Background(), discardLogger(), cfg, nil)
 		if err != nil {
 			t.Fatalf("newHandler() error = %v", err)
 		}
@@ -125,7 +134,7 @@ func TestNewHandlerPublishesJWKSOnlyWhenAKeyIsConfigured(t *testing.T) {
 func TestNewHandlerFailsFastOnAnInvalidKey(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.JWTPrivateKey = "not a key"
-	if _, err := newHandler(cfg); err == nil {
+	if _, _, err := newHandler(context.Background(), discardLogger(), cfg, nil); err == nil {
 		t.Error("newHandler() error = nil, want a key error")
 	}
 }

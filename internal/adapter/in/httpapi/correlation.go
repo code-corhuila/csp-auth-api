@@ -3,7 +3,10 @@ package httpapi
 import (
 	"crypto/rand"
 	"fmt"
+	"io"
 	"net/http"
+	"sync/atomic"
+	"time"
 )
 
 const (
@@ -30,11 +33,22 @@ func isPrintableASCII(value string) bool {
 	return true
 }
 
+// fallbackSequence numbers the ids generated without randomness, so they stay unique per process.
+var fallbackSequence atomic.Uint64
+
 // newCorrelationID returns a random (version 4) UUID.
 func newCorrelationID() string {
+	return correlationIDFrom(rand.Reader, time.Now)
+}
+
+// correlationIDFrom builds the id from random. When random fails it must not break the request:
+// the client still has to get its error envelope, so the id falls back to a non-random one made
+// of the clock and a per-process counter. It is unique within the process and only meant for
+// tracing, never for security.
+func correlationIDFrom(random io.Reader, now func() time.Time) string {
 	var id [16]byte
-	if _, err := rand.Read(id[:]); err != nil {
-		panic(fmt.Errorf("read random bytes: %w", err))
+	if _, err := io.ReadFull(random, id[:]); err != nil {
+		return fmt.Sprintf("fallback-%d-%d", now().UnixNano(), fallbackSequence.Add(1))
 	}
 	id[6] = id[6]&0x0f | 0x40
 	id[8] = id[8]&0x3f | 0x80
