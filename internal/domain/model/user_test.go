@@ -15,7 +15,8 @@ func newTestUser(t *testing.T, roles ...Role) *User {
 	}
 	phone, _ := NewPhone("3001234567")
 	address, _ := NewAddress("Calle 123 #45-67")
-	user, err := NewUser("550e8400-e29b-41d4-a716-446655440000", email, validHash, phone, address, roles)
+	name, _ := NewName("Ana Pérez")
+	user, err := NewUser("550e8400-e29b-41d4-a716-446655440000", name, email, validHash, phone, address, roles)
 	if err != nil {
 		t.Fatalf("NewUser() error = %v", err)
 	}
@@ -45,6 +46,13 @@ func TestNewUserKeepsContactData(t *testing.T) {
 	}
 }
 
+func TestNewUserKeepsItsName(t *testing.T) {
+	user := newTestUser(t, RoleClient)
+	if got := user.Name().String(); got != "Ana Pérez" {
+		t.Errorf("Name() = %q, want Ana Pérez", got)
+	}
+}
+
 func TestNewUserKeepsEachRoleOnce(t *testing.T) {
 	user := newTestUser(t, RoleClient, RoleClient, RoleAdmin)
 	if got := len(user.Roles()); got != 2 {
@@ -56,6 +64,7 @@ func TestNewUserRejectsInvalidInput(t *testing.T) {
 	email, _ := NewEmail("dev@example.com")
 	phone, _ := NewPhone("3001234567")
 	address, _ := NewAddress("Calle 123 #45-67")
+	userName, _ := NewName("Ana Pérez")
 	cases := map[string]struct {
 		id    string
 		hash  string
@@ -70,7 +79,7 @@ func TestNewUserRejectsInvalidInput(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := NewUser(c.id, email, c.hash, phone, address, c.roles); !errors.Is(err, c.want) {
+			if _, err := NewUser(c.id, userName, email, c.hash, phone, address, c.roles); !errors.Is(err, c.want) {
 				t.Fatalf("NewUser() error = %v, want %v", err, c.want)
 			}
 		})
