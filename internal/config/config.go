@@ -16,7 +16,10 @@ const (
 	maxBcryptRounds = 31
 )
 
-// Config holds the settings of the HTTP server, the database pool and the password hashing.
+// maxAccessTokenTTL is the longest lifetime of an access token (security-rules.md).
+const maxAccessTokenTTL = time.Hour
+
+// Config holds the settings of the HTTP server, the database pool, the password hashing and the access tokens.
 // Every limit is explicit (Norma 5.3.10).
 type Config struct {
 	Port                   int
@@ -31,6 +34,9 @@ type Config struct {
 	DatabaseConnectTimeout time.Duration
 	DatabaseQueryTimeout   time.Duration
 	BcryptRounds           int
+	JWTPrivateKey          string
+	JWTPrivateKeyFile      string
+	AccessTokenTTL         time.Duration
 }
 
 // Lookup returns the value of an environment variable, as os.LookupEnv does.
@@ -58,6 +64,9 @@ func Load(lookup Lookup) (Config, error) {
 		return Config{}, fmt.Errorf("APP_AUTH_BCRYPT_ROUNDS %d is out of range %d-%d", rounds, minBcryptRounds, maxBcryptRounds)
 	}
 	cfg.BcryptRounds = rounds
+	if err := loadTokens(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
 
 	durations := []struct {
 		target *time.Duration
@@ -97,6 +106,21 @@ func loadDatabase(lookup Lookup, cfg *Config) error {
 	}
 	cfg.DatabaseQueryTimeout, err = durationValue(lookup, "APP_AUTH_DATABASE_QUERY_TIMEOUT", 5*time.Second)
 	return err
+}
+
+// loadTokens reads where the signing key comes from; both sources empty means no key is configured.
+func loadTokens(lookup Lookup, cfg *Config) error {
+	cfg.JWTPrivateKey, _ = lookup("APP_AUTH_JWT_PRIVATE_KEY")
+	cfg.JWTPrivateKeyFile, _ = lookup("APP_AUTH_JWT_PRIVATE_KEY_FILE")
+	ttl, err := durationValue(lookup, "APP_AUTH_JWT_EXPIRY", maxAccessTokenTTL)
+	if err != nil {
+		return err
+	}
+	if ttl > maxAccessTokenTTL {
+		return fmt.Errorf("APP_AUTH_JWT_EXPIRY %s exceeds the maximum of %s", ttl, maxAccessTokenTTL)
+	}
+	cfg.AccessTokenTTL = ttl
+	return nil
 }
 
 func intValue(lookup Lookup, key string, def int) (int, error) {
