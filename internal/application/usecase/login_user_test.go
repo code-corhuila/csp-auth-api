@@ -28,6 +28,9 @@ type loginUsers struct {
 
 func (u *loginUsers) ExistsByEmail(context.Context, model.Email) (bool, error) { return false, nil }
 func (u *loginUsers) Save(context.Context, *model.User) error                  { return nil }
+func (u *loginUsers) FindByID(context.Context, string) (*model.User, error) {
+	return nil, model.ErrUserNotFound
+}
 func (u *loginUsers) FindByEmail(_ context.Context, email model.Email) (*model.User, error) {
 	u.asked = append(u.asked, email.String())
 	if u.err != nil {
@@ -204,7 +207,7 @@ func TestLoginSurfacesFailuresWithoutSecrets(t *testing.T) {
 	failure := errors.New("boom")
 	cases := map[string]func(*loginFixture){
 		"repository":    func(f *loginFixture) { f.users.err = failure },
-		"access token":  func(f *loginFixture) { f.useCase.tokens = loginTokens{err: failure} },
+		"access token":  func(f *loginFixture) { f.useCase.session.tokens = loginTokens{err: failure} },
 		"refresh token": func(f *loginFixture) { f.sessions.err = failure },
 	}
 	for name, breakIt := range cases {
