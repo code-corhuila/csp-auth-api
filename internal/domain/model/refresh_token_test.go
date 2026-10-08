@@ -1,7 +1,6 @@
 package model
 
 import (
-	"encoding/base64"
 	"errors"
 	"regexp"
 	"testing"
@@ -12,15 +11,16 @@ var issuedAt = time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC)
 
 const week = 7 * 24 * time.Hour
 
-func TestNewOpaqueTokenIsRandomAndAtLeast32Bytes(t *testing.T) {
+var uuidV4 = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
+func TestNewOpaqueTokenIsARandomUUIDv4(t *testing.T) {
 	first, err := NewOpaqueToken()
 	if err != nil {
 		t.Fatalf("NewOpaqueToken() error = %v", err)
 	}
 	second, _ := NewOpaqueToken()
-	decoded, err := base64.RawURLEncoding.DecodeString(first)
-	if err != nil || len(decoded) < 32 {
-		t.Errorf("token %q is not base64url of at least 32 bytes (decoded %d, %v)", first, len(decoded), err)
+	if !uuidV4.MatchString(first) {
+		t.Errorf("token %q is not a version 4 UUID", first)
 	}
 	if first == second {
 		t.Error("two tokens are equal")

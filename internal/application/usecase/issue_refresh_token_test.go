@@ -2,8 +2,8 @@ package usecase
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
+	"regexp"
 	"testing"
 	"time"
 
@@ -41,9 +41,8 @@ func TestIssueStoresTheDigestAndReturnsTheRawTokenOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Issue() error = %v", err)
 	}
-	raw, decodeErr := base64.RawURLEncoding.DecodeString(issued.Token)
-	if decodeErr != nil || len(raw) < 32 {
-		t.Errorf("Token %q is not base64url of at least 32 bytes", issued.Token)
+	if !regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(issued.Token) {
+		t.Errorf("Token %q is not a version 4 UUID", issued.Token)
 	}
 	if want := registeredAt.Add(refreshTTL); !issued.ExpiresAt.Equal(want) {
 		t.Errorf("ExpiresAt = %v, want %v", issued.ExpiresAt, want)

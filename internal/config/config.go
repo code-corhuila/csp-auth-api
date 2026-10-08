@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 )
@@ -125,7 +126,7 @@ func loadTokens(lookup Lookup, cfg *Config) error {
 		return fmt.Errorf("APP_AUTH_JWT_EXPIRY %s exceeds the maximum of %s", ttl, maxAccessTokenTTL)
 	}
 	cfg.AccessTokenTTL = ttl
-	cfg.RefreshTokenTTL, err = durationValue(lookup, "APP_AUTH_REFRESH_TOKEN_TTL", defaultRefreshTokenTTL)
+	cfg.RefreshTokenTTL, err = secondsValue(lookup, "APP_AUTH_REFRESH_TOKEN_EXPIRY", defaultRefreshTokenTTL)
 	return err
 }
 
@@ -154,4 +155,20 @@ func durationValue(lookup Lookup, key string, def time.Duration) (time.Duration,
 		return 0, fmt.Errorf("%s must be positive", key)
 	}
 	return value, nil
+}
+
+// secondsValue reads a positive whole number of seconds, the unit of the documented token lifetimes.
+func secondsValue(lookup Lookup, key string, def time.Duration) (time.Duration, error) {
+	raw, ok := lookup(key)
+	if !ok || raw == "" {
+		return def, nil
+	}
+	seconds, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer number of seconds: %w", key, err)
+	}
+	if seconds <= 0 || int64(seconds) > math.MaxInt64/int64(time.Second) {
+		return 0, fmt.Errorf("%s must be a positive number of seconds", key)
+	}
+	return time.Duration(seconds) * time.Second, nil
 }
