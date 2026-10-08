@@ -78,3 +78,30 @@ func restoreUser(id, name string, email model.Email, hash, status string, phone,
 	}
 	return model.RestoreUser(id, storedName, email, hash, storedPhone, storedAddress, roles, model.UserStatus(status))
 }
+
+// FindByID loads the active account with that id, with its active roles. An unknown id is
+// model.ErrUserNotFound.
+func (r *UserRepository) FindByID(ctx context.Context, id string) (*model.User, error) {
+	db := executorFor(ctx, r.pool)
+	var storedEmail, name, hash, status string
+	var phone, address *string
+	err := db.QueryRow(ctx,
+		`SELECT email, name, password_hash, status, phone, address
+		 FROM auth.app_user WHERE id = $1 AND deleted_at IS NULL`,
+		id).Scan(&storedEmail, &name, &hash, &status, &phone, &address)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, model.ErrUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	email, err := model.NewEmail(storedEmail)
+	if err != nil {
+		return nil, err
+	}
+	roles, err := loadRoles(ctx, db, id)
+	if err != nil {
+		return nil, err
+	}
+	return restoreUser(id, name, email, hash, status, phone, address, roles)
+}
