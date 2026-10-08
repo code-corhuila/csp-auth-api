@@ -104,3 +104,25 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadReadsTheTokenSettings(t *testing.T) {
+	cfg, err := Load(lookupFrom(nil))
+	if err != nil || cfg.AccessTokenTTL != time.Hour || cfg.JWTPrivateKey != "" || cfg.JWTPrivateKeyFile != "" {
+		t.Fatalf("defaults: cfg = %+v, err = %v; want 1h and no key", cfg, err)
+	}
+	cfg, err = Load(lookupFrom(map[string]string{
+		"APP_AUTH_JWT_PRIVATE_KEY_FILE": "/run/secrets/jwt.pem",
+		"APP_AUTH_JWT_EXPIRY":           "30m",
+	}))
+	if err != nil || cfg.JWTPrivateKeyFile != "/run/secrets/jwt.pem" || cfg.AccessTokenTTL != 30*time.Minute {
+		t.Fatalf("cfg = %+v, err = %v", cfg, err)
+	}
+}
+
+func TestLoadRejectsAnAccessTokenLifetimeOverOneHour(t *testing.T) {
+	for _, value := range []string{"61m", "soon", "0s"} {
+		if _, err := Load(lookupFrom(map[string]string{"APP_AUTH_JWT_EXPIRY": value})); err == nil {
+			t.Errorf("APP_AUTH_JWT_EXPIRY=%s: Load() error = nil", value)
+		}
+	}
+}
