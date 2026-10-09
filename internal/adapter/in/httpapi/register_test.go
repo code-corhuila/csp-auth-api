@@ -249,7 +249,7 @@ func TestRegisterRejectsUnreadableBodies(t *testing.T) {
 		"trailing data":       {body: validBody() + `{}`, key: validKey},
 		"empty body":          {body: ``, key: validKey},
 		"wrong content type":  {body: validBody(), key: validKey, contentType: "text/plain"},
-		"oversized body":      {body: `{"name":"` + strings.Repeat("a", maxRegisterBodyBytes) + `"}`, key: validKey},
+		"oversized body":      {body: `{"name":"` + strings.Repeat("a", maxBodyBytes) + `"}`, key: validKey},
 		"wrong property type": {body: `{"phone":3001234567}`, key: validKey},
 	}
 	for name, a := range cases {
