@@ -115,8 +115,8 @@ curl -i -X POST http://localhost:8081/api/v1/auth/refresh   -H 'Content-Type: ap
 It requires a JSON body of at most 1 MiB with `refreshToken` and answers `200` with a new pair and the user
 (`Cache-Control: no-store`). The presented token is spent in the same transaction that issues the new one, so a token
 works once and a failure while issuing leaves it valid. An unknown, expired or already used token gets the same `401`
-(`INVALID_REFRESH_TOKEN`); presenting an already used token also revokes every other refresh token of its user. A
-locked account gets `423`, a missing or empty `refreshToken` gets `400`.
+(`INVALID_REFRESH_TOKEN`) and nothing else is revoked. A locked account gets `423`, a missing or empty `refreshToken`
+gets `400`.
 
 The end-to-end tests of these routes (`cmd/auth-api`, tag `integration`) uses the same `AUTH_TEST_DATABASE_URL`:
 

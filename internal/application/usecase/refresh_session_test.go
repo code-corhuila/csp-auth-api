@@ -47,15 +47,6 @@ func (s *storedRefreshTokens) RevokeByHash(_ context.Context, hash string, at ti
 	return token.UserID(), true, nil
 }
 
-func (s *storedRefreshTokens) RevokeAllForUser(_ context.Context, userID string, at time.Time) error {
-	for _, token := range s.rows {
-		if token.UserID() == userID {
-			token.Revoke(at)
-		}
-	}
-	return nil
-}
-
 func (s *storedRefreshTokens) snapshot() map[string]*model.RefreshToken {
 	copied := make(map[string]*model.RefreshToken, len(s.rows))
 	for hash, token := range s.rows {
@@ -183,42 +174,6 @@ func TestRefreshTokenIsSingleUse(t *testing.T) {
 	}
 }
 
-func TestRefreshRevokesEveryTokenOfTheUserWhenARevokedTokenIsReused(t *testing.T) {
-	f := newRefreshFixture(t, storedUser(t, model.UserActive, model.RoleClient))
-	sibling := model.RestoreRefreshToken("token-2", "user-1", model.HashOpaqueToken("sibling"), "", registeredAt.Add(time.Hour), nil)
-	otherUser := model.RestoreRefreshToken("token-3", "user-2", model.HashOpaqueToken("other"), "", registeredAt.Add(time.Hour), nil)
-	f.tokens.rows[sibling.Hash()], f.tokens.rows[otherUser.Hash()] = sibling, otherUser
-	f.stored().Revoke(registeredAt.Add(-time.Minute))
-
-	_, err := f.useCase.Refresh(context.Background(), in.RefreshSessionCommand{RefreshToken: presentedToken})
-
-	if err != model.ErrRefreshTokenRejected {
-		t.Fatalf("error = %v, want ErrRefreshTokenRejected", err)
-	}
-	if sibling.RevokedAt() == nil {
-		t.Error("the other active token of the user must be revoked")
-	}
-	if otherUser.RevokedAt() != nil {
-		t.Error("the token of another user must stay active")
-	}
-}
-
-func TestRefreshDoesNotRevokeOtherTokensForAnExpiredOrUnknownToken(t *testing.T) {
-	f := newRefreshFixture(t, storedUser(t, model.UserActive, model.RoleClient))
-	expired := model.RestoreRefreshToken("token-2", "user-1", model.HashOpaqueToken("old"), "", registeredAt.Add(-time.Second), nil)
-	f.tokens.rows[expired.Hash()] = expired
-
-	for _, token := range []string{"old", "never-issued"} {
-		if _, err := f.useCase.Refresh(context.Background(), in.RefreshSessionCommand{RefreshToken: token}); err != model.ErrRefreshTokenRejected {
-			t.Fatalf("Refresh(%q) error = %v, want ErrRefreshTokenRejected", token, err)
-		}
-	}
-
-	if f.stored().RevokedAt() != nil {
-		t.Error("an expired or unknown token is not a reuse: the active token must stay valid")
-	}
-}
-
 func TestRefreshOfALockedUserGivesErrUserLockedAndKeepsTheTokenUnspent(t *testing.T) {
 	f := newRefreshFixture(t, storedUser(t, model.UserLocked, model.RoleClient))
 
@@ -274,5 +229,18 @@ func TestRefreshSurfacesRepositoryFailures(t *testing.T) {
 
 	if _, err := f.useCase.Refresh(context.Background(), in.RefreshSessionCommand{RefreshToken: presentedToken}); !errors.Is(err, failure) {
 		t.Errorf("error = %v, want the failure, not a rejection", err)
+	}
+}
+
+func TestRefreshOfARevokedTokenRevokesNothingElse(t *testing.T) {
+	f := newRefreshFixture(t, storedUser(t, model.UserActive, model.RoleClient))
+	sibling := model.RestoreRefreshToken("token-2", "user-1", model.HashOpaqueToken("sibling"), "", registeredAt.Add(time.Hour), nil)
+	f.tokens.rows[sibling.Hash()] = sibling
+	f.stored().Revoke(registeredAt.Add(-time.Minute))
+
+	_, err := f.useCase.Refresh(context.Background(), in.RefreshSessionCommand{RefreshToken: presentedToken})
+
+	if err != model.ErrRefreshTokenRejected || sibling.RevokedAt() != nil {
+		t.Errorf("error = %v, sibling revoked = %v, want ErrRefreshTokenRejected and the other token untouched", err, sibling.RevokedAt())
 	}
 }
