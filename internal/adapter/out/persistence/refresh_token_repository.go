@@ -80,14 +80,6 @@ func (r *RefreshTokenRepository) RevokeByHash(ctx context.Context, hash string, 
 	return userID, true, nil
 }
 
-// RevokeAllForUser keeps the first revocation instant of the tokens that were already revoked.
-func (r *RefreshTokenRepository) RevokeAllForUser(ctx context.Context, userID string, at time.Time) error {
-	_, err := executorFor(ctx, r.pool).Exec(ctx,
-		`UPDATE auth.refresh_token SET revoked_at = $2, updated_at = NOW()
-		 WHERE user_id = $1 AND revoked_at IS NULL AND deleted_at IS NULL`, userID, at)
-	return err
-}
-
 func isDuplicateRefreshTokenHash(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == refreshTokenHashIndex

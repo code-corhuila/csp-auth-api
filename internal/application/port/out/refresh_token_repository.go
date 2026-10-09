@@ -18,6 +18,4 @@ type RefreshTokenRepository interface {
 	// revoked, not expired, not soft-deleted) and returns the id of its user. ok is false when no
 	// active token has that digest, so of two concurrent callers exactly one gets ok.
 	RevokeByHash(ctx context.Context, hash string, at time.Time) (userID string, ok bool, err error)
-	// RevokeAllForUser revokes every active token of the user.
-	RevokeAllForUser(ctx context.Context, userID string, at time.Time) error
 }

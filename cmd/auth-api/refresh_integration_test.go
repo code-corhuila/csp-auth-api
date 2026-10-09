@@ -66,13 +66,13 @@ func TestRefreshEndToEndAgainstTheDatabase(t *testing.T) {
 	assertAccessClaims(t, access, renewed)
 	assertRefreshTokenStoredHashed(t, url, second)
 
-	t.Run("the spent token now answers 401 INVALID_REFRESH_TOKEN and the reuse revokes the new one", func(t *testing.T) {
+	t.Run("the spent token now answers 401 INVALID_REFRESH_TOKEN and the new one still works", func(t *testing.T) {
 		status, _, payload := refresh(t, server.URL, first)
 		if status != http.StatusUnauthorized || payload["error"] != "INVALID_REFRESH_TOKEN" {
 			t.Errorf("status = %d, body = %v, want 401 INVALID_REFRESH_TOKEN", status, payload)
 		}
-		if status, _, _ := refresh(t, server.URL, second); status != http.StatusUnauthorized {
-			t.Errorf("status = %d, want 401: reusing a spent token revokes the sessions of the user", status)
+		if status, _, payload := refresh(t, server.URL, second); status != http.StatusOK {
+			t.Errorf("status = %d, body = %v, want 200: a rejected token revokes nothing else", status, payload)
 		}
 	})
 

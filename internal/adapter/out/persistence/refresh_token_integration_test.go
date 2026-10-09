@@ -179,41 +179,6 @@ func TestRevokeByHashLetsExactlyOneOfTwoConcurrentCallersWin(t *testing.T) {
 	}
 }
 
-func TestRevokeAllForUserRevokesOnlyTheActiveTokensOfThatUser(t *testing.T) {
-	f, ctx := newFixture(t), context.Background()
-	repository := NewRefreshTokenRepository(f.pool)
-	token, opaque := saveToken(t, f, ctx, repository)
-	second, err := model.NewRefreshToken(newUUID(t), token.UserID(), "second-"+opaque, "", time.Now().UTC(), time.Hour)
-	if err != nil {
-		t.Fatalf("NewRefreshToken() error = %v", err)
-	}
-	if err := repository.Save(ctx, second); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	_, otherOpaque := saveToken(t, f, ctx, repository)
-	first := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
-	if _, ok, err := repository.RevokeByHash(ctx, model.HashOpaqueToken(opaque), first); err != nil || !ok {
-		t.Fatalf("RevokeByHash() ok = %v, error = %v", ok, err)
-	}
-
-	if err := repository.RevokeAllForUser(ctx, token.UserID(), time.Now()); err != nil {
-		t.Fatalf("RevokeAllForUser() error = %v", err)
-	}
-
-	revoked, _ := repository.FindByHash(ctx, model.HashOpaqueToken(opaque))
-	if got := revoked.RevokedAt(); got == nil || !got.Equal(first) {
-		t.Errorf("already revoked token RevokedAt() = %v, want its first instant %v", got, first)
-	}
-	sibling, _ := repository.FindByHash(ctx, second.Hash())
-	if sibling.RevokedAt() == nil {
-		t.Error("the other active token of the user must be revoked")
-	}
-	other, _ := repository.FindByHash(ctx, model.HashOpaqueToken(otherOpaque))
-	if other.RevokedAt() != nil {
-		t.Error("the token of another user must stay active")
-	}
-}
-
 func TestRefreshTokensCannotBeDeletedByTheService(t *testing.T) {
 	f, ctx := newFixture(t), context.Background()
 
