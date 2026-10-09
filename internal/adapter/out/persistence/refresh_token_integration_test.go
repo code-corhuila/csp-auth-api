@@ -5,6 +5,8 @@ package persistence
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -97,20 +99,28 @@ func TestSaveRejectsADuplicateDigest(t *testing.T) {
 	}
 }
 
-func TestRevokeSetsRevokedAtOnceAndInvalidatesTheToken(t *testing.T) {
-	f, ctx := newFixture(t), context.Background()
-	repository := NewRefreshTokenRepository(f.pool)
+func saveToken(t *testing.T, f fixture, ctx context.Context, repository *RefreshTokenRepository) (*model.RefreshToken, string) {
+	t.Helper()
 	token, opaque := newStoredToken(t, f, ctx, "")
 	if err := repository.Save(ctx, token); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
+	return token, opaque
+}
+
+func TestRevokeByHashRevokesOnceAndTheSecondCallFindsNothing(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	repository := NewRefreshTokenRepository(f.pool)
+	token, opaque := saveToken(t, f, ctx, repository)
 	first := time.Now().UTC().Truncate(time.Microsecond)
 
-	if err := repository.Revoke(ctx, token.ID(), first); err != nil {
-		t.Fatalf("Revoke() error = %v", err)
+	userID, ok, err := repository.RevokeByHash(ctx, model.HashOpaqueToken(opaque), first)
+	if err != nil || !ok || userID != token.UserID() {
+		t.Fatalf("RevokeByHash() = %q, %v, %v; want the user of the token and ok", userID, ok, err)
 	}
-	if err := repository.Revoke(ctx, token.ID(), first.Add(time.Hour)); err != nil {
-		t.Fatalf("second Revoke() error = %v", err)
+	_, again, err := repository.RevokeByHash(ctx, model.HashOpaqueToken(opaque), first.Add(time.Hour))
+	if err != nil || again {
+		t.Errorf("second RevokeByHash() ok = %v, error = %v, want nothing to revoke", again, err)
 	}
 
 	found, err := repository.FindByHash(ctx, model.HashOpaqueToken(opaque))
@@ -118,17 +128,54 @@ func TestRevokeSetsRevokedAtOnceAndInvalidatesTheToken(t *testing.T) {
 		t.Fatalf("FindByHash() error = %v", err)
 	}
 	if got := found.RevokedAt(); got == nil || !got.Equal(first) || found.IsValidAt(time.Now()) {
-		t.Errorf("RevokedAt() = %v, valid = %v; want the first instant and an invalid token", got, found.IsValidAt(time.Now()))
+		t.Errorf("RevokedAt() = %v, want the first instant and an invalid token", got)
 	}
 }
 
-func TestRevokeReportsAnUnknownToken(t *testing.T) {
+func TestRevokeByHashIgnoresUnknownExpiredAndSoftDeletedTokens(t *testing.T) {
 	f, ctx := newFixture(t), context.Background()
+	repository := NewRefreshTokenRepository(f.pool)
+	_, expiredOpaque := saveToken(t, f, ctx, repository)
+	_, deletedOpaque := saveToken(t, f, ctx, repository)
+	if _, err := f.pool.Exec(ctx, `UPDATE auth.refresh_token SET expires_at = NOW() - INTERVAL '1 second' WHERE token_hash = $1`, model.HashOpaqueToken(expiredOpaque)); err != nil {
+		t.Fatalf("expire the token: %v", err)
+	}
+	if _, err := f.pool.Exec(ctx, `UPDATE auth.refresh_token SET deleted_at = NOW() WHERE token_hash = $1`, model.HashOpaqueToken(deletedOpaque)); err != nil {
+		t.Fatalf("soft-delete the token: %v", err)
+	}
 
-	err := NewRefreshTokenRepository(f.pool).Revoke(ctx, newUUID(t), time.Now())
+	for name, opaque := range map[string]string{"unknown": "never-issued", "expired": expiredOpaque, "soft-deleted": deletedOpaque} {
+		if _, ok, err := repository.RevokeByHash(ctx, model.HashOpaqueToken(opaque), time.Now()); err != nil || ok {
+			t.Errorf("%s: RevokeByHash() ok = %v, error = %v, want nothing to revoke", name, ok, err)
+		}
+	}
+}
 
-	if !errors.Is(err, model.ErrRefreshTokenNotFound) {
-		t.Errorf("error = %v, want ErrRefreshTokenNotFound", err)
+func TestRevokeByHashLetsExactlyOneOfTwoConcurrentCallersWin(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	repository := NewRefreshTokenRepository(f.pool)
+	_, opaque := saveToken(t, f, ctx, repository)
+	const callers = 8
+	var winners atomic.Int32
+	var group sync.WaitGroup
+	start := make(chan struct{})
+	for range callers {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			if _, ok, err := repository.RevokeByHash(ctx, model.HashOpaqueToken(opaque), time.Now()); err != nil {
+				t.Errorf("RevokeByHash() error = %v", err)
+			} else if ok {
+				winners.Add(1)
+			}
+		}()
+	}
+	close(start)
+	group.Wait()
+
+	if got := winners.Load(); got != 1 {
+		t.Errorf("%d callers rotated the same token, want exactly 1", got)
 	}
 }
 

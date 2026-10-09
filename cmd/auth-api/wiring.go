@@ -27,7 +27,7 @@ type poolOpener func(ctx context.Context, settings persistence.PoolSettings) (*p
 //   - No signing key: health only, exactly as before; with a database URL that is a startup error,
 //     because registration issues tokens.
 //   - A signing key: health and /jwks.
-//   - A signing key and a database URL: also POST /register and POST /login, served by the real use cases.
+//   - A signing key and a database URL: also POST /register, POST /login and POST /refresh, served by the real use cases.
 //
 // A configured key or database that cannot be used stops the service instead of degrading it.
 func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, open poolOpener) (http.Handler, func(), error) {
@@ -66,6 +66,8 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 	logger.Info("register route enabled")
 	options = append(options, httpapi.WithLoginUser(newLoginUser(cfg, pool, issuer)))
 	logger.Info("login route enabled")
+	options = append(options, httpapi.WithRefreshSession(newRefreshSession(cfg, pool, issuer)))
+	logger.Info("refresh route enabled")
 	return httpapi.NewHandler(options...), pool.Close, nil
 }
 
@@ -91,6 +93,19 @@ func newLoginUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer) *
 		security.NewBcryptHasher(cfg.BcryptRounds),
 		issuer,
 		usecase.NewIssueRefreshToken(persistence.NewRefreshTokenRepository(pool), ids, clock, cfg.RefreshTokenTTL),
+		clock,
+	)
+}
+
+func newRefreshSession(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer) *usecase.RefreshSession {
+	clock, ids := system.Clock{}, system.UUIDGenerator{}
+	tokens := persistence.NewRefreshTokenRepository(pool)
+	return usecase.NewRefreshSession(
+		tokens,
+		persistence.NewUserRepository(pool),
+		persistence.NewTransactionManager(pool),
+		issuer,
+		usecase.NewIssueRefreshToken(tokens, ids, clock, cfg.RefreshTokenTTL),
 		clock,
 	)
 }
