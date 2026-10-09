@@ -14,7 +14,10 @@ import (
 	"github.com/code-corhuila/csp-auth-api/internal/config"
 )
 
-const registerPath = "/api/v1/auth/register"
+const (
+	registerPath = "/api/v1/auth/register"
+	loginPath    = "/api/v1/auth/login"
+)
 
 // lazyPool returns a pool that has not connected: enough to wire the use case without a database.
 func lazyPool(settings *persistence.PoolSettings, opened *int) poolOpener {
@@ -27,16 +30,28 @@ func lazyPool(settings *persistence.PoolSettings, opened *int) poolOpener {
 
 func registerStatus(t *testing.T, cfg config.Config, open poolOpener) (int, func()) {
 	t.Helper()
+	return postEmptyJSON(t, registerPath, cfg, open)
+}
+
+func loginStatus(t *testing.T, cfg config.Config, open poolOpener) (int, func()) {
+	t.Helper()
+	return postEmptyJSON(t, loginPath, cfg, open)
+}
+
+func postEmptyJSON(t *testing.T, path string, cfg config.Config, open poolOpener) (int, func()) {
+	t.Helper()
 	handler, closeDatabase, err := newHandler(context.Background(), discardLogger(), cfg, open)
 	if err != nil {
 		t.Fatalf("newHandler() error = %v", err)
 	}
+	request := httptest.NewRequest(http.MethodPost, path, strings.NewReader("{}"))
+	request.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, registerPath, strings.NewReader("{}")))
+	handler.ServeHTTP(rec, request)
 	return rec.Code, closeDatabase
 }
 
-func TestNewHandlerRegisterRouteDecisionTable(t *testing.T) {
+func TestNewHandlerRegisterAndLoginRouteDecisionTable(t *testing.T) {
 	withKey := testConfig(t)
 	withKey.JWTPrivateKey = generatedKeyPEM(t)
 	withDatabase := withKey
@@ -53,6 +68,12 @@ func TestNewHandlerRegisterRouteDecisionTable(t *testing.T) {
 	if got, _ := registerStatus(t, withKey, lazyPool(&settings, &opened)); got != http.StatusNotFound {
 		t.Errorf("key without database: status = %d, want 404", got)
 	}
+	if got, _ := loginStatus(t, testConfig(t), lazyPool(&settings, &opened)); got != http.StatusNotFound {
+		t.Errorf("login, no database, no key: status = %d, want 404", got)
+	}
+	if got, _ := loginStatus(t, withKey, lazyPool(&settings, &opened)); got != http.StatusNotFound {
+		t.Errorf("login, key without database: status = %d, want 404", got)
+	}
 	if opened != 0 {
 		t.Fatalf("the pool was opened %d times without a database URL", opened)
 	}
@@ -64,6 +85,12 @@ func TestNewHandlerRegisterRouteDecisionTable(t *testing.T) {
 	}
 	if opened != 1 || settings.URL != withDatabase.DatabaseURL || settings.MaxConnections != 7 || settings.MinConnections != 1 {
 		t.Errorf("pool opened %d times with %+v, want once with the configured limits", opened, settings)
+	}
+
+	gotLogin, closeLoginDatabase := loginStatus(t, withDatabase, lazyPool(&settings, &opened))
+	defer closeLoginDatabase()
+	if gotLogin != http.StatusBadRequest {
+		t.Errorf("login, database and key: status = %d, want 400 (the route exists and validates the request)", gotLogin)
 	}
 }
 
@@ -114,8 +141,10 @@ func TestNewHandlerDoesNotLogTheDatabaseURLOrTheKey(t *testing.T) {
 	}
 	defer closeDatabase()
 
-	if !strings.Contains(logs.String(), "register route enabled") {
-		t.Errorf("log = %q, want the register route to be announced", logs.String())
+	for _, announcement := range []string{"register route enabled", "login route enabled"} {
+		if !strings.Contains(logs.String(), announcement) {
+			t.Errorf("log = %q, want %q", logs.String(), announcement)
+		}
 	}
 	if strings.Contains(logs.String(), "secret") || strings.Contains(logs.String(), "PRIVATE KEY") {
 		t.Errorf("log leaks a secret: %q", logs.String())

@@ -95,7 +95,18 @@ It requires the `Idempotency-Key` header and a JSON body of at most 1 MiB; it an
 user, `200` with the user alone on a replay, `400` with one `details` entry per invalid field, and `409` when the
 email is registered or the key was used by another request. `X-Correlation-Id` is echoed or generated.
 
-The end-to-end test of this route (`cmd/auth-api`, tag `integration`) uses the same `AUTH_TEST_DATABASE_URL`:
+`POST /api/v1/auth/login` (HU-AUTH-002) is enabled by the same two settings as `/register`:
+
+```bash
+curl -i -X POST http://localhost:8081/api/v1/auth/login   -H 'Content-Type: application/json'   -d '{"email":"ada@example.com","password":"<the password chosen at registration>"}'
+```
+
+It requires a JSON body of at most 1 MiB with `email` and `password`, and answers `200` with the tokens and the user
+(`Cache-Control: no-store`). A missing or empty field is `400`; an unknown or malformed email and a wrong password get
+the same `401` (`INVALID_CREDENTIALS`), and a locked account gets `423` (`ACCOUNT_LOCKED`) only when the password is
+right. The `429` of the contract belongs to the rate limit (HU-AUTH-005) and is not served yet.
+
+The end-to-end tests of these routes (`cmd/auth-api`, tag `integration`) uses the same `AUTH_TEST_DATABASE_URL`:
 
 ```bash
 go test -tags integration ./...
