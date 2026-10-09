@@ -71,11 +71,35 @@ curl http://localhost:8081/api/v1/auth/health          # {"status":"ok"}
 curl http://localhost:8081/api/v1/auth/health/ready    # {"status":"ready","dependencies":{}}
 ```
 
-`POST /api/v1/auth/register` (HU-AUTH-001) is implemented in the HTTP adapter and registered only when the
-composition root injects the use case with `httpapi.WithRegisterUser`; the next change wires it in `main.go`.
+`POST /api/v1/auth/register` (HU-AUTH-001) is served by the real use case when **both** `APP_AUTH_DATABASE_URL`
+and a signing key (`APP_AUTH_JWT_PRIVATE_KEY` or `APP_AUTH_JWT_PRIVATE_KEY_FILE`) are set. Without a database URL the
+service starts as before (health, and `/jwks` when a key is set). A database URL without a signing key, an invalid pool
+setting or a database that does not answer stops the service at startup. The pool is closed on shutdown.
+
+To run it with the database:
+
+1. Start the PostgreSQL instance of `csp-infra-postgres` and apply the migrations with the executor of `csp-auth-db`
+   (`docker compose -f deploy/compose.yml --env-file .env --profile tooling run --rm auth-db-migrate`, see its README).
+   The service connects as `auth_app`, never as the executor user.
+2. Export the variables (names only here, see `.env.example`; never commit values):
+   `APP_AUTH_DATABASE_URL` (login `auth_app`, `search_path=auth`), `APP_AUTH_JWT_PRIVATE_KEY_FILE` (RSA key, PEM)
+   and, optionally, `APP_AUTH_BCRYPT_ROUNDS`, `APP_AUTH_JWT_EXPIRY`, `APP_AUTH_REFRESH_TOKEN_EXPIRY` and the
+   `APP_AUTH_DATABASE_*` pool limits.
+3. `go run ./cmd/auth-api` and register:
+
+```bash
+curl -i -X POST http://localhost:8081/api/v1/auth/register   -H 'Content-Type: application/json'   -H "Idempotency-Key: $(uuidgen)"   -d '{"email":"ada@example.com","password":"<a password of 8 to 72 bytes>","name":"Ada Lovelace"}'
+```
+
 It requires the `Idempotency-Key` header and a JSON body of at most 1 MiB; it answers `201` with the tokens and the
 user, `200` with the user alone on a replay, `400` with one `details` entry per invalid field, and `409` when the
 email is registered or the key was used by another request. `X-Correlation-Id` is echoed or generated.
+
+The end-to-end test of this route (`cmd/auth-api`, tag `integration`) uses the same `AUTH_TEST_DATABASE_URL`:
+
+```bash
+go test -tags integration ./...
+```
 
 With Docker, from the root of the repository:
 
@@ -87,8 +111,8 @@ docker run --rm -p 8081:8081 csp-auth-api
 The service stops gracefully on `SIGINT` and `SIGTERM`. In the platform, `csp-infra` includes `deploy/compose.yml`,
 which exposes the port on the `platform` network without publishing it: only the gateway reaches the service.
 Copy `.env.example` to `.env` for local values and never commit `.env`. The file lists first the variables the
-service reads today (`PORT` and the `APP_AUTH_HTTP_*` timeouts) and then, apart, the ones reserved for later features
-(database, Redis, JWT, expiries, bcrypt), which the service does not read yet.
+service reads today (HTTP, database, bcrypt and tokens) and then, apart, the ones reserved for later features
+(Redis), which the service does not read yet.
 
 ## Branching
 
