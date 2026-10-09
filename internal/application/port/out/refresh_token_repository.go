@@ -14,6 +14,10 @@ type RefreshTokenRepository interface {
 	Save(ctx context.Context, token *model.RefreshToken) error
 	// FindByHash returns the token with that digest, or model.ErrRefreshTokenNotFound.
 	FindByHash(ctx context.Context, hash string) (*model.RefreshToken, error)
-	// Revoke marks the token revoked at the given instant; an unknown id is model.ErrRefreshTokenNotFound.
-	Revoke(ctx context.Context, id string, at time.Time) error
+	// RevokeByHash revokes, in one statement, the token with that digest if it is still active (not
+	// revoked, not expired, not soft-deleted) and returns the id of its user. ok is false when no
+	// active token has that digest, so of two concurrent callers exactly one gets ok.
+	RevokeByHash(ctx context.Context, hash string, at time.Time) (userID string, ok bool, err error)
+	// RevokeAllForUser revokes every active token of the user.
+	RevokeAllForUser(ctx context.Context, userID string, at time.Time) error
 }
