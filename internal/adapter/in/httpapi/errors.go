@@ -16,6 +16,7 @@ const (
 	codeInternal         = "INTERNAL_ERROR"
 	codeBadCredentials   = "INVALID_CREDENTIALS"
 	codeAccountLocked    = "ACCOUNT_LOCKED"
+	codeBadRefreshToken  = "INVALID_REFRESH_TOKEN"
 )
 
 // fieldError names one invalid input: a body property or a header.
@@ -93,6 +94,27 @@ func translateLoginError(w http.ResponseWriter, traceID string, err error) {
 		})
 	default:
 		slog.Error("login user failed", "traceId", traceID, "error", err)
+		writeJSON(w, http.StatusInternalServerError, errorResponse{
+			Error: codeInternal, Message: "an unexpected error occurred", TraceID: traceID,
+		})
+	}
+}
+
+// translateRefreshError is the only place that maps the errors of the refresh use case to HTTP.
+// A token that is unknown, expired or already used gets one fixed response, so the client cannot
+// tell which. The cause of an unexpected error goes only to the log, which never sees the token.
+func translateRefreshError(w http.ResponseWriter, traceID string, err error) {
+	switch {
+	case errors.Is(err, model.ErrRefreshTokenRejected):
+		writeJSON(w, http.StatusUnauthorized, errorResponse{
+			Error: codeBadRefreshToken, Message: "Refresh token is invalid, expired, or already used", TraceID: traceID,
+		})
+	case errors.Is(err, model.ErrUserLocked):
+		writeJSON(w, http.StatusLocked, errorResponse{
+			Error: codeAccountLocked, Message: "Account temporarily locked after repeated failed attempts", TraceID: traceID,
+		})
+	default:
+		slog.Error("refresh session failed", "traceId", traceID, "error", err)
 		writeJSON(w, http.StatusInternalServerError, errorResponse{
 			Error: codeInternal, Message: "an unexpected error occurred", TraceID: traceID,
 		})

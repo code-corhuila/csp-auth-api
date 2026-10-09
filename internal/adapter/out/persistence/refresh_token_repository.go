@@ -63,18 +63,29 @@ func (r *RefreshTokenRepository) FindByHash(ctx context.Context, hash string) (*
 	return model.RestoreRefreshToken(id, userID, hash, agent, expiresAt, revokedAt), nil
 }
 
-// Revoke sets revoked_at once: a token that is already revoked keeps its first instant.
-func (r *RefreshTokenRepository) Revoke(ctx context.Context, id string, at time.Time) error {
-	tag, err := executorFor(ctx, r.pool).Exec(ctx,
-		`UPDATE auth.refresh_token SET revoked_at = COALESCE(revoked_at, $2), updated_at = NOW()
-		 WHERE id = $1 AND deleted_at IS NULL`, id, at)
+// RevokeByHash is one UPDATE, so the row lock makes concurrent callers with the same token take
+// turns and only the first one still finds it active.
+func (r *RefreshTokenRepository) RevokeByHash(ctx context.Context, hash string, at time.Time) (string, bool, error) {
+	var userID string
+	err := executorFor(ctx, r.pool).QueryRow(ctx,
+		`UPDATE auth.refresh_token SET revoked_at = $2, updated_at = NOW()
+		 WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > $2 AND deleted_at IS NULL
+		 RETURNING user_id::text`, hash, at).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
 	if err != nil {
-		return err
+		return "", false, err
 	}
-	if tag.RowsAffected() == 0 {
-		return model.ErrRefreshTokenNotFound
-	}
-	return nil
+	return userID, true, nil
+}
+
+// RevokeAllForUser keeps the first revocation instant of the tokens that were already revoked.
+func (r *RefreshTokenRepository) RevokeAllForUser(ctx context.Context, userID string, at time.Time) error {
+	_, err := executorFor(ctx, r.pool).Exec(ctx,
+		`UPDATE auth.refresh_token SET revoked_at = $2, updated_at = NOW()
+		 WHERE user_id = $1 AND revoked_at IS NULL AND deleted_at IS NULL`, userID, at)
+	return err
 }
 
 func isDuplicateRefreshTokenHash(err error) bool {
