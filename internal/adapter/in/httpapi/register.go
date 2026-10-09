@@ -1,11 +1,6 @@
 package httpapi
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"mime"
 	"net/http"
 
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/in"
@@ -13,9 +8,6 @@ import (
 )
 
 const (
-	// maxRegisterBodyBytes is the explicit limit of the request body (Norma 5.3.10).
-	maxRegisterBodyBytes = 1 << 20
-
 	headerIdempotencyKey = "Idempotency-Key"
 )
 
@@ -59,7 +51,7 @@ func register(useCase in.RegisterUser) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "no-store")
 
 		key := r.Header.Get(headerIdempotencyKey)
-		body, unreadable := decodeRegisterRequest(w, r)
+		body, unreadable := decodeBody[registerRequest](w, r)
 		problems := validateRegistration(key, body, unreadable == nil)
 		problems = append(problems, unreadable...)
 		if len(problems) > 0 {
@@ -92,36 +84,6 @@ func register(useCase in.RegisterUser) http.HandlerFunc {
 			ExpiresIn:    result.Session.ExpiresIn,
 			User:         user,
 		})
-	}
-}
-
-// decodeRegisterRequest reads the JSON body within the size limit. Unknown properties are ignored,
-// so the contract can grow with optional fields without breaking clients (API guidelines).
-// It returns the problems that prevented reading the body, if any.
-func decodeRegisterRequest(w http.ResponseWriter, r *http.Request) (registerRequest, []fieldError) {
-	var body registerRequest
-	if mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mediaType != "application/json" {
-		return body, []fieldError{{Field: "Content-Type", Message: "must be application/json"}}
-	}
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRegisterBodyBytes))
-	err := decoder.Decode(&body)
-	if err == nil {
-		if _, trailing := decoder.Token(); trailing != io.EOF {
-			err = errors.New("unexpected data after the JSON value")
-		}
-	}
-	if err == nil {
-		return body, nil
-	}
-	var tooLarge *http.MaxBytesError
-	var wrongType *json.UnmarshalTypeError
-	switch {
-	case errors.As(err, &tooLarge):
-		return body, []fieldError{{Field: "body", Message: fmt.Sprintf("must be at most %d bytes", maxRegisterBodyBytes)}}
-	case errors.As(err, &wrongType):
-		return body, []fieldError{{Field: wrongType.Field, Message: "must be a " + wrongType.Type.String()}}
-	default:
-		return body, []fieldError{{Field: "body", Message: "must be a valid JSON object"}}
 	}
 }
 
