@@ -1,5 +1,23 @@
 # This service only. csp-infra includes this file to compose the platform.
-# The variables of the database, Redis and the JWT keys are added by the pull requests that make the service read them.
+#
+# Every setting is passed from the platform environment (the .env of csp-infra). An unset or empty
+# variable is read by the service as "not configured": it applies its documented default, or
+# leaves the feature off. No value and no secret is written in this file.
+#
+# What csp-infra-postgres / the platform provides:
+#   APP_AUTH_DATABASE_URL            PostgreSQL URL of the auth schema, login auth_app (never the migration
+#                                    executor user). Without it the service starts with the health routes only,
+#                                    so it is not required here.
+#   APP_AUTH_JWT_PRIVATE_KEY         RS256 signing key (PEM), or ...
+#   APP_AUTH_JWT_PRIVATE_KEY_FILE    ... the path of a PEM file that the platform mounts in the container.
+#                                    Registration needs the database URL and one of the two.
+# Optional, the service default applies when empty:
+#   APP_AUTH_DATABASE_MAX_CONNECTIONS, APP_AUTH_DATABASE_MIN_CONNECTIONS,
+#   APP_AUTH_DATABASE_CONNECT_TIMEOUT, APP_AUTH_DATABASE_QUERY_TIMEOUT,
+#   APP_AUTH_BCRYPT_ROUNDS, APP_AUTH_JWT_EXPIRY (seconds), APP_AUTH_REFRESH_TOKEN_EXPIRY (seconds),
+#   APP_AUTH_HTTP_READ_HEADER_TIMEOUT, APP_AUTH_HTTP_READ_TIMEOUT, APP_AUTH_HTTP_WRITE_TIMEOUT,
+#   APP_AUTH_HTTP_IDLE_TIMEOUT, APP_AUTH_HTTP_SHUTDOWN_TIMEOUT.
+# The migration executor of csp-auth-db is a tooling service started by hand before the API.
 name: csp-auth-api
 
 services:
@@ -9,6 +27,26 @@ services:
       dockerfile: deploy/Dockerfile
     environment:
       PORT: "8081"
+      # HTTP server limits (Go durations, Norma 5.3.10).
+      APP_AUTH_HTTP_READ_HEADER_TIMEOUT: ${APP_AUTH_HTTP_READ_HEADER_TIMEOUT:-}
+      APP_AUTH_HTTP_READ_TIMEOUT: ${APP_AUTH_HTTP_READ_TIMEOUT:-}
+      APP_AUTH_HTTP_WRITE_TIMEOUT: ${APP_AUTH_HTTP_WRITE_TIMEOUT:-}
+      APP_AUTH_HTTP_IDLE_TIMEOUT: ${APP_AUTH_HTTP_IDLE_TIMEOUT:-}
+      APP_AUTH_HTTP_SHUTDOWN_TIMEOUT: ${APP_AUTH_HTTP_SHUTDOWN_TIMEOUT:-}
+      # Database of this domain (Annex J) and its pool.
+      APP_AUTH_DATABASE_URL: ${APP_AUTH_DATABASE_URL:-}
+      APP_AUTH_DATABASE_MAX_CONNECTIONS: ${APP_AUTH_DATABASE_MAX_CONNECTIONS:-}
+      APP_AUTH_DATABASE_MIN_CONNECTIONS: ${APP_AUTH_DATABASE_MIN_CONNECTIONS:-}
+      APP_AUTH_DATABASE_CONNECT_TIMEOUT: ${APP_AUTH_DATABASE_CONNECT_TIMEOUT:-}
+      APP_AUTH_DATABASE_QUERY_TIMEOUT: ${APP_AUTH_DATABASE_QUERY_TIMEOUT:-}
+      # Password hashing cost.
+      APP_AUTH_BCRYPT_ROUNDS: ${APP_AUTH_BCRYPT_ROUNDS:-}
+      # Signing key of the tokens (Norma 5.3.7); csp-infra mounts the PEM file when the file form is used.
+      APP_AUTH_JWT_PRIVATE_KEY: ${APP_AUTH_JWT_PRIVATE_KEY:-}
+      APP_AUTH_JWT_PRIVATE_KEY_FILE: ${APP_AUTH_JWT_PRIVATE_KEY_FILE:-}
+      # Token lifetimes in integer seconds.
+      APP_AUTH_JWT_EXPIRY: ${APP_AUTH_JWT_EXPIRY:-}
+      APP_AUTH_REFRESH_TOKEN_EXPIRY: ${APP_AUTH_REFRESH_TOKEN_EXPIRY:-}
     # expose, not ports: only the gateway is reachable from the host.
     expose: ["8081"]
     networks: [platform]
