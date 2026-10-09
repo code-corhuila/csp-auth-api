@@ -34,8 +34,6 @@ func (*fakeRefreshTokens) RevokeByHash(context.Context, string, time.Time) (stri
 	return "", false, nil
 }
 
-func (*fakeRefreshTokens) RevokeAllForUser(context.Context, string, time.Time) error { return nil }
-
 func TestIssueStoresTheDigestAndReturnsTheRawTokenOnce(t *testing.T) {
 	tokens := &fakeRefreshTokens{}
 	useCase := NewIssueRefreshToken(tokens, &fakeIDs{next: []string{"token-1"}}, fakeClock{}, refreshTTL)
