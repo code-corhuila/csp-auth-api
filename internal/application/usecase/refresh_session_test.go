@@ -201,7 +201,7 @@ func TestRefreshFailureWhileIssuingKeepsTheOldTokenValid(t *testing.T) {
 	failure := errors.New("boom")
 	cases := map[string]func(*refreshFixture){
 		"user lookup":   func(f *refreshFixture) { f.users.err = failure },
-		"access token":  func(f *refreshFixture) { f.useCase.session.tokens = loginTokens{err: failure} },
+		"access token":  func(f *refreshFixture) { f.useCase.session.accessTokens = loginTokens{err: failure} },
 		"refresh token": func(f *refreshFixture) { f.sessions.err = failure },
 	}
 	for name, breakIt := range cases {

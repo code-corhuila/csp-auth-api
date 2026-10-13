@@ -29,7 +29,7 @@ var _ in.LoginUser = (*LoginUser)(nil)
 
 // NewLoginUser wires the use case with the ports it needs.
 func NewLoginUser(users out.UserRepository, hasher out.PasswordHasher, tokens out.TokenIssuer, sessions in.IssueRefreshToken, clock out.Clock) *LoginUser {
-	return &LoginUser{users: users, hasher: hasher, session: sessionIssuer{tokens: tokens, sessions: sessions, clock: clock}}
+	return &LoginUser{users: users, hasher: hasher, session: sessionIssuer{accessTokens: tokens, sessions: sessions, clock: clock}}
 }
 
 // Login checks the credentials and issues an access token and a refresh token.

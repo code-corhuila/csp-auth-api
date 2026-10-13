@@ -32,7 +32,7 @@ var _ in.RegisterUser = (*RegisterUser)(nil)
 
 // NewRegisterUser wires the use case with the ports it needs.
 func NewRegisterUser(ports RegisterUserPorts) *RegisterUser {
-	return &RegisterUser{ports: ports, session: sessionIssuer{tokens: ports.Tokens, sessions: ports.Sessions, clock: ports.Clock}}
+	return &RegisterUser{ports: ports, session: sessionIssuer{accessTokens: ports.Tokens, sessions: ports.Sessions, clock: ports.Clock}}
 }
 
 type registration struct {
