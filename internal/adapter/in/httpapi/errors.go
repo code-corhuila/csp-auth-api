@@ -106,6 +106,7 @@ func translateLoginError(w http.ResponseWriter, traceID string, err error) {
 func translateRefreshError(w http.ResponseWriter, traceID string, err error) {
 	switch {
 	case errors.Is(err, model.ErrRefreshTokenRejected):
+		slog.Warn("refresh token rejected", "traceId", traceID)
 		writeJSON(w, http.StatusUnauthorized, errorResponse{
 			Error: codeBadRefreshToken, Message: "Refresh token is invalid, expired, or already used", TraceID: traceID,
 		})

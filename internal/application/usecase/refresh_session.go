@@ -11,23 +11,23 @@ import (
 
 // RefreshSession implements in.RefreshSession (HU-AUTH-002): refresh token rotation.
 type RefreshSession struct {
-	tokens       out.RefreshTokenRepository
-	users        out.UserRepository
-	transactions out.TransactionManager
-	session      sessionIssuer
-	clock        out.Clock
+	refreshTokens out.RefreshTokenRepository
+	users         out.UserRepository
+	transactions  out.TransactionManager
+	session       sessionIssuer
+	clock         out.Clock
 }
 
 var _ in.RefreshSession = (*RefreshSession)(nil)
 
 // NewRefreshSession wires the use case with the ports it needs.
-func NewRefreshSession(tokens out.RefreshTokenRepository, users out.UserRepository, transactions out.TransactionManager, access out.TokenIssuer, sessions in.IssueRefreshToken, clock out.Clock) *RefreshSession {
+func NewRefreshSession(refreshTokens out.RefreshTokenRepository, users out.UserRepository, transactions out.TransactionManager, accessTokens out.TokenIssuer, sessions in.IssueRefreshToken, clock out.Clock) *RefreshSession {
 	return &RefreshSession{
-		tokens:       tokens,
-		users:        users,
-		transactions: transactions,
-		session:      sessionIssuer{tokens: access, sessions: sessions, clock: clock},
-		clock:        clock,
+		refreshTokens: refreshTokens,
+		users:         users,
+		transactions:  transactions,
+		session:       sessionIssuer{accessTokens: accessTokens, sessions: sessions, clock: clock},
+		clock:         clock,
 	}
 }
 
@@ -46,7 +46,7 @@ func (r *RefreshSession) Refresh(ctx context.Context, command in.RefreshSessionC
 	var result in.LoginUserResult
 	err := r.transactions.WithinTransaction(ctx, func(ctx context.Context) error {
 		now := r.clock.Now()
-		userID, spent, err := r.tokens.RevokeByHash(ctx, hash, now)
+		userID, spent, err := r.refreshTokens.RevokeByHash(ctx, hash, now)
 		if err != nil {
 			return err
 		}
