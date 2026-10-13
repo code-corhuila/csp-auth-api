@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -155,6 +157,26 @@ func TestRefreshRejectedTokensShareOneFixedBodyThatNeverEchoesTheToken(t *testin
 	}
 	if len(bodies) == 2 && (bodies[0]["error"] != bodies[1]["error"] || bodies[0]["message"] != bodies[1]["message"] || bodies[0]["traceId"] != bodies[1]["traceId"]) {
 		t.Errorf("bodies differ: %v vs %v", bodies[0], bodies[1])
+	}
+}
+
+func TestRefreshRejectedTokenLogsOnceWithTheTraceIdAndNeverTheToken(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	rec := sendRefresh(&fakeRefresh{err: model.ErrRefreshTokenRejected}, attempt{body: refreshBody(), headers: map[string]string{"X-Correlation-Id": "trace-rejected"}})
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	out := logs.String()
+	if strings.Count(out, "\n") != 1 || !strings.Contains(out, "level=WARN") || !strings.Contains(out, "traceId=trace-rejected") {
+		t.Errorf("log = %q, want one WARN line with the trace id", out)
+	}
+	if strings.Contains(out, presentedToken) || strings.Contains(out, string(model.HashOpaqueToken(presentedToken))) {
+		t.Errorf("the log leaks the token or its hash: %q", out)
 	}
 }
 
