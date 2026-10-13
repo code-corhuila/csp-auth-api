@@ -30,7 +30,9 @@ func (*fakeRefreshTokens) FindByHash(context.Context, string) (*model.RefreshTok
 	return nil, model.ErrRefreshTokenNotFound
 }
 
-func (*fakeRefreshTokens) Revoke(context.Context, string, time.Time) error { return nil }
+func (*fakeRefreshTokens) RevokeByHash(context.Context, string, time.Time) (string, bool, error) {
+	return "", false, nil
+}
 
 func TestIssueStoresTheDigestAndReturnsTheRawTokenOnce(t *testing.T) {
 	tokens := &fakeRefreshTokens{}

@@ -19,6 +19,7 @@ var (
 	ErrInvalidUserStatus      = errors.New("user status must be ACTIVE or LOCKED")
 	ErrInvalidCredentials     = errors.New("email or password is incorrect")
 	ErrInvalidRefreshToken    = errors.New("refresh token needs an id, an opaque value and a positive lifetime")
+	ErrRefreshTokenRejected   = errors.New("refresh token is invalid, expired or already used")
 	ErrRefreshTokenNotFound   = errors.New("refresh token does not exist")
 	ErrRefreshTokenDuplicated = errors.New("a refresh token with this digest already exists")
 	ErrInvalidIdempotencyKey  = errors.New("idempotency key must have between 8 and 128 characters")
