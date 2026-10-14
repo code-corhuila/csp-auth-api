@@ -145,3 +145,24 @@ func TestLoadRejectsAnAccessTokenLifetimeThatIsNotAPositiveNumberOfSecondsUpToOn
 		}
 	}
 }
+
+func TestLoadReadsTheRefreshReuseGraceInSeconds(t *testing.T) {
+	cfg, err := Load(lookupFrom(nil))
+	if err != nil || cfg.RefreshReuseGrace != 10*time.Second {
+		t.Fatalf("default: cfg.RefreshReuseGrace = %v, err = %v; want 10s", cfg.RefreshReuseGrace, err)
+	}
+	for value, want := range map[string]time.Duration{"1": time.Second, "30": 30 * time.Second, "60": time.Minute} {
+		cfg, err = Load(lookupFrom(map[string]string{"APP_AUTH_REFRESH_REUSE_GRACE": value}))
+		if err != nil || cfg.RefreshReuseGrace != want {
+			t.Errorf("APP_AUTH_REFRESH_REUSE_GRACE=%s: cfg.RefreshReuseGrace = %v, err = %v; want %v", value, cfg.RefreshReuseGrace, err, want)
+		}
+	}
+}
+
+func TestLoadRejectsARefreshReuseGraceOutsideOneToSixtySeconds(t *testing.T) {
+	for _, value := range []string{"0", "-1", "61", "10s", "ten", "1.5"} {
+		if _, err := Load(lookupFrom(map[string]string{"APP_AUTH_REFRESH_REUSE_GRACE": value})); err == nil {
+			t.Errorf("APP_AUTH_REFRESH_REUSE_GRACE=%s: Load() error = nil", value)
+		}
+	}
+}
