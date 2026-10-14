@@ -34,6 +34,9 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 - Contract tests that validate the real responses of `register`, `login`, `refresh` and `jwks` against `auth-service.yaml`
   (HU-AUTH-001, HU-AUTH-002); the CI job checks out `csp-docs` for the contract
   ([#52](https://github.com/code-corhuila/csp-auth-api/issues/52)).
+- HU-AUTH-002, verification of the service credential for the internal operations (ADR-020, ADR-030, issue
+  [#32](https://github.com/code-corhuila/csp-auth-api/issues/32)): `SERVICE_SUBJECTS`, the RS256 verifier of service
+  tokens, the use case that authorizes a service and the guard that answers `401` and `403`. No route uses it yet.
 - This changelog ([#51](https://github.com/code-corhuila/csp-auth-api/pull/51)).
 
 ### Changed
