@@ -27,7 +27,8 @@ type poolOpener func(ctx context.Context, settings persistence.PoolSettings) (*p
 //   - No signing key: health only, exactly as before; with a database URL that is a startup error,
 //     because registration issues tokens.
 //   - A signing key: health and /jwks.
-//   - A signing key and a database URL: also POST /register, POST /login and POST /refresh, served by the real use cases.
+//   - A signing key and a database URL: also POST /register, POST /login and POST /refresh, served by the real use cases,
+//     and POST /internal/maintenance/purge, open only to the service tokens whose subject is in SERVICE_SUBJECTS.
 //
 // A configured key or database that cannot be used stops the service instead of degrading it.
 func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, open poolOpener) (http.Handler, func(), error) {
@@ -68,6 +69,8 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 	logger.Info("login route enabled")
 	options = append(options, httpapi.WithRefreshSession(newRefreshSession(cfg, pool, issuer)))
 	logger.Info("refresh route enabled")
+	options = append(options, httpapi.WithPurgeOldRecords(newAuthorizeService(cfg, issuer), newPurgeOldRecords(pool)))
+	logger.Info("purge route enabled")
 	return httpapi.NewHandler(options...), pool.Close, nil
 }
 
@@ -108,5 +111,18 @@ func newRefreshSession(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issu
 		usecase.NewIssueRefreshToken(tokens, ids, clock, cfg.RefreshTokenTTL),
 		clock,
 		cfg.RefreshReuseGrace,
+	)
+}
+
+func newAuthorizeService(cfg config.Config, issuer *token.Issuer) *usecase.AuthorizeService {
+	return usecase.NewAuthorizeService(token.NewServiceTokenVerifier(issuer.PublicKeys(), system.Clock{}), cfg.ServiceSubjects)
+}
+
+func newPurgeOldRecords(pool *pgxpool.Pool) *usecase.PurgeOldRecords {
+	return usecase.NewPurgeOldRecords(
+		persistence.NewOutboxPurger(pool),
+		persistence.NewRefreshTokenPurger(pool),
+		persistence.NewIdempotencyKeyPurger(pool),
+		system.Clock{},
 	)
 }
