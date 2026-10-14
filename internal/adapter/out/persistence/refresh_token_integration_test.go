@@ -178,11 +178,3 @@ func TestRevokeByHashLetsExactlyOneOfTwoConcurrentCallersWin(t *testing.T) {
 		t.Errorf("%d callers rotated the same token, want exactly 1", got)
 	}
 }
-
-func TestRefreshTokensCannotBeDeletedByTheService(t *testing.T) {
-	f, ctx := newFixture(t), context.Background()
-
-	if _, err := f.pool.Exec(ctx, `DELETE FROM auth.refresh_token WHERE id = $1`, newUUID(t)); err == nil {
-		t.Error("DELETE succeeded, auth_writer must not have that privilege")
-	}
-}

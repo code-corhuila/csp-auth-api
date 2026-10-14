@@ -125,6 +125,10 @@ gets `403 FORBIDDEN`. Issuer and audience are not required. The service has no e
 deployment secret manager provides them, and `csp-infra-postgres/scripts/dev-token.sh <sub> <minutes>` writes one for
 development. The first internal operation is the purge of old rows.
 
+The purge of old rows (ADR-030) deletes, in this order, outbox events older than 30 days, refresh tokens that expired
+or were revoked more than 30 days ago and idempotency keys older than 7 days, at most `batchSize` rows (1 to 500) in
+total per call; it needs the `DELETE` grants of migration V019 of `csp-auth-db` for `auth_writer`.
+
 The end-to-end tests of these routes (`cmd/auth-api`, tag `integration`) uses the same `AUTH_TEST_DATABASE_URL`:
 
 ```bash

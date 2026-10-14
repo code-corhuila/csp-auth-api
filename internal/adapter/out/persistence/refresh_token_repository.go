@@ -15,8 +15,8 @@ import (
 
 const refreshTokenHashIndex = "uk_refresh_token_token_hash"
 
-// RefreshTokenRepository implements out.RefreshTokenRepository over auth.refresh_token. Rows are
-// never deleted (auth_writer has no DELETE): revoking sets revoked_at.
+// RefreshTokenRepository implements out.RefreshTokenRepository over auth.refresh_token. Revoking
+// sets revoked_at; only the purge deletes rows (NewRefreshTokenPurger).
 type RefreshTokenRepository struct {
 	pool *pgxpool.Pool
 }
