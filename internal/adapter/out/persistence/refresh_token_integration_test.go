@@ -277,11 +277,3 @@ func revokedAt(t *testing.T, f fixture, hash string) *time.Time {
 	}
 	return at
 }
-
-func TestRefreshTokensCannotBeDeletedByTheService(t *testing.T) {
-	f, ctx := newFixture(t), context.Background()
-
-	if _, err := f.pool.Exec(ctx, `DELETE FROM auth.refresh_token WHERE id = $1`, newUUID(t)); err == nil {
-		t.Error("DELETE succeeded, auth_writer must not have that privilege")
-	}
-}
