@@ -4,9 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,9 +22,7 @@ import (
 
 // Contract tests: the real handlers answer through fakes of the use cases, and every response is
 // validated against auth-service.yaml of csp-docs (07-api/contracts/openapi). The contract is not
-// changed here. A status the contract does not declare for an operation (see undocumentedStatuses)
-// is not validated as declared: its body must at least be the ErrorResponse of _shared.yaml, and
-// the gap is logged so it can be fixed in csp-docs.
+// changed here.
 
 const contractFileVariable = "AUTH_CONTRACT_FILE"
 
@@ -72,11 +68,6 @@ func requireContract(t *testing.T, method, path string, rec *httptest.ResponseRe
 		t.Fatalf("the contract has no %s %s", method, contractPath)
 	}
 	operation := item.GetOperation(method)
-	if operation.Responses.Status(rec.Code) == nil && undocumentedStatuses[fmt.Sprintf("%s %s %d", method, contractPath, rec.Code)] {
-		requireErrorResponse(t, doc, rec)
-		t.Logf("%s %s %d is not declared by the contract; checked against ErrorResponse only", method, contractPath, rec.Code)
-		return
-	}
 	request := httptest.NewRequest(method, path, nil)
 	input := &openapi3filter.ResponseValidationInput{
 		RequestValidationInput: &openapi3filter.RequestValidationInput{
@@ -101,33 +92,6 @@ func requireContract(t *testing.T, method, path string, rec *httptest.ResponseRe
 		if rec.Header().Get(name) == "" {
 			t.Errorf("%s %s %d: the contract declares the header %s and the response has none", method, contractPath, rec.Code, name)
 		}
-	}
-}
-
-// undocumentedStatuses are answers of the service that auth-service.yaml 1.3.1 does not declare.
-// Once csp-docs declares one, the response is validated in full and the entry can be removed.
-var undocumentedStatuses = map[string]bool{
-	"POST /register 500": true,
-	"POST /login 400":    true,
-	"POST /login 500":    true,
-	"POST /refresh 400":  true,
-	"POST /refresh 423":  true,
-	"POST /refresh 500":  true,
-}
-
-// requireErrorResponse checks the body of rec against the ErrorResponse schema of _shared.yaml and
-// that the response repeats the correlation id.
-func requireErrorResponse(t *testing.T, doc *openapi3.T, rec *httptest.ResponseRecorder) {
-	t.Helper()
-	var body any
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("the body is not JSON: %v (%s)", err, rec.Body)
-	}
-	if err := doc.Components.Schemas["ErrorResponse"].Value.VisitJSON(body); err != nil {
-		t.Errorf("the body is not an ErrorResponse: %v\nbody: %s", err, rec.Body)
-	}
-	if rec.Header().Get("X-Correlation-Id") == "" {
-		t.Error("the response has no X-Correlation-Id")
 	}
 }
 
