@@ -65,9 +65,7 @@ fakes of the use cases and every response of `POST /register`, `/login`, `/refre
 AUTH_CONTRACT_FILE=../csp-docs/07-api/contracts/openapi/auth-service.yaml go test ./internal/adapter/in/httpapi/
 ```
 
-The statuses the service answers but the contract does not declare yet (`400` of login and refresh, `423` of refresh and
-`500` of register, login and refresh) are listed in `undocumentedStatuses`; their body is checked against `ErrorResponse`
-only, until `csp-docs` declares them.
+Every status the service answers is declared by the contract (1.4.1 or later), so every response is validated in full.
 
 The PostgreSQL adapter has integration tests behind the `integration` build tag. They need a database with the
 `csp-auth-db` migrations applied and are skipped when `AUTH_TEST_DATABASE_URL` (login `auth_app`) is not set;
