@@ -207,7 +207,7 @@ func TestLoginSurfacesFailuresWithoutSecrets(t *testing.T) {
 	failure := errors.New("boom")
 	cases := map[string]func(*loginFixture){
 		"repository":    func(f *loginFixture) { f.users.err = failure },
-		"access token":  func(f *loginFixture) { f.useCase.session.tokens = loginTokens{err: failure} },
+		"access token":  func(f *loginFixture) { f.useCase.session.accessTokens = loginTokens{err: failure} },
 		"refresh token": func(f *loginFixture) { f.sessions.err = failure },
 	}
 	for name, breakIt := range cases {

@@ -12,9 +12,9 @@ import (
 // sessionIssuer opens the session of an authenticated or just registered user: an access token
 // and a refresh token. Login and registration share it.
 type sessionIssuer struct {
-	tokens   out.TokenIssuer
-	sessions in.IssueRefreshToken
-	clock    out.Clock
+	accessTokens out.TokenIssuer
+	sessions     in.IssueRefreshToken
+	clock        out.Clock
 }
 
 func (s sessionIssuer) open(ctx context.Context, user *model.User, userAgent string) (in.LoginUserResult, error) {
@@ -22,7 +22,7 @@ func (s sessionIssuer) open(ctx context.Context, user *model.User, userAgent str
 	if err != nil {
 		return in.LoginUserResult{}, err
 	}
-	access, err := s.tokens.IssueAccessToken(claims)
+	access, err := s.accessTokens.IssueAccessToken(claims)
 	if err != nil {
 		return in.LoginUserResult{}, err
 	}
