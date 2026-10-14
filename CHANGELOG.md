@@ -27,6 +27,9 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   ([#37](https://github.com/code-corhuila/csp-auth-api/pull/37)).
 - `deploy/compose.yml` passes the service settings from the platform environment
   ([#47](https://github.com/code-corhuila/csp-auth-api/pull/47)).
+- Contract tests that validate the real responses of `register`, `login`, `refresh` and `jwks` against `auth-service.yaml`
+  (HU-AUTH-001, HU-AUTH-002); the CI job checks out `csp-docs` for the contract
+  ([#52](https://github.com/code-corhuila/csp-auth-api/issues/52)).
 - This changelog ([#51](https://github.com/code-corhuila/csp-auth-api/pull/51)).
 
 ### Changed

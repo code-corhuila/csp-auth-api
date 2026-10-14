@@ -74,7 +74,6 @@ func TestRefreshAnswers200WithAuthResponseAndNoStoreHeaders(t *testing.T) {
 		}
 	}
 	body := decode(t, rec)
-	requireKeys(t, body, "accessToken", "refreshToken", "expiresIn", "user")
 	if body["accessToken"] != "access.jwt.value" || body["refreshToken"] != "refresh-value" || body["expiresIn"] != float64(3600) {
 		t.Errorf("tokens = %v", body)
 	}
@@ -187,7 +186,6 @@ func TestRefreshLockedAccountAnswers423(t *testing.T) {
 	if rec.Code != http.StatusLocked || envelope["error"] != "ACCOUNT_LOCKED" {
 		t.Errorf("status = %d, body = %v, want 423 ACCOUNT_LOCKED", rec.Code, envelope)
 	}
-	requireKeys(t, envelope, "message", "traceId")
 }
 
 func TestRefreshUnexpectedErrorAnswersGeneric500(t *testing.T) {
@@ -202,7 +200,6 @@ func TestRefreshUnexpectedErrorAnswersGeneric500(t *testing.T) {
 	if envelope["error"] != "INTERNAL_ERROR" {
 		t.Errorf("error = %v, want INTERNAL_ERROR", envelope["error"])
 	}
-	requireKeys(t, envelope, "traceId")
 	if strings.Contains(rec.Body.String(), "pq:") || strings.Contains(rec.Body.String(), presentedToken) {
 		t.Errorf("the response leaks the cause: %s", rec.Body)
 	}

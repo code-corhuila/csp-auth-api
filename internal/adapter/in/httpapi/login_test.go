@@ -73,12 +73,10 @@ func TestLoginAnswers200WithAuthResponseAndNoStoreHeaders(t *testing.T) {
 		}
 	}
 	body := decode(t, rec)
-	requireKeys(t, body, "accessToken", "refreshToken", "expiresIn", "user")
 	if body["accessToken"] != "access.jwt.value" || body["refreshToken"] != "refresh-value" || body["expiresIn"] != float64(3600) {
 		t.Errorf("tokens = %v", body)
 	}
 	user, _ := body["user"].(map[string]any)
-	requireKeys(t, user, "id", "email", "name", "roles", "permissions")
 	if user["id"] != userID || user["email"] != "maria@example.com" {
 		t.Errorf("user = %v", user)
 	}
@@ -136,7 +134,6 @@ func TestLoginRejectsMissingOrEmptyFieldsNamingThem(t *testing.T) {
 			if rec.Code != http.StatusBadRequest || envelope["error"] != "VALIDATION_ERROR" {
 				t.Fatalf("status = %d, body = %v, want 400 VALIDATION_ERROR", rec.Code, envelope)
 			}
-			requireKeys(t, envelope, "message", "traceId")
 			if got := strings.Join(detailFields(t, envelope), ","); got != c.want {
 				t.Errorf("details fields = %s, want %s", got, c.want)
 			}
@@ -217,7 +214,6 @@ func TestLoginLockedAccountAnswers423(t *testing.T) {
 		t.Fatalf("status = %d, want 423", rec.Code)
 	}
 	envelope := decode(t, rec)
-	requireKeys(t, envelope, "error", "message", "traceId")
 	if envelope["error"] != "ACCOUNT_LOCKED" {
 		t.Errorf("error = %v, want ACCOUNT_LOCKED", envelope["error"])
 	}
@@ -238,7 +234,6 @@ func TestLoginUnexpectedErrorAnswersGeneric500(t *testing.T) {
 	if envelope["error"] != "INTERNAL_ERROR" {
 		t.Errorf("error = %v, want INTERNAL_ERROR", envelope["error"])
 	}
-	requireKeys(t, envelope, "traceId")
 	if strings.Contains(rec.Body.String(), "pq:") || strings.Contains(rec.Body.String(), secret) {
 		t.Errorf("the response leaks the cause: %s", rec.Body)
 	}
