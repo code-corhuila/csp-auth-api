@@ -178,3 +178,102 @@ func TestRevokeByHashLetsExactlyOneOfTwoConcurrentCallersWin(t *testing.T) {
 		t.Errorf("%d callers rotated the same token, want exactly 1", got)
 	}
 }
+
+func TestRevokeAllActiveByUserRevokesTheActiveTokensOfThatUserOnly(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	repository := NewRefreshTokenRepository(f.pool)
+	first, firstOpaque := saveToken(t, f, ctx, repository)
+	other, otherOpaque := saveToken(t, f, ctx, repository)
+	sameUser, err := model.NewRefreshToken(newUUID(t), first.UserID(), "second-of-the-same-user-"+newUUID(t), "", time.Now().UTC(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Save(ctx, sameUser); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	at := time.Now().UTC().Truncate(time.Microsecond)
+
+	revoked, err := repository.RevokeAllActiveByUser(ctx, first.UserID(), at)
+
+	if err != nil || revoked != 2 {
+		t.Fatalf("RevokeAllActiveByUser() = %d, %v, want 2 and no error", revoked, err)
+	}
+	for name, hash := range map[string]string{"first": model.HashOpaqueToken(firstOpaque), "same user": sameUser.Hash()} {
+		if got := revokedAt(t, f, hash); got == nil || !got.Equal(at) {
+			t.Errorf("%s: revoked_at = %v, want %v", name, got, at)
+		}
+	}
+	if got := revokedAt(t, f, model.HashOpaqueToken(otherOpaque)); got != nil || other.UserID() == first.UserID() {
+		t.Errorf("the token of another user has revoked_at = %v, want NULL", got)
+	}
+}
+
+func TestRevokeAllActiveByUserKeepsTheRevocationInstantOfSpentExpiredAndSoftDeletedTokens(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	repository := NewRefreshTokenRepository(f.pool)
+	spent, spentOpaque := saveToken(t, f, ctx, repository)
+	expired, err := model.NewRefreshToken(newUUID(t), spent.UserID(), "expired-"+newUUID(t), "", time.Now().UTC(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := model.NewRefreshToken(newUUID(t), spent.UserID(), "deleted-"+newUUID(t), "", time.Now().UTC(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, token := range []*model.RefreshToken{expired, deleted} {
+		if err := repository.Save(ctx, token); err != nil {
+			t.Fatalf("Save() error = %v", err)
+		}
+	}
+	earlier := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	if _, ok, err := repository.RevokeByHash(ctx, model.HashOpaqueToken(spentOpaque), earlier); err != nil || !ok {
+		t.Fatalf("RevokeByHash() = %v, %v", ok, err)
+	}
+	if _, err := f.pool.Exec(ctx, `UPDATE auth.refresh_token SET expires_at = NOW() - INTERVAL '1 second' WHERE id = $1`, expired.ID()); err != nil {
+		t.Fatalf("expire the token: %v", err)
+	}
+	if _, err := f.pool.Exec(ctx, `UPDATE auth.refresh_token SET deleted_at = NOW() WHERE id = $1`, deleted.ID()); err != nil {
+		t.Fatalf("soft-delete the token: %v", err)
+	}
+
+	revoked, err := repository.RevokeAllActiveByUser(ctx, spent.UserID(), time.Now().UTC())
+
+	if err != nil || revoked != 0 {
+		t.Fatalf("RevokeAllActiveByUser() = %d, %v, want nothing to revoke", revoked, err)
+	}
+	if got := revokedAt(t, f, spent.Hash()); got == nil || !got.Equal(earlier) {
+		t.Errorf("spent token revoked_at = %v, want it unchanged at %v", got, earlier)
+	}
+	for name, hash := range map[string]string{"expired": expired.Hash(), "soft-deleted": deleted.Hash()} {
+		if got := revokedAt(t, f, hash); got != nil {
+			t.Errorf("%s token revoked_at = %v, want NULL", name, got)
+		}
+	}
+}
+
+func TestRevokeAllActiveByUserInsideATransactionFollowsItsOutcome(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	repository := NewRefreshTokenRepository(f.pool)
+	token, _ := saveToken(t, f, ctx, repository)
+	failure := errors.New("rollback")
+
+	err := f.transactions.WithinTransaction(ctx, func(ctx context.Context) error {
+		if _, err := repository.RevokeAllActiveByUser(ctx, token.UserID(), time.Now().UTC()); err != nil {
+			return err
+		}
+		return failure
+	})
+
+	if !errors.Is(err, failure) || revokedAt(t, f, token.Hash()) != nil {
+		t.Errorf("error = %v, revoked_at = %v, want the failure and the revocation rolled back", err, revokedAt(t, f, token.Hash()))
+	}
+}
+
+func revokedAt(t *testing.T, f fixture, hash string) *time.Time {
+	t.Helper()
+	var at *time.Time
+	if err := f.pool.QueryRow(context.Background(), `SELECT revoked_at FROM auth.refresh_token WHERE token_hash = $1`, hash).Scan(&at); err != nil {
+		t.Fatalf("read revoked_at: %v", err)
+	}
+	return at
+}

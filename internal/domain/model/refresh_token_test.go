@@ -119,3 +119,27 @@ func TestRestoreRefreshTokenKeepsTheStoredState(t *testing.T) {
 		t.Errorf("restored token %+v should keep its hash and stay revoked", token)
 	}
 }
+
+func TestIsReusedAtTellsASpentTokenPresentedAfterTheGraceWindow(t *testing.T) {
+	const grace = 10 * time.Second
+	revokedAt := issuedAt.Add(time.Hour)
+	now := revokedAt.Add(grace + time.Second)
+	cases := map[string]struct {
+		token *RefreshToken
+		now   time.Time
+		want  bool
+	}{
+		"revoked longer ago than the grace window": {RestoreRefreshToken("t", "u", "h", "", issuedAt.Add(week), &revokedAt), now, true},
+		"revoked exactly the grace window ago":     {RestoreRefreshToken("t", "u", "h", "", issuedAt.Add(week), &revokedAt), revokedAt.Add(grace), false},
+		"revoked inside the grace window":          {RestoreRefreshToken("t", "u", "h", "", issuedAt.Add(week), &revokedAt), revokedAt.Add(time.Second), false},
+		"never revoked":                            {RestoreRefreshToken("t", "u", "h", "", issuedAt.Add(week), nil), now, false},
+		"revoked but expired":                      {RestoreRefreshToken("t", "u", "h", "", revokedAt.Add(5*time.Second), &revokedAt), now, false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := c.token.IsReusedAt(c.now, grace); got != c.want {
+				t.Errorf("IsReusedAt() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
