@@ -147,6 +147,20 @@ The purge of old rows (ADR-030) deletes, in this order, outbox events older than
 or were revoked more than 30 days ago and idempotency keys older than 7 days, at most `batchSize` rows (1 to 500) in
 total per call; it needs the `DELETE` grants of migration V019 of `csp-auth-db` for `auth_writer`.
 
+`POST /api/v1/auth/internal/maintenance/purge` (HU-AUTH-002) runs it. It is enabled by the same two settings as
+`/register`, is not routed by the gateway and is called by `csp-worker` with its service credential (`sub` in
+`SERVICE_SUBJECTS`):
+
+```bash
+curl -i -X POST http://localhost:8081/api/v1/auth/internal/maintenance/purge   -H "Authorization: Bearer $(cat "$AUTH_SERVICE_TOKEN_FILE")"   -H 'Content-Type: application/json'   -d '{"batchSize":100}'
+```
+
+The body is optional and `batchSize` is 1 to 500 (default 100, otherwise `400`). It answers `200` with
+`{"processedCount":N,"hasMore":true|false}`: the rows deleted in this call over the three tables and whether any
+eligible row is left, so the caller repeats it until `hasMore` is `false`. A repeated call is safe. After the purge of an
+`Idempotency-Key`, the same registration answers `409 EMAIL_ALREADY_REGISTERED` instead of the `200` replay. A missing or
+invalid token is `401` and a valid token of another subject is `403`.
+
 The end-to-end tests of these routes (`cmd/auth-api`, tag `integration`) uses the same `AUTH_TEST_DATABASE_URL`:
 
 ```bash
