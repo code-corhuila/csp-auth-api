@@ -18,6 +18,7 @@ const (
 	registerPath = "/api/v1/auth/register"
 	loginPath    = "/api/v1/auth/login"
 	refreshPath  = "/api/v1/auth/refresh"
+	purgePath    = "/api/v1/auth/internal/maintenance/purge"
 )
 
 // lazyPool returns a pool that has not connected: enough to wire the use case without a database.
@@ -42,6 +43,11 @@ func loginStatus(t *testing.T, cfg config.Config, open poolOpener) (int, func())
 func refreshStatus(t *testing.T, cfg config.Config, open poolOpener) (int, func()) {
 	t.Helper()
 	return postEmptyJSON(t, refreshPath, cfg, open)
+}
+
+func purgeStatus(t *testing.T, cfg config.Config, open poolOpener) (int, func()) {
+	t.Helper()
+	return postEmptyJSON(t, purgePath, cfg, open)
 }
 
 func postEmptyJSON(t *testing.T, path string, cfg config.Config, open poolOpener) (int, func()) {
@@ -86,6 +92,12 @@ func TestNewHandlerRegisterLoginAndRefreshRouteDecisionTable(t *testing.T) {
 	if got, _ := refreshStatus(t, withKey, lazyPool(&settings, &opened)); got != http.StatusNotFound {
 		t.Errorf("refresh, key without database: status = %d, want 404", got)
 	}
+	if got, _ := purgeStatus(t, testConfig(t), lazyPool(&settings, &opened)); got != http.StatusNotFound {
+		t.Errorf("purge, no database, no key: status = %d, want 404", got)
+	}
+	if got, _ := purgeStatus(t, withKey, lazyPool(&settings, &opened)); got != http.StatusNotFound {
+		t.Errorf("purge, key without database: status = %d, want 404", got)
+	}
 	if opened != 0 {
 		t.Fatalf("the pool was opened %d times without a database URL", opened)
 	}
@@ -109,6 +121,12 @@ func TestNewHandlerRegisterLoginAndRefreshRouteDecisionTable(t *testing.T) {
 	defer closeRefreshDatabase()
 	if gotRefresh != http.StatusBadRequest {
 		t.Errorf("refresh, database and key: status = %d, want 400 (the route exists and validates the request)", gotRefresh)
+	}
+
+	gotPurge, closePurgeDatabase := purgeStatus(t, withDatabase, lazyPool(&settings, &opened))
+	defer closePurgeDatabase()
+	if gotPurge != http.StatusUnauthorized {
+		t.Errorf("purge, database and key: status = %d, want 401 (the route exists and asks for a service token)", gotPurge)
 	}
 }
 

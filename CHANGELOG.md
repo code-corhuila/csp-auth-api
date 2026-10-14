@@ -40,7 +40,10 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 - HU-AUTH-002, purge of old rows, use case and PostgreSQL adapters (ADR-030, issue
   [#32](https://github.com/code-corhuila/csp-auth-api/issues/32)): outbox events older than 30 days, refresh tokens
   expired or revoked more than 30 days ago and idempotency keys older than 7 days are deleted in that order, at most
-  `batchSize` rows in total per call. It needs the `DELETE` grants of `csp-auth-db` V019. The endpoint comes next.
+  `batchSize` rows in total per call. It needs the `DELETE` grants of `csp-auth-db` V019
+  ([#56](https://github.com/code-corhuila/csp-auth-api/pull/56)).
+- HU-AUTH-002, `POST /api/v1/auth/internal/maintenance/purge` (ADR-030): the endpoint, protected by the service credential
+  ([#54](https://github.com/code-corhuila/csp-auth-api/pull/54)), wired in the composition root.
 - This changelog ([#51](https://github.com/code-corhuila/csp-auth-api/pull/51)).
 
 ### Changed
