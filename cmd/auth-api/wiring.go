@@ -107,5 +107,6 @@ func newRefreshSession(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issu
 		issuer,
 		usecase.NewIssueRefreshToken(tokens, ids, clock, cfg.RefreshTokenTTL),
 		clock,
+		cfg.RefreshReuseGrace,
 	)
 }

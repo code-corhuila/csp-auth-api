@@ -80,6 +80,18 @@ func (r *RefreshTokenRepository) RevokeByHash(ctx context.Context, hash string, 
 	return userID, true, nil
 }
 
+// RevokeAllActiveByUser is one UPDATE over the full index of user_id. A token that is already
+// revoked keeps its instant; an expired or soft-deleted one is not active and is left alone.
+func (r *RefreshTokenRepository) RevokeAllActiveByUser(ctx context.Context, userID string, at time.Time) (int, error) {
+	tag, err := executorFor(ctx, r.pool).Exec(ctx,
+		`UPDATE auth.refresh_token SET revoked_at = $2, updated_at = NOW()
+		 WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > $2 AND deleted_at IS NULL`, userID, at)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 func isDuplicateRefreshTokenHash(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == refreshTokenHashIndex
