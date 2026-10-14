@@ -48,6 +48,9 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Changed
 
+- The contract tests validate every response in full: `auth-service.yaml` 1.4.1 declares the `400`, `423` and `500`
+  answers that were listed as undocumented, so the exception list is removed
+  ([#52](https://github.com/code-corhuila/csp-auth-api/issues/52)).
 - The password is limited to 72 bytes, the limit of bcrypt, and a longer one is a validation error
   ([#39](https://github.com/code-corhuila/csp-auth-api/pull/39)).
 - `APP_AUTH_JWT_EXPIRY` and `APP_AUTH_REFRESH_TOKEN_EXPIRY` are integer seconds, as the platform documents
