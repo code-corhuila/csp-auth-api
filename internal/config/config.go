@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -42,6 +43,7 @@ type Config struct {
 	JWTPrivateKeyFile      string
 	AccessTokenTTL         time.Duration
 	RefreshTokenTTL        time.Duration
+	ServiceSubjects        []string
 }
 
 // Lookup returns the value of an environment variable, as os.LookupEnv does.
@@ -114,7 +116,7 @@ func loadDatabase(lookup Lookup, cfg *Config) error {
 }
 
 // loadTokens reads where the signing key comes from (both sources empty means no key is configured)
-// and the lifetime of both token kinds.
+// the lifetime of both token kinds and the subjects of the services allowed to call the internal operations.
 func loadTokens(lookup Lookup, cfg *Config) error {
 	cfg.JWTPrivateKey, _ = lookup("APP_AUTH_JWT_PRIVATE_KEY")
 	cfg.JWTPrivateKeyFile, _ = lookup("APP_AUTH_JWT_PRIVATE_KEY_FILE")
@@ -127,7 +129,20 @@ func loadTokens(lookup Lookup, cfg *Config) error {
 	}
 	cfg.AccessTokenTTL = ttl
 	cfg.RefreshTokenTTL, err = secondsValue(lookup, "APP_AUTH_REFRESH_TOKEN_EXPIRY", defaultRefreshTokenTTL)
+	cfg.ServiceSubjects = listValue(lookup, "SERVICE_SUBJECTS")
 	return err
+}
+
+// listValue reads a comma-separated list, trimming blanks and dropping empty items.
+func listValue(lookup Lookup, key string) []string {
+	raw, _ := lookup(key)
+	var items []string
+	for _, item := range strings.Split(raw, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
 }
 
 func intValue(lookup Lookup, key string, def int) (int, error) {

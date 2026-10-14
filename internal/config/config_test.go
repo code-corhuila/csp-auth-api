@@ -1,6 +1,7 @@
 package config
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -142,6 +143,25 @@ func TestLoadRejectsAnAccessTokenLifetimeThatIsNotAPositiveNumberOfSecondsUpToOn
 	for _, value := range []string{"3601", "1h", "soon", "0", "-5", "1.5", "9999999999999"} {
 		if _, err := Load(lookupFrom(map[string]string{"APP_AUTH_JWT_EXPIRY": value})); err == nil {
 			t.Errorf("APP_AUTH_JWT_EXPIRY=%s: Load() error = nil", value)
+		}
+	}
+}
+
+func TestLoadReadsTheServiceSubjectsAsACommaSeparatedList(t *testing.T) {
+	cfg, err := Load(lookupFrom(nil))
+	if err != nil || len(cfg.ServiceSubjects) != 0 {
+		t.Fatalf("default: cfg.ServiceSubjects = %v, err = %v; want none, so no service is allowed", cfg.ServiceSubjects, err)
+	}
+	cases := map[string][]string{
+		"csp-worker":                     {"csp-worker"},
+		" csp-worker , booking-service ": {"csp-worker", "booking-service"},
+		"csp-worker,,":                   {"csp-worker"},
+		" , ":                            nil,
+	}
+	for value, want := range cases {
+		cfg, err = Load(lookupFrom(map[string]string{"SERVICE_SUBJECTS": value}))
+		if err != nil || !reflect.DeepEqual(cfg.ServiceSubjects, want) {
+			t.Errorf("SERVICE_SUBJECTS=%q: cfg.ServiceSubjects = %q, err = %v; want %q", value, cfg.ServiceSubjects, err, want)
 		}
 	}
 }

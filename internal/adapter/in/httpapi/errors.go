@@ -17,6 +17,8 @@ const (
 	codeBadCredentials   = "INVALID_CREDENTIALS"
 	codeAccountLocked    = "ACCOUNT_LOCKED"
 	codeBadRefreshToken  = "INVALID_REFRESH_TOKEN"
+	codeUnauthorized     = "UNAUTHORIZED"
+	codeForbidden        = "FORBIDDEN"
 )
 
 // fieldError names one invalid input: a body property or a header.

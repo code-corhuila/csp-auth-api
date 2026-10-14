@@ -118,6 +118,13 @@ works once and a failure while issuing leaves it valid. An unknown, expired or a
 (`INVALID_REFRESH_TOKEN`) and nothing else is revoked. A locked account gets `423`, a missing or empty `refreshToken`
 gets `400`.
 
+Internal operations (ADR-020) accept a **service credential**: an RS256 token signed with the key of this service,
+with `exp` and a `sub` and sent as `Authorization: Bearer`. A missing or invalid token gets `401 UNAUTHORIZED` and a
+valid token whose `sub` is not in `SERVICE_SUBJECTS` (comma-separated, empty by default so that no service is allowed)
+gets `403 FORBIDDEN`. Issuer and audience are not required. The service has no endpoint that issues these tokens: the
+deployment secret manager provides them, and `csp-infra-postgres/scripts/dev-token.sh <sub> <minutes>` writes one for
+development. The first internal operation is the purge of old rows.
+
 The end-to-end tests of these routes (`cmd/auth-api`, tag `integration`) uses the same `AUTH_TEST_DATABASE_URL`:
 
 ```bash

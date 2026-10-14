@@ -27,6 +27,9 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   ([#37](https://github.com/code-corhuila/csp-auth-api/pull/37)).
 - `deploy/compose.yml` passes the service settings from the platform environment
   ([#47](https://github.com/code-corhuila/csp-auth-api/pull/47)).
+- HU-AUTH-002, verification of the service credential for the internal operations (ADR-020, ADR-030, issue
+  [#32](https://github.com/code-corhuila/csp-auth-api/issues/32)): `SERVICE_SUBJECTS`, the RS256 verifier of service
+  tokens, the use case that authorizes a service and the guard that answers `401` and `403`. No route uses it yet.
 - This changelog ([#51](https://github.com/code-corhuila/csp-auth-api/pull/51)).
 
 ### Changed
