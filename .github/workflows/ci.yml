@@ -19,8 +19,16 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # The contract tests validate the responses against the approved contract; the job fails if it is missing.
+      AUTH_CONTRACT_FILE: ${{ github.workspace }}/csp-docs/07-api/contracts/openapi/auth-service.yaml
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: code-corhuila/csp-docs
+          ref: main
+          path: csp-docs
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
