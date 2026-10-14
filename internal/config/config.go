@@ -24,6 +24,13 @@ const maxAccessTokenTTL = time.Hour
 // defaultRefreshTokenTTL is the lifetime of a refresh token (security-rules.md: 7 days).
 const defaultRefreshTokenTTL = 7 * 24 * time.Hour
 
+// Bounds of the grace window in which the reuse of a spent refresh token is taken as a concurrent
+// refresh (ADR-029).
+const (
+	defaultRefreshReuseGrace = 10 * time.Second
+	maxRefreshReuseGrace     = time.Minute
+)
+
 // Config holds the settings of the HTTP server, the database pool, the password hashing and the tokens.
 // Every limit is explicit (Norma 5.3.10).
 type Config struct {
@@ -44,6 +51,7 @@ type Config struct {
 	AccessTokenTTL         time.Duration
 	RefreshTokenTTL        time.Duration
 	ServiceSubjects        []string
+	RefreshReuseGrace      time.Duration
 }
 
 // Lookup returns the value of an environment variable, as os.LookupEnv does.
@@ -116,7 +124,7 @@ func loadDatabase(lookup Lookup, cfg *Config) error {
 }
 
 // loadTokens reads where the signing key comes from (both sources empty means no key is configured)
-// the lifetime of both token kinds and the subjects of the services allowed to call the internal operations.
+// the lifetime of both token kinds, the refresh reuse grace window and the subjects of the services allowed to call the internal operations.
 func loadTokens(lookup Lookup, cfg *Config) error {
 	cfg.JWTPrivateKey, _ = lookup("APP_AUTH_JWT_PRIVATE_KEY")
 	cfg.JWTPrivateKeyFile, _ = lookup("APP_AUTH_JWT_PRIVATE_KEY_FILE")
@@ -128,7 +136,13 @@ func loadTokens(lookup Lookup, cfg *Config) error {
 		return fmt.Errorf("APP_AUTH_JWT_EXPIRY %d exceeds the maximum of %d seconds", int(ttl.Seconds()), int(maxAccessTokenTTL.Seconds()))
 	}
 	cfg.AccessTokenTTL = ttl
-	cfg.RefreshTokenTTL, err = secondsValue(lookup, "APP_AUTH_REFRESH_TOKEN_EXPIRY", defaultRefreshTokenTTL)
+	if cfg.RefreshTokenTTL, err = secondsValue(lookup, "APP_AUTH_REFRESH_TOKEN_EXPIRY", defaultRefreshTokenTTL); err != nil {
+		return err
+	}
+	cfg.RefreshReuseGrace, err = secondsValue(lookup, "APP_AUTH_REFRESH_REUSE_GRACE", defaultRefreshReuseGrace)
+	if err == nil && cfg.RefreshReuseGrace > maxRefreshReuseGrace {
+		return fmt.Errorf("APP_AUTH_REFRESH_REUSE_GRACE %d exceeds the maximum of %d seconds", int(cfg.RefreshReuseGrace.Seconds()), int(maxRefreshReuseGrace.Seconds()))
+	}
 	cfg.ServiceSubjects = listValue(lookup, "SERVICE_SUBJECTS")
 	return err
 }
