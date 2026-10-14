@@ -136,6 +136,13 @@ revocation is committed although the request fails, one `WARN` with the user id 
 (never the token), and the answer is the same `401` as for any other rejected token. Inside the window the presentation
 is taken as a concurrent refresh and nothing else is revoked; unknown and expired tokens never revoke anything.
 
+Internal operations (ADR-020) accept a **service credential**: an RS256 token signed with the key of this service,
+with `exp` and a `sub` and sent as `Authorization: Bearer`. A missing or invalid token gets `401 UNAUTHORIZED` and a
+valid token whose `sub` is not in `SERVICE_SUBJECTS` (comma-separated, empty by default so that no service is allowed)
+gets `403 FORBIDDEN`. Issuer and audience are not required. The service has no endpoint that issues these tokens: the
+deployment secret manager provides them, and `csp-infra-postgres/scripts/dev-token.sh <sub> <minutes>` writes one for
+development. The first internal operation is the purge of old rows.
+
 The end-to-end tests of these routes (`cmd/auth-api`, tag `integration`) uses the same `AUTH_TEST_DATABASE_URL`:
 
 ```bash

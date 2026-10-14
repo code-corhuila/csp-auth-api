@@ -18,7 +18,7 @@
 #   APP_AUTH_DATABASE_MAX_CONNECTIONS, APP_AUTH_DATABASE_MIN_CONNECTIONS,
 #   APP_AUTH_DATABASE_CONNECT_TIMEOUT, APP_AUTH_DATABASE_QUERY_TIMEOUT,
 #   APP_AUTH_BCRYPT_ROUNDS, APP_AUTH_JWT_EXPIRY (seconds), APP_AUTH_REFRESH_TOKEN_EXPIRY (seconds),
-#   APP_AUTH_REFRESH_REUSE_GRACE (seconds),
+#   APP_AUTH_REFRESH_REUSE_GRACE (seconds), SERVICE_SUBJECTS,
 #   APP_AUTH_HTTP_READ_HEADER_TIMEOUT, APP_AUTH_HTTP_READ_TIMEOUT, APP_AUTH_HTTP_WRITE_TIMEOUT,
 #   APP_AUTH_HTTP_IDLE_TIMEOUT, APP_AUTH_HTTP_SHUTDOWN_TIMEOUT.
 # The migration executor of csp-auth-db is a tooling service started by hand before the API.
@@ -53,6 +53,8 @@ services:
       APP_AUTH_REFRESH_TOKEN_EXPIRY: ${APP_AUTH_REFRESH_TOKEN_EXPIRY:-}
       # Grace window of the refresh token reuse detection, in integer seconds (ADR-029).
       APP_AUTH_REFRESH_REUSE_GRACE: ${APP_AUTH_REFRESH_REUSE_GRACE:-}
+      # Subjects of the services allowed to call the internal operations (ADR-020), comma-separated.
+      SERVICE_SUBJECTS: ${SERVICE_SUBJECTS:-}
     # expose, not ports: only the gateway is reachable from the host.
     expose: ["8081"]
     networks: [platform]
