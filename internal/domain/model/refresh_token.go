@@ -67,6 +67,13 @@ func (t *RefreshToken) IsValidAt(now time.Time) bool {
 	return t.revokedAt == nil && now.Before(t.expiresAt)
 }
 
+// IsReusedAt reports whether presenting the token at now is the reuse of a spent token: it was
+// revoked more than grace ago and has not expired. Inside the grace window the presentation is
+// taken as a concurrent legitimate refresh, and an expired token is just an old one (ADR-029).
+func (t *RefreshToken) IsReusedAt(now time.Time, grace time.Duration) bool {
+	return t.revokedAt != nil && now.Before(t.expiresAt) && now.Sub(*t.revokedAt) > grace
+}
+
 func (t *RefreshToken) ID() string           { return t.id }
 func (t *RefreshToken) UserID() string       { return t.userID }
 func (t *RefreshToken) Hash() string         { return t.hash }
