@@ -56,6 +56,19 @@ go test ./...                        # run every test
 go run ./cmd/auth-api                # starts on PORT, 8081 by default
 ```
 
+The HTTP adapter has contract tests (`internal/adapter/in/httpapi/contract_test.go`): the real handlers answer through
+fakes of the use cases and every response of `POST /register`, `/login`, `/refresh` and `GET /jwks` is validated against
+`auth-service.yaml` (status, declared headers and body schema). The contract lives in `csp-docs`, so point
+`AUTH_CONTRACT_FILE` at it. Without the variable they are skipped on a workstation; in CI (`CI` set) they fail instead:
+
+```bash
+AUTH_CONTRACT_FILE=../csp-docs/07-api/contracts/openapi/auth-service.yaml go test ./internal/adapter/in/httpapi/
+```
+
+The statuses the service answers but the contract does not declare yet (`400` of login and refresh, `423` of refresh and
+`500` of register, login and refresh) are listed in `undocumentedStatuses`; their body is checked against `ErrorResponse`
+only, until `csp-docs` declares them.
+
 The PostgreSQL adapter has integration tests behind the `integration` build tag. They need a database with the
 `csp-auth-db` migrations applied and are skipped when `AUTH_TEST_DATABASE_URL` (login `auth_app`) is not set;
 `AUTH_TEST_OUTBOX_READER_URL` (login `worker_app`) enables the outbox payload test:

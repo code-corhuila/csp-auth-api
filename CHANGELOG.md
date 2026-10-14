@@ -31,6 +31,9 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   a spent token presented again after `APP_AUTH_REFRESH_REUSE_GRACE` seconds (default 10, maximum 60) revokes every active
   refresh token of its user, the revocation is committed although the request fails, a warning is logged without the
   token and the answer stays the same `401 INVALID_REFRESH_TOKEN`.
+- Contract tests that validate the real responses of `register`, `login`, `refresh` and `jwks` against `auth-service.yaml`
+  (HU-AUTH-001, HU-AUTH-002); the CI job checks out `csp-docs` for the contract
+  ([#52](https://github.com/code-corhuila/csp-auth-api/issues/52)).
 - This changelog ([#51](https://github.com/code-corhuila/csp-auth-api/pull/51)).
 
 ### Changed
