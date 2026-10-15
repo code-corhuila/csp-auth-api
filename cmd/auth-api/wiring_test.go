@@ -214,3 +214,31 @@ func TestNewHandlerServesTheUserRoleRouteOnlyWithTheDatabase(t *testing.T) {
 		}
 	}
 }
+
+func TestNewHandlerServesTheUserListRouteOnlyWithTheDatabase(t *testing.T) {
+	withKey := testConfig(t)
+	withKey.JWTPrivateKey = generatedKeyPEM(t)
+	withDatabase := withKey
+	withDatabase.DatabaseURL = "postgres://user:secret@127.0.0.1:1/db"
+	var settings persistence.PoolSettings
+	var opened int
+
+	for name, c := range map[string]struct {
+		cfg  config.Config
+		want int
+	}{
+		"key without database":       {withKey, http.StatusNotFound},
+		"database and key, no token": {withDatabase, http.StatusUnauthorized},
+	} {
+		handler, closeDatabase, err := newHandler(context.Background(), discardLogger(), c.cfg, lazyPool(&settings, &opened))
+		if err != nil {
+			t.Fatalf("%s: newHandler() error = %v", name, err)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/auth/users?email=ada", nil))
+		closeDatabase()
+		if rec.Code != c.want {
+			t.Errorf("%s: status = %d, want %d", name, rec.Code, c.want)
+		}
+	}
+}
