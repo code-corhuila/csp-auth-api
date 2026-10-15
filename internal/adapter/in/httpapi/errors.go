@@ -166,3 +166,10 @@ func translateListUsersError(w http.ResponseWriter, traceID string, err error) {
 	slog.Error("list users failed", "traceId", traceID, "error", err)
 	writeInternal(w, traceID)
 }
+
+// translateLogoutError is the only place that maps the errors of the logout use case to HTTP. The
+// cause goes only to the log, which never sees the tokens; the client repeats the call (idempotent).
+func translateLogoutError(w http.ResponseWriter, traceID string, err error) {
+	slog.Error("logout failed", "traceId", traceID, "error", err)
+	writeInternal(w, traceID)
+}
