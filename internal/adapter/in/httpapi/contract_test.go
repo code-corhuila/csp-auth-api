@@ -236,6 +236,8 @@ func TestLogoutResponsesFulfillTheContract(t *testing.T) {
 		"204 without body":        {&fakeAuthenticator{}, &fakeLogout{}, logoutAttempt{headers: withTrace()}},
 		"204 refresh token":       {&fakeAuthenticator{}, &fakeLogout{}, logoutAttempt{body: `{"refreshToken":"opaque-1"}`, headers: withTrace()}},
 		"204 all devices":         {&fakeAuthenticator{}, &fakeLogout{}, logoutAttempt{body: `{"allDevices":true}`, headers: withTrace()}},
+		"400 unreadable body":     {&fakeAuthenticator{}, &fakeLogout{}, logoutAttempt{body: `{"refreshToken":`, headers: withTrace()}},
+		"400 wrong type":          {&fakeAuthenticator{}, &fakeLogout{}, logoutAttempt{body: `{"allDevices":"yes"}`, headers: withTrace()}},
 		"401 no token":            {&fakeAuthenticator{err: model.ErrAccessTokenInvalid}, &fakeLogout{}, logoutAttempt{headers: withTrace()}},
 		"500 unexpected":          {&fakeAuthenticator{}, &fakeLogout{err: errors.New("redis down")}, logoutAttempt{headers: withTrace()}},
 		"500 verifier unexpected": {&fakeAuthenticator{err: errors.New("key store down")}, &fakeLogout{}, logoutAttempt{}},
