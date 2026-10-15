@@ -10,6 +10,9 @@
 #                                    so it is not required here.
 #   APP_AUTH_JWT_PRIVATE_KEY         RS256 signing key (PEM), or ...
 #   APP_AUTH_JWT_PRIVATE_KEY_FILE    ... the path of a PEM file that the platform mounts in the container.
+#                                    The inline form is meant for development (csp-infra-postgres scripts/dev-keys.sh
+#                                    fills it in the git-ignored env/dev.env); qa and main provide the key as a secret
+#                                    through APP_AUTH_JWT_PRIVATE_KEY_FILE (Norma 5.9.2).
 #                                    Registration needs the database URL and one of the two.
 # Optional, the service default applies when empty:
 #   APP_AUTH_DATABASE_MAX_CONNECTIONS, APP_AUTH_DATABASE_MIN_CONNECTIONS,

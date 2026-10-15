@@ -17,6 +17,7 @@ import (
 const (
 	registerPath = "/api/v1/auth/register"
 	loginPath    = "/api/v1/auth/login"
+	refreshPath  = "/api/v1/auth/refresh"
 )
 
 // lazyPool returns a pool that has not connected: enough to wire the use case without a database.
@@ -38,6 +39,11 @@ func loginStatus(t *testing.T, cfg config.Config, open poolOpener) (int, func())
 	return postEmptyJSON(t, loginPath, cfg, open)
 }
 
+func refreshStatus(t *testing.T, cfg config.Config, open poolOpener) (int, func()) {
+	t.Helper()
+	return postEmptyJSON(t, refreshPath, cfg, open)
+}
+
 func postEmptyJSON(t *testing.T, path string, cfg config.Config, open poolOpener) (int, func()) {
 	t.Helper()
 	handler, closeDatabase, err := newHandler(context.Background(), discardLogger(), cfg, open)
@@ -51,7 +57,7 @@ func postEmptyJSON(t *testing.T, path string, cfg config.Config, open poolOpener
 	return rec.Code, closeDatabase
 }
 
-func TestNewHandlerRegisterAndLoginRouteDecisionTable(t *testing.T) {
+func TestNewHandlerRegisterLoginAndRefreshRouteDecisionTable(t *testing.T) {
 	withKey := testConfig(t)
 	withKey.JWTPrivateKey = generatedKeyPEM(t)
 	withDatabase := withKey
@@ -74,6 +80,12 @@ func TestNewHandlerRegisterAndLoginRouteDecisionTable(t *testing.T) {
 	if got, _ := loginStatus(t, withKey, lazyPool(&settings, &opened)); got != http.StatusNotFound {
 		t.Errorf("login, key without database: status = %d, want 404", got)
 	}
+	if got, _ := refreshStatus(t, testConfig(t), lazyPool(&settings, &opened)); got != http.StatusNotFound {
+		t.Errorf("refresh, no database, no key: status = %d, want 404", got)
+	}
+	if got, _ := refreshStatus(t, withKey, lazyPool(&settings, &opened)); got != http.StatusNotFound {
+		t.Errorf("refresh, key without database: status = %d, want 404", got)
+	}
 	if opened != 0 {
 		t.Fatalf("the pool was opened %d times without a database URL", opened)
 	}
@@ -91,6 +103,12 @@ func TestNewHandlerRegisterAndLoginRouteDecisionTable(t *testing.T) {
 	defer closeLoginDatabase()
 	if gotLogin != http.StatusBadRequest {
 		t.Errorf("login, database and key: status = %d, want 400 (the route exists and validates the request)", gotLogin)
+	}
+
+	gotRefresh, closeRefreshDatabase := refreshStatus(t, withDatabase, lazyPool(&settings, &opened))
+	defer closeRefreshDatabase()
+	if gotRefresh != http.StatusBadRequest {
+		t.Errorf("refresh, database and key: status = %d, want 400 (the route exists and validates the request)", gotRefresh)
 	}
 }
 
@@ -141,7 +159,7 @@ func TestNewHandlerDoesNotLogTheDatabaseURLOrTheKey(t *testing.T) {
 	}
 	defer closeDatabase()
 
-	for _, announcement := range []string{"register route enabled", "login route enabled"} {
+	for _, announcement := range []string{"register route enabled", "login route enabled", "refresh route enabled"} {
 		if !strings.Contains(logs.String(), announcement) {
 			t.Errorf("log = %q, want %q", logs.String(), announcement)
 		}
