@@ -34,3 +34,26 @@ func requirePermission(authorizer in.AuthorizeUser, permission string, next call
 		}
 	}
 }
+
+// claimsHandler handles a request whose caller was authenticated; claims are those of its token.
+type claimsHandler func(w http.ResponseWriter, r *http.Request, claims model.AccessClaims)
+
+// requireAuthentication protects an operation that any signed-in user may call (bearerAuth without
+// x-required-permissions in the contract): the handler runs only for a valid access token. A
+// missing or invalid token is 401. The token is never logged.
+func requireAuthentication(authenticator in.AuthenticateUser, next claimsHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		traceID := correlationID(r)
+		w.Header().Set(headerCorrelationID, traceID)
+		claims, err := authenticator.AuthenticateUser(r.Context(), bearerToken(r))
+		switch {
+		case err == nil:
+			next(w, r, claims)
+		case errors.Is(err, model.ErrAccessTokenInvalid):
+			writeUnauthorized(w, traceID)
+		default:
+			slog.Error("authenticate user failed", "traceId", traceID, "error", err)
+			writeInternal(w, traceID)
+		}
+	}
+}

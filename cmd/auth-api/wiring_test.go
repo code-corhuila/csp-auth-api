@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -240,5 +241,48 @@ func TestNewHandlerServesTheUserListRouteOnlyWithTheDatabase(t *testing.T) {
 		if rec.Code != c.want {
 			t.Errorf("%s: status = %d, want %d", name, rec.Code, c.want)
 		}
+	}
+}
+
+func TestNewHandlerEnablesLogoutOnlyWithTheDatabaseTheKeyAndRedis(t *testing.T) {
+	const logoutPath = "/api/v1/auth/logout"
+	withDatabase := testConfig(t)
+	withDatabase.JWTPrivateKey = generatedKeyPEM(t)
+	withDatabase.DatabaseURL = "postgres://user:secret@127.0.0.1:1/db"
+	withRedis := withDatabase
+	withRedis.RedisURL = "redis://auth_app:secret@127.0.0.1:1/0"
+	withRedis.RedisTimeout = time.Second
+	var settings persistence.PoolSettings
+	var opened int
+
+	got, closeWithoutRedis := postEmptyJSON(t, logoutPath, withDatabase, lazyPool(&settings, &opened))
+	defer closeWithoutRedis()
+	if got != http.StatusNotFound {
+		t.Errorf("no Redis URL: status = %d, want 404", got)
+	}
+	got, closeWithRedis := postEmptyJSON(t, logoutPath, withRedis, lazyPool(&settings, &opened))
+	defer closeWithRedis()
+	if got != http.StatusUnauthorized {
+		t.Errorf("Redis URL: status = %d, want 401 (the route exists and asks for an access token)", got)
+	}
+	withoutKey := testConfig(t)
+	withoutKey.RedisURL = withRedis.RedisURL
+	if got, _ := postEmptyJSON(t, logoutPath, withoutKey, lazyPool(&settings, &opened)); got != http.StatusNotFound {
+		t.Errorf("Redis URL without database and key: status = %d, want 404", got)
+	}
+}
+
+func TestNewHandlerFailsFastOnAnInvalidRedisURLWithoutRevealingIt(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.JWTPrivateKey = generatedKeyPEM(t)
+	cfg.DatabaseURL = "postgres://user:secret@127.0.0.1:1/db"
+	cfg.RedisURL = "http://auth_app:topsecret@redis"
+	var settings persistence.PoolSettings
+	var opened int
+
+	_, _, err := newHandler(context.Background(), discardLogger(), cfg, lazyPool(&settings, &opened))
+
+	if err == nil || strings.Contains(err.Error(), "topsecret") {
+		t.Errorf("error = %v, want an error that does not show the password", err)
 	}
 }
