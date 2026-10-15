@@ -75,8 +75,8 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   invalid. Contract, integration and end-to-end tests against PostgreSQL and Redis.
 - HU-AUTH-003, check of the revoked token list (ADR-033, issue [#88](https://github.com/code-corhuila/csp-auth-api/issues/88)):
   `POST /logout`, `GET /users` and `PATCH /users/{userId}/role` answer `401` for an access token that a logout revoked (before
-  judging its permissions), and fail closed with `500 INTERNAL_ERROR` and a `WARN` without the token or the `jti` when Redis
-  cannot be consulted. Without `APP_AUTH_REDIS_URL` the check is off, which the log says at start.
+  judging its permissions), and `GET /users` and `PATCH` role fail closed with `500 INTERNAL_ERROR` and a `WARN` without the token or the `jti` when Redis
+  cannot be consulted; `POST /logout` goes on, revokes the refresh tokens and answers `500` when it cannot write the list. Without `APP_AUTH_REDIS_URL` the check is off, which the log says at start.
 - This changelog ([#51](https://github.com/code-corhuila/csp-auth-api/pull/51)).
 
 ### Changed

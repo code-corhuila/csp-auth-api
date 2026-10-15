@@ -246,7 +246,8 @@ func TestLogoutResponsesFulfillTheContract(t *testing.T) {
 		"500 unexpected":          {&fakeAuthenticator{}, &fakeLogout{err: errors.New("redis down")}, logoutAttempt{headers: withTrace()}},
 		"500 verifier unexpected": {&fakeAuthenticator{err: errors.New("key store down")}, &fakeLogout{}, logoutAttempt{}},
 		"401 revoked token":       {&fakeAuthenticator{err: model.ErrAccessTokenInvalid}, &fakeLogout{}, logoutAttempt{body: `{"allDevices":true}`, headers: withTrace()}},
-		"500 revoked list down":   {&fakeAuthenticator{err: errRevokedListDown}, &fakeLogout{}, logoutAttempt{headers: withTrace()}},
+		"500 revoked list down":   {&fakeAuthenticator{err: errRevokedListDown}, &fakeLogout{err: errors.New("redis down")}, logoutAttempt{headers: withTrace()}},
+		"204 revoked list down":   {&fakeAuthenticator{err: errRevokedListDown}, &fakeLogout{}, logoutAttempt{headers: withTrace()}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

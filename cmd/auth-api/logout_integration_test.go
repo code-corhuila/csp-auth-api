@@ -132,23 +132,27 @@ func TestLogoutEndToEndAgainstTheDatabaseAndRedis(t *testing.T) {
 		}
 	})
 
-	t.Run("with Redis down the call is 500 and the access token is not listed", func(t *testing.T) {
-		access, _ := signIn(email)
+	t.Run("with Redis down the call is 500 but the refresh token is revoked, and a retry once Redis is back is 204", func(t *testing.T) {
+		access, refreshToken := signIn(email)
 		down := cfg
 		down.RedisURL = "redis://auth_app:unused@127.0.0.1:1/0"
 		down.RedisTimeout = 300 * time.Millisecond
 		downServer := startLogoutServer(t, down)
 
-		if status := logout(t, downServer.URL, access, ""); status != http.StatusInternalServerError {
+		if status := logout(t, downServer.URL, access, fmt.Sprintf(`{"refreshToken":%q}`, refreshToken)); status != http.StatusInternalServerError {
 			t.Fatalf("status = %d, want 500", status)
 		}
 
+		if status, _, payload := refresh(t, server.URL, refreshToken); status != http.StatusUnauthorized || payload["error"] != "INVALID_REFRESH_TOKEN" {
+			t.Errorf("the refresh token after the failed call: status = %d, body = %v, want 401 INVALID_REFRESH_TOKEN", status, payload)
+		}
 		if listed(t, checker, access) {
 			t.Error("the access token was listed although Redis was down")
 		}
 		if status := logout(t, server.URL, access, ""); status != http.StatusNoContent {
 			t.Errorf("retry once Redis is back: status = %d, want 204", status)
 		}
+		assertListedForItsRemainingLife(t, checker, access)
 	})
 }
 
