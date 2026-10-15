@@ -58,6 +58,9 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 - A rejected refresh token leaves one warning in the log with the trace id and never the token; two fields of the
   refresh use case are renamed; the comments of `.env.example` and the compose header are corrected
   ([#51](https://github.com/code-corhuila/csp-auth-api/pull/51)).
+- HU-AUTH-002, the purge deletes by primary key (ADR-030): `DELETE ... WHERE id = ANY(ARRAY(SELECT ... LIMIT n))`
+  replaces `id IN (SELECT ...)`, whose generic plan did a Hash Semi Join with a Seq Scan of the whole table. The
+  behaviour is the same (issue [#32](https://github.com/code-corhuila/csp-auth-api/issues/32)).
 
 ## Before the changelog
 

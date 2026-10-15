@@ -11,7 +11,10 @@ import (
 
 // agedRows implements out.PurgeableRecords over one table. The rows to delete are picked by
 // eligible, a condition on the placeholder $1 (the cutoff), oldest first by orderBy, and deleted
-// by primary key so that a batch is bounded by its limit (ADR-030).
+// by primary key so that a batch is bounded by its limit (ADR-030). The ids are collected into an
+// array first: with "id IN (SELECT ...)" the generic plan of a prepared statement, whose LIMIT is
+// unknown, joins the whole table through a Hash Semi Join and a Seq Scan instead of probing the
+// primary key.
 type agedRows struct {
 	pool     *pgxpool.Pool
 	table    string
@@ -42,8 +45,8 @@ func NewIdempotencyKeyPurger(pool *pgxpool.Pool) out.PurgeableRecords {
 
 func (r *agedRows) DeleteOlderThan(ctx context.Context, cutoff time.Time, limit int) (int, error) {
 	tag, err := r.pool.Exec(ctx,
-		"DELETE FROM "+r.table+" WHERE "+r.key+" IN (SELECT "+r.key+" FROM "+r.table+
-			" WHERE "+r.eligible+" ORDER BY "+r.orderBy+" LIMIT $2)", cutoff, limit)
+		"DELETE FROM "+r.table+" WHERE "+r.key+" = ANY(ARRAY(SELECT "+r.key+" FROM "+r.table+
+			" WHERE "+r.eligible+" ORDER BY "+r.orderBy+" LIMIT $2))", cutoff, limit)
 	if err != nil {
 		return 0, err
 	}
