@@ -185,8 +185,7 @@ belongs to the user. A refresh token that is unknown, another user's or already 
 nothing. The refresh tokens are revoked in PostgreSQL in **one transaction that is committed first**; then `jti` of the access
 token is written to Redis (`blacklist:{jti}`, `SET` with a ttl of its remaining life, at least one second) and the answer is `204`.
 If Redis cannot be written the answer is `500 INTERNAL_ERROR` although the refresh tokens are already revoked: the client repeats
-the call, which is idempotent. A missing or invalid access token is `401`. Reading the list on the protected routes is a
-separate change of the same story.
+the call, which is idempotent. A missing or invalid access token is `401`. The list is read on the protected routes too (below).
 
 Internal operations (ADR-020) accept a **service credential**: an RS256 token signed with the key of this service,
 with `exp` and a `sub` and sent as `Authorization: Bearer`. A missing or invalid token gets `401 UNAUTHORIZED` and a
@@ -238,6 +237,15 @@ service reads (HTTP, database, bcrypt, tokens and Redis).
 as long as the token does. `APP_AUTH_REDIS_TIMEOUT` (default `2s`) bounds the connection, every read and every write
 (Norma 5.3.10). The client does not connect at start: an unreachable Redis is an error of the first command that needs it.
 When the variable is empty the features that need Redis are not enabled (`POST /logout`, with an INFO line in the log).
+
+### Revoked access tokens
+
+`POST /logout`, `GET /users` and `PATCH /users/{userId}/role` (and the email change when it exists) look up the `jti` of the
+access token after verifying its signature and expiration: a token on the list is `401`, before its permissions are judged.
+Only this service reads the list; the other services accept the token until it expires (ADR-028, ADR-033). If Redis cannot be
+consulted the route **fails closed**: `500 INTERNAL_ERROR` and a `WARN` that never contains the token or the `jti`. This includes
+`POST /logout`, so during a Redis outage a sign out is refused before anything is revoked and the client retries later.
+Without `APP_AUTH_REDIS_URL` the check is off (INFO line at start) and the routes work as before.
 
 ## Branching
 
