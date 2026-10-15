@@ -202,3 +202,26 @@ func TestUpdateUserRoleResponsesFulfillTheContract(t *testing.T) {
 		})
 	}
 }
+
+func TestListUsersResponsesFulfillTheContract(t *testing.T) {
+	cases := map[string]struct {
+		authorizer *fakeUserAuthorizer
+		useCase    in.ListUsers
+		query      string
+	}{
+		"200 page":                  {&fakeUserAuthorizer{}, &fakeListUsers{page: onePage()}, "?email=mar&page=1&limit=20"},
+		"200 empty page":            {&fakeUserAuthorizer{}, &fakeListUsers{page: in.UserPage{Page: 1, Limit: 20}}, "?email=nobody"},
+		"400 page not an integer":   {&fakeUserAuthorizer{}, &fakeListUsers{}, "?page=two"},
+		"400 empty prefix":          {&fakeUserAuthorizer{}, &fakeListUsers{err: model.ErrInvalidEmailPrefix}, "?email="},
+		"400 limit too big":         {&fakeUserAuthorizer{}, &fakeListUsers{err: model.ErrInvalidPageLimit}, "?limit=101"},
+		"401 no token":              {&fakeUserAuthorizer{err: model.ErrAccessTokenInvalid}, &fakeListUsers{}, ""},
+		"403 without permission":    {&fakeUserAuthorizer{err: model.ErrPermissionDenied}, &fakeListUsers{}, ""},
+		"500 unexpected":            {&fakeUserAuthorizer{}, &fakeListUsers{err: errors.New("driver failure")}, ""},
+		"500 authorizer unexpected": {&fakeUserAuthorizer{err: errors.New("key store down")}, &fakeListUsers{}, ""},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			requireContract(t, http.MethodGet, usersPath, sendList(c.authorizer, c.useCase, c.query, withTrace()))
+		})
+	}
+}
