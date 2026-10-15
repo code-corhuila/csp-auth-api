@@ -60,3 +60,12 @@ func TestNewAccessClaimsRejectsInvalidInput(t *testing.T) {
 		})
 	}
 }
+
+func TestAccessClaimsAllowOnlyTheirPermissions(t *testing.T) {
+	client, _ := NewAccessClaims("user-1", []Role{RoleClient})
+	admin, _ := NewAccessClaims("user-2", []Role{RoleAdmin})
+
+	if client.Allows("user:role:update") || !admin.Allows("user:role:update") || !client.Allows("catalog:read") || !admin.Allows("catalog:read") {
+		t.Errorf("Allows() does not follow the roles: client %v, admin %v", client.Permissions, admin.Permissions)
+	}
+}
