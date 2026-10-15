@@ -31,7 +31,8 @@ func NewAuthorizeUser(tokens out.AccessTokenVerifier, revoked out.RevokedTokens)
 // (ADR-033). A revoked token is model.ErrAccessTokenInvalid, like any token that is not valid. When
 // the list cannot be consulted the use case fails closed with model.ErrRevokedTokensUnavailable:
 // it cannot prove that the token was not revoked. The token is only looked up once it is valid, so
-// a forged one never reaches Redis.
+// a forged one never reaches Redis. In that one case the claims of the verified token are returned
+// with the error, for the logout, which goes on without the list (ADR-033).
 func (a *AuthorizeUser) AuthenticateUser(ctx context.Context, bearerToken string) (model.AccessClaims, error) {
 	if bearerToken == "" {
 		return model.AccessClaims{}, model.ErrAccessTokenInvalid
@@ -42,7 +43,7 @@ func (a *AuthorizeUser) AuthenticateUser(ctx context.Context, bearerToken string
 	}
 	revoked, err := a.revoked.IsRevoked(ctx, claims.TokenID)
 	if err != nil {
-		return model.AccessClaims{}, fmt.Errorf("%w: %v", model.ErrRevokedTokensUnavailable, err)
+		return claims, fmt.Errorf("%w: %v", model.ErrRevokedTokensUnavailable, err)
 	}
 	if revoked {
 		return model.AccessClaims{}, model.ErrAccessTokenInvalid

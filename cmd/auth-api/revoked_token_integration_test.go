@@ -104,13 +104,12 @@ func TestRevokedAccessTokenIsRejectedOnTheProtectedRoutesEndToEnd(t *testing.T) 
 		}
 	})
 
-	t.Run("with Redis down the protected routes fail closed with 500 and a forged token is still 401", func(t *testing.T) {
+	t.Run("with Redis down GET /users and PATCH role fail closed with 500 and a forged token is still 401", func(t *testing.T) {
 		token := signInAdmin()
 
 		for name, status := range map[string]int{
-			"GET /users":  listAdmins(downServer.URL, token),
-			"PATCH role":  changeRole(downServer.URL, token),
-			"POST logout": logout(t, downServer.URL, token, ""),
+			"GET /users": listAdmins(downServer.URL, token),
+			"PATCH role": changeRole(downServer.URL, token),
 		} {
 			if status != http.StatusInternalServerError {
 				t.Errorf("%s: status = %d, want 500", name, status)
@@ -120,7 +119,7 @@ func TestRevokedAccessTokenIsRejectedOnTheProtectedRoutesEndToEnd(t *testing.T) 
 			t.Errorf("forged token: status = %d, want 401 without consulting Redis", status)
 		}
 		if status := listAdmins(server.URL, token); status != http.StatusOK {
-			t.Errorf("the same token with Redis up: status = %d, want 200 (the failed logout revoked nothing)", status)
+			t.Errorf("the same token with Redis up: status = %d, want 200 (it was never listed)", status)
 		}
 	})
 
