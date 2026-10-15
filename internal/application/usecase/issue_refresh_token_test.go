@@ -34,6 +34,10 @@ func (*fakeRefreshTokens) RevokeByHash(context.Context, string, time.Time) (stri
 	return "", false, nil
 }
 
+func (*fakeRefreshTokens) RevokeActiveByUserAndHash(context.Context, string, string, time.Time) error {
+	return nil
+}
+
 func (*fakeRefreshTokens) RevokeAllActiveByUser(context.Context, string, time.Time) (int, error) {
 	return 0, nil
 }

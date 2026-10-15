@@ -11,9 +11,11 @@ import (
 
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/in/httpapi"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/persistence"
+	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/redis"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/security"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/system"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/token"
+	"github.com/code-corhuila/csp-auth-api/internal/application/port/out"
 	"github.com/code-corhuila/csp-auth-api/internal/application/usecase"
 	"github.com/code-corhuila/csp-auth-api/internal/config"
 )
@@ -30,6 +32,8 @@ type poolOpener func(ctx context.Context, settings persistence.PoolSettings) (*p
 //   - A signing key and a database URL: also POST /register, POST /login and POST /refresh, served by the real use cases,
 //     GET /users and PATCH /users/{userId}/role, open to the access tokens that hold user:role:update, and
 //     POST /internal/maintenance/purge, open only to the service tokens whose subject is in SERVICE_SUBJECTS.
+//   - Also an APP_AUTH_REDIS_URL: POST /logout, which lists the revoked access tokens in Redis. Without it the
+//     route is not enabled.
 //
 // A configured key or database that cannot be used stops the service instead of degrading it.
 func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, open poolOpener) (http.Handler, func(), error) {
@@ -76,7 +80,22 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 	logger.Info("user list route enabled")
 	options = append(options, httpapi.WithPurgeOldRecords(newAuthorizeService(cfg, issuer), newPurgeOldRecords(pool)))
 	logger.Info("purge route enabled")
-	return httpapi.NewHandler(options...), pool.Close, nil
+	closeAll := pool.Close
+	if cfg.RedisURL == "" {
+		logger.Info("logout route not enabled: APP_AUTH_REDIS_URL is not set")
+		return httpapi.NewHandler(options...), closeAll, nil
+	}
+	client, err := redis.NewClient(redis.ClientSettings{URL: cfg.RedisURL, Timeout: cfg.RedisTimeout})
+	if err != nil {
+		pool.Close()
+		return nil, noop, err
+	}
+	options = append(options, httpapi.WithLogout(newAuthorizeUser(issuer), newLogout(pool, redis.NewRevokedTokens(client))))
+	logger.Info("logout route enabled")
+	return httpapi.NewHandler(options...), func() {
+		_ = client.Close()
+		pool.Close()
+	}, nil
 }
 
 func newRegisterUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer) *usecase.RegisterUser {
@@ -116,6 +135,15 @@ func newRefreshSession(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issu
 		usecase.NewIssueRefreshToken(tokens, ids, clock, cfg.RefreshTokenTTL),
 		clock,
 		cfg.RefreshReuseGrace,
+	)
+}
+
+func newLogout(pool *pgxpool.Pool, revoked out.RevokedTokens) *usecase.Logout {
+	return usecase.NewLogout(
+		persistence.NewRefreshTokenRepository(pool),
+		revoked,
+		persistence.NewTransactionManager(pool),
+		system.Clock{},
 	)
 }
 

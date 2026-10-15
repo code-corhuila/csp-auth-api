@@ -52,6 +52,16 @@ func (s *storedRefreshTokens) RevokeByHash(_ context.Context, hash string, at ti
 	return token.UserID(), true, nil
 }
 
+func (s *storedRefreshTokens) RevokeActiveByUserAndHash(_ context.Context, userID, hash string, at time.Time) error {
+	if s.err != nil {
+		return s.err
+	}
+	if token, found := s.rows[hash]; found && token.UserID() == userID && token.IsValidAt(at) {
+		token.Revoke(at)
+	}
+	return nil
+}
+
 func (s *storedRefreshTokens) RevokeAllActiveByUser(_ context.Context, userID string, at time.Time) (int, error) {
 	if s.revokeAllErr != nil {
 		return 0, s.revokeAllErr
