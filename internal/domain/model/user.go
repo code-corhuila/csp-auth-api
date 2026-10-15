@@ -1,6 +1,9 @@
 package model
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // UserStatus tells whether a user may authenticate.
 type UserStatus string
@@ -75,6 +78,36 @@ func (u *User) HasRole(role Role) bool {
 		}
 	}
 	return false
+}
+
+// SetRole makes the user hold role when enabled is true and not hold it otherwise, and reports
+// whether anything changed: asking for the state the user already has is not an error and changes
+// nothing. Only ADMIN can be granted or revoked; CLIENT is the base role of every account.
+//
+// activeAdmins is how many active administrators exist now, this user included. A user who counts
+// among them cannot lose ADMIN when they are the last one (ErrLastAdmin); a locked administrator
+// does not count, so revoking theirs never leaves the platform without an active one.
+func (u *User) SetRole(role Role, enabled bool, activeAdmins int) (bool, error) {
+	if role != RoleAdmin {
+		return false, ErrRoleNotChangeable
+	}
+	if u.HasRole(role) == enabled {
+		return false, nil
+	}
+	if enabled {
+		u.roles = append(u.roles, role)
+		slices.Sort(u.roles)
+		return true, nil
+	}
+	if u.status == UserActive && activeAdmins <= 1 {
+		return false, ErrLastAdmin
+	}
+	remaining := slices.DeleteFunc(u.Roles(), func(held Role) bool { return held == role })
+	if len(remaining) == 0 {
+		return false, ErrNoRoles
+	}
+	u.roles = remaining
+	return true, nil
 }
 
 // Lock prevents the user from authenticating.
