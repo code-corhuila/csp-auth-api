@@ -27,6 +27,8 @@ var (
 	ErrInvalidIdempotencyKey  = errors.New("idempotency key must have between 8 and 128 characters")
 	ErrIdempotencyKeyTaken    = errors.New("an idempotency key with this value already exists")
 	ErrIdempotencyKeyConflict = errors.New("the idempotency key was already used with a different request")
+	ErrAccessTokenInvalid     = errors.New("access token is missing, malformed, expired or not issued by this service")
+	ErrPermissionDenied       = errors.New("the caller does not hold the required permission")
 	ErrServiceTokenInvalid    = errors.New("service token is missing, malformed, expired or not signed by this service")
 	ErrServiceNotAllowed      = errors.New("the subject of the token is not an allowed service")
 )

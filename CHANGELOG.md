@@ -49,6 +49,15 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   active administrator (`LAST_ADMIN`); the `ChangeUserRole` use case writes the role and the `UserRoleChanged` outbox
   row in one transaction, only when something changed, and locks the active administrators before it counts them.
   No route uses it yet.
+- HU-AUTH-003, authorization of the users by permission (Norma 5.3.7, issue
+  [#61](https://github.com/code-corhuila/csp-auth-api/issues/61)): the RS256 verifier of access tokens (signature,
+  expiration, issuer `csp-auth` and audience `csp-api`), the `AuthorizeUser` use case and the `requirePermission` guard
+  that answers `401` for a missing or invalid token and `403` for a token without the permission. No route uses it yet.
+- HU-AUTH-003, `PATCH /api/v1/auth/users/{userId}/role` (ADR-031, issue
+  [#62](https://github.com/code-corhuila/csp-auth-api/issues/62)): the administrator grants or revokes `ADMIN`; `400`,
+  `401`, `403`, `404` and `409 LAST_ADMIN` as the contract declares them, contract tests against `auth-service.yaml` 1.5.0
+  and an end-to-end test that checks the effect at login and refresh. Revoking the only role of a user is
+  `409 USER_WITHOUT_ROLES`; `LAST_ADMIN` wins when both rules apply.
 - This changelog ([#51](https://github.com/code-corhuila/csp-auth-api/pull/51)).
 
 ### Changed

@@ -91,6 +91,16 @@ func TestSetRoleRejectsARevokeThatLeavesTheUserWithoutRoles(t *testing.T) {
 	}
 }
 
+func TestSetRoleAnswersLastAdminWhenTheLastAdministratorHasNoOtherRole(t *testing.T) {
+	user := newTestUser(t, RoleAdmin)
+
+	changed, err := user.SetRole(RoleAdmin, false, 1)
+
+	if !errors.Is(err, ErrLastAdmin) || changed {
+		t.Errorf("SetRole() = %v, %v, want ErrLastAdmin when both rules apply", changed, err)
+	}
+}
+
 func TestSetRoleOnlyChangesAdmin(t *testing.T) {
 	user := newTestUser(t, RoleClient)
 
