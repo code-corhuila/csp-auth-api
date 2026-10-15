@@ -55,6 +55,9 @@ services:
       APP_AUTH_REFRESH_REUSE_GRACE: ${APP_AUTH_REFRESH_REUSE_GRACE:-}
       # Subjects of the services allowed to call the internal operations (ADR-020), comma-separated.
       SERVICE_SUBJECTS: ${SERVICE_SUBJECTS:-}
+    # The service exits when PostgreSQL does not answer at start (first `up`, instance still starting): retry until it does.
+    # No depends_on: the database service belongs to csp-infra-postgres, not to this file.
+    restart: on-failure
     # expose, not ports: only the gateway is reachable from the host.
     expose: ["8081"]
     networks: [platform]
