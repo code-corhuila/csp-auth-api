@@ -15,4 +15,7 @@ var (
 	ErrUnknownRole            = errors.New("role must be CLIENT or ADMIN")
 	ErrNoRoles                = errors.New("user must have at least one role")
 	ErrUserLocked             = errors.New("user is locked and cannot authenticate")
+	ErrInvalidRefreshToken    = errors.New("refresh token needs an id, an opaque value and a positive lifetime")
+	ErrRefreshTokenNotFound   = errors.New("refresh token does not exist")
+	ErrRefreshTokenDuplicated = errors.New("a refresh token with this digest already exists")
 )

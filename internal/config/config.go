@@ -20,7 +20,10 @@ const (
 // maxAccessTokenTTL is the longest lifetime of an access token (security-rules.md).
 const maxAccessTokenTTL = time.Hour
 
-// Config holds the settings of the HTTP server, the database pool, the password hashing and the access tokens.
+// defaultRefreshTokenTTL is the lifetime of a refresh token (security-rules.md: 7 days).
+const defaultRefreshTokenTTL = 7 * 24 * time.Hour
+
+// Config holds the settings of the HTTP server, the database pool, the password hashing and the tokens.
 // Every limit is explicit (Norma 5.3.10).
 type Config struct {
 	Port                   int
@@ -38,6 +41,7 @@ type Config struct {
 	JWTPrivateKey          string
 	JWTPrivateKeyFile      string
 	AccessTokenTTL         time.Duration
+	RefreshTokenTTL        time.Duration
 }
 
 // Lookup returns the value of an environment variable, as os.LookupEnv does.
@@ -109,7 +113,8 @@ func loadDatabase(lookup Lookup, cfg *Config) error {
 	return err
 }
 
-// loadTokens reads where the signing key comes from; both sources empty means no key is configured.
+// loadTokens reads where the signing key comes from (both sources empty means no key is configured)
+// and the lifetime of both token kinds.
 func loadTokens(lookup Lookup, cfg *Config) error {
 	cfg.JWTPrivateKey, _ = lookup("APP_AUTH_JWT_PRIVATE_KEY")
 	cfg.JWTPrivateKeyFile, _ = lookup("APP_AUTH_JWT_PRIVATE_KEY_FILE")
@@ -121,7 +126,8 @@ func loadTokens(lookup Lookup, cfg *Config) error {
 		return fmt.Errorf("APP_AUTH_JWT_EXPIRY %d exceeds the maximum of %d seconds", int(ttl.Seconds()), int(maxAccessTokenTTL.Seconds()))
 	}
 	cfg.AccessTokenTTL = ttl
-	return nil
+	cfg.RefreshTokenTTL, err = secondsValue(lookup, "APP_AUTH_REFRESH_TOKEN_EXPIRY", defaultRefreshTokenTTL)
+	return err
 }
 
 func intValue(lookup Lookup, key string, def int) (int, error) {
