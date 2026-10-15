@@ -14,11 +14,13 @@
 #                                    fills it in the git-ignored env/dev.env); qa and main provide the key as a secret
 #                                    through APP_AUTH_JWT_PRIVATE_KEY_FILE (Norma 5.9.2).
 #                                    Registration needs the database URL and one of the two.
+#   APP_AUTH_REDIS_URL               Redis URL, redis://auth_app:<password>@redis:6379/0 (csp-infra-redis, ADR-028). Optional:
+#                                    without it the logout route is not enabled.
 # Optional, the service default applies when empty:
 #   APP_AUTH_DATABASE_MAX_CONNECTIONS, APP_AUTH_DATABASE_MIN_CONNECTIONS,
 #   APP_AUTH_DATABASE_CONNECT_TIMEOUT, APP_AUTH_DATABASE_QUERY_TIMEOUT,
 #   APP_AUTH_BCRYPT_ROUNDS, APP_AUTH_JWT_EXPIRY (seconds), APP_AUTH_REFRESH_TOKEN_EXPIRY (seconds),
-#   APP_AUTH_REFRESH_REUSE_GRACE (seconds), SERVICE_SUBJECTS,
+#   APP_AUTH_REFRESH_REUSE_GRACE (seconds), APP_AUTH_REDIS_TIMEOUT, SERVICE_SUBJECTS,
 #   APP_AUTH_HTTP_READ_HEADER_TIMEOUT, APP_AUTH_HTTP_READ_TIMEOUT, APP_AUTH_HTTP_WRITE_TIMEOUT,
 #   APP_AUTH_HTTP_IDLE_TIMEOUT, APP_AUTH_HTTP_SHUTDOWN_TIMEOUT.
 # The migration executor of csp-auth-db is a tooling service started by hand before the API.
@@ -43,6 +45,10 @@ services:
       APP_AUTH_DATABASE_MIN_CONNECTIONS: ${APP_AUTH_DATABASE_MIN_CONNECTIONS:-}
       APP_AUTH_DATABASE_CONNECT_TIMEOUT: ${APP_AUTH_DATABASE_CONNECT_TIMEOUT:-}
       APP_AUTH_DATABASE_QUERY_TIMEOUT: ${APP_AUTH_DATABASE_QUERY_TIMEOUT:-}
+      # Redis of the auth state (ADR-028): the revoked jti list. The URL carries the auth_app user of csp-infra-redis.
+      # Without it the logout route is off. The timeout is a Go duration that bounds connect, read and write.
+      APP_AUTH_REDIS_URL: ${APP_AUTH_REDIS_URL:-}
+      APP_AUTH_REDIS_TIMEOUT: ${APP_AUTH_REDIS_TIMEOUT:-}
       # Password hashing cost.
       APP_AUTH_BCRYPT_ROUNDS: ${APP_AUTH_BCRYPT_ROUNDS:-}
       # Signing key of the tokens (Norma 5.3.7); csp-infra mounts the PEM file when the file form is used.
@@ -55,6 +61,9 @@ services:
       APP_AUTH_REFRESH_REUSE_GRACE: ${APP_AUTH_REFRESH_REUSE_GRACE:-}
       # Subjects of the services allowed to call the internal operations (ADR-020), comma-separated.
       SERVICE_SUBJECTS: ${SERVICE_SUBJECTS:-}
+    # The service exits when PostgreSQL does not answer at start (first `up`, instance still starting): retry until it does.
+    # No depends_on: the database service belongs to csp-infra-postgres, not to this file.
+    restart: on-failure
     # expose, not ports: only the gateway is reachable from the host.
     expose: ["8081"]
     networks: [platform]

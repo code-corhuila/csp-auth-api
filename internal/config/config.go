@@ -31,7 +31,7 @@ const (
 	maxRefreshReuseGrace     = time.Minute
 )
 
-// Config holds the settings of the HTTP server, the database pool, the password hashing and the tokens.
+// Config holds the settings of the HTTP server, the database pool, Redis, the password hashing and the tokens.
 // Every limit is explicit (Norma 5.3.10).
 type Config struct {
 	Port                   int
@@ -52,6 +52,8 @@ type Config struct {
 	RefreshTokenTTL        time.Duration
 	ServiceSubjects        []string
 	RefreshReuseGrace      time.Duration
+	RedisURL               string
+	RedisTimeout           time.Duration
 }
 
 // Lookup returns the value of an environment variable, as os.LookupEnv does.
@@ -80,6 +82,9 @@ func Load(lookup Lookup) (Config, error) {
 	}
 	cfg.BcryptRounds = rounds
 	if err := loadTokens(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
+	if err := loadRedis(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
 
@@ -120,6 +125,15 @@ func loadDatabase(lookup Lookup, cfg *Config) error {
 		return err
 	}
 	cfg.DatabaseQueryTimeout, err = durationValue(lookup, "APP_AUTH_DATABASE_QUERY_TIMEOUT", 5*time.Second)
+	return err
+}
+
+// loadRedis reads the Redis of the auth state (ADR-028). An empty URL means it is not configured; the
+// timeout bounds the connection, every read and every write (Norma 5.3.10).
+func loadRedis(lookup Lookup, cfg *Config) error {
+	cfg.RedisURL, _ = lookup("APP_AUTH_REDIS_URL")
+	var err error
+	cfg.RedisTimeout, err = durationValue(lookup, "APP_AUTH_REDIS_TIMEOUT", 2*time.Second)
 	return err
 }
 

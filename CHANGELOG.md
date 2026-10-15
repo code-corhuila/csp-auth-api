@@ -62,6 +62,11 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   search of accounts by email prefix for the administrator, ordered by email and id, with the roles of each user and no
   permissions; contract tests against `auth-service.yaml` 1.5.0 and integration tests of the query. The queries are planned per execution so that the `text_pattern_ops` index
   `idx_app_user_email_pattern` (`csp-auth-db` V023) serves them, and a test checks the plan.
+- HU-AUTH-003, list of revoked access tokens (ADR-028, issue
+  [#86](https://github.com/code-corhuila/csp-auth-api/issues/86)): the `RevokedTokens` port and its Redis adapter, which
+  writes `blacklist:{jti}` with the remaining life of the token and checks it with `EXISTS`; `APP_AUTH_REDIS_URL` and
+  `APP_AUTH_REDIS_TIMEOUT` (default 2s, connect, read and write). Integration tests run against Redis 7 with the ACL of
+  `auth_app`. No route uses it yet.
 - This changelog ([#51](https://github.com/code-corhuila/csp-auth-api/pull/51)).
 
 ### Changed
@@ -79,6 +84,13 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 - HU-AUTH-002, the purge deletes by primary key (ADR-030): `DELETE ... WHERE id = ANY(ARRAY(SELECT ... LIMIT n))`
   replaces `id IN (SELECT ...)`, whose generic plan did a Hash Semi Join with a Seq Scan of the whole table. The
   behaviour is the same (issue [#32](https://github.com/code-corhuila/csp-auth-api/issues/32)).
+
+### Fixed
+
+- The container restarts when the database is not ready at start: `restart: on-failure` in `deploy/compose.yml`; on the first `up` of the platform the service started before PostgreSQL answered and stayed stopped (HU-AUTH-003, issue [#84](https://github.com/code-corhuila/csp-auth-api/issues/84)).
+- The container image builds again: `deploy/Dockerfile` copies `go.sum` together with `go.mod` before `go mod download`;
+  without it `go build` failed with `missing go.sum entry` (HU-AUTH-003, issue
+  [#81](https://github.com/code-corhuila/csp-auth-api/issues/81)).
 
 ## Before the changelog
 
