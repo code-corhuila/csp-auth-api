@@ -76,6 +76,15 @@ administrators take an advisory lock (key 3013), because the database is shared 
 go test -tags integration ./internal/adapter/out/persistence/
 ```
 
+The Redis adapter (`internal/adapter/out/redis`) has integration tests with the same tag. They need the Redis 7 of
+`csp-infra-redis` with its ACL (`auth_app`: `+get +set +exists +incr +expire +ttl +del +ping` on `~attempts:* ~locked:*
+~blacklist:*`) and are skipped when `AUTH_TEST_REDIS_URL` is not set. They check that the list expires with the token, that
+the key is `blacklist:{jti}`, that the ACL allows exactly the commands the adapter uses, and that an unreachable Redis is an error:
+
+```bash
+AUTH_TEST_REDIS_URL=redis://auth_app:<password>@localhost:6379/0 go test -tags integration ./internal/adapter/out/redis/
+```
+
 With the service running:
 
 ```bash
@@ -189,6 +198,14 @@ eligible row is left, so the caller repeats it until `hasMore` is `false`. A rep
 `Idempotency-Key`, the same registration answers `409 EMAIL_ALREADY_REGISTERED` instead of the `200` replay. A missing or
 invalid token is `401` and a valid token of another subject is `403`.
 
+## Redis
+
+`APP_AUTH_REDIS_URL` (`redis://auth_app:<password>@redis:6379/0`, URL-safe password) points at the Redis of
+`csp-infra-redis` (ADR-028). It holds the list of revoked access tokens, one key `blacklist:{jti}` per token that lives
+as long as the token does. `APP_AUTH_REDIS_TIMEOUT` (default `2s`) bounds the connection, every read and every write
+(Norma 5.3.10). The client does not connect at start: an unreachable Redis is an error of the first command that needs it.
+When the variable is empty the features that need Redis are not enabled.
+
 The end-to-end tests of these routes (`cmd/auth-api`, tag `integration`) uses the same `AUTH_TEST_DATABASE_URL`:
 
 ```bash
@@ -205,8 +222,7 @@ docker run --rm -p 8081:8081 csp-auth-api
 The service stops gracefully on `SIGINT` and `SIGTERM`. In the platform, `csp-infra` includes `deploy/compose.yml`,
 which exposes the port on the `platform` network without publishing it: only the gateway reaches the service.
 Copy `.env.example` to `.env` for local values and never commit `.env`. The file lists first the variables the
-service reads today (HTTP, database, bcrypt and tokens) and then, apart, the ones reserved for later features
-(Redis), which the service does not read yet.
+service reads (HTTP, database, bcrypt, tokens and Redis).
 
 ## Branching
 
