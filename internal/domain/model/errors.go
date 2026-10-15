@@ -14,6 +14,8 @@ var (
 	ErrInvalidAddress         = errors.New("address must be between 1 and 255 characters")
 	ErrUnknownRole            = errors.New("role must be CLIENT or ADMIN")
 	ErrNoRoles                = errors.New("user must have at least one role")
+	ErrLastAdmin              = errors.New("the last active administrator cannot lose the ADMIN role")
+	ErrRoleNotChangeable      = errors.New("only the ADMIN role can be granted or revoked")
 	ErrUserLocked             = errors.New("user is locked and cannot authenticate")
 	ErrUserNotFound           = errors.New("user does not exist")
 	ErrInvalidUserStatus      = errors.New("user status must be ACTIVE or LOCKED")
