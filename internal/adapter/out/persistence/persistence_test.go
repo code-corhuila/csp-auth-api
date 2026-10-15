@@ -117,3 +117,20 @@ func TestIsDuplicateRefreshTokenHashOnlyMatchesItsUniqueIndex(t *testing.T) {
 		})
 	}
 }
+
+func TestRoleChangedEnvelopeFollowsTheEventContract(t *testing.T) {
+	occurredAt := time.Date(2026, 10, 15, 9, 30, 0, 0, time.FixedZone("COT", -5*3600))
+	event := model.NewUserRoleChanged("0a9b8c7d-0000-4000-8000-000000000003", occurredAt, userID, model.RoleAdmin, true, "6f1d2c3e-0000-4000-8000-000000000009")
+
+	raw, err := userRoleChangedEnvelope(event)
+
+	if err != nil {
+		t.Fatalf("userRoleChangedEnvelope() error = %v", err)
+	}
+	want := `{"eventId":"0a9b8c7d-0000-4000-8000-000000000003","eventType":"UserRoleChanged","occurredAt":"2026-10-15T14:30:00Z",` +
+		`"version":1,"source":"auth-service","aggregateId":"` + userID + `","payload":{"userId":"` + userID + `","role":"ADMIN","enabled":true,` +
+		`"changedBy":"6f1d2c3e-0000-4000-8000-000000000009"}}`
+	if string(raw) != want {
+		t.Errorf("envelope =\n%s\nwant\n%s", raw, want)
+	}
+}
