@@ -110,6 +110,32 @@ func TestChangeUserRoleEndToEndAgainstTheDatabase(t *testing.T) {
 		}
 	})
 
+	t.Run("revoking the only role of a user is 409 USER_WITHOUT_ROLES, and LAST_ADMIN wins when both apply", func(t *testing.T) {
+		_, soloID, _, _ := signUp("e2e-solo")
+		if _, err := lock.Exec(ctx, `UPDATE auth.user_role SET deleted_at = NOW() WHERE user_id = $1 AND role_id = (SELECT id FROM auth.role WHERE name = 'CLIENT')`, soloID); err != nil {
+			t.Fatalf("drop CLIENT: %v", err)
+		}
+		if _, err := lock.Exec(ctx, `INSERT INTO auth.user_role (user_id, role_id) SELECT $1, id FROM auth.role WHERE name = 'ADMIN'`, soloID); err != nil {
+			t.Fatalf("seed the ADMIN-only user: %v", err)
+		}
+		if status, payload := patchRole(t, server.URL, adminToken, soloID, revoke); status != http.StatusConflict || payload["error"] != "USER_WITHOUT_ROLES" {
+			t.Errorf("status = %d, body = %v, want 409 USER_WITHOUT_ROLES", status, payload)
+		}
+		retire := `UPDATE auth.user_role SET deleted_at = NOW() WHERE user_id = $1 AND role_id = (SELECT id FROM auth.role WHERE name = 'ADMIN')`
+		if _, err := lock.Exec(ctx, retire, adminID); err != nil {
+			t.Fatalf("retire the first administrator: %v", err)
+		}
+		if status, payload := patchRole(t, server.URL, adminToken, soloID, revoke); status != http.StatusConflict || payload["error"] != "LAST_ADMIN" {
+			t.Errorf("status = %d, body = %v, want 409 LAST_ADMIN when both rules apply", status, payload)
+		}
+		if _, err := lock.Exec(ctx, retire, soloID); err != nil {
+			t.Fatalf("retire the ADMIN-only user: %v", err)
+		}
+		if _, err := lock.Exec(ctx, `UPDATE auth.user_role SET deleted_at = NULL WHERE user_id = $1 AND role_id = (SELECT id FROM auth.role WHERE name = 'ADMIN')`, adminID); err != nil {
+			t.Fatalf("restore the first administrator: %v", err)
+		}
+	})
+
 	t.Run("a grant answers the user, reaches the target at its next login and refresh, and repeating it changes nothing", func(t *testing.T) {
 		status, payload := patchRole(t, server.URL, adminToken, targetID, grant)
 		if status != http.StatusOK || !slices.Contains(toStrings(payload["roles"]), "ADMIN") {
