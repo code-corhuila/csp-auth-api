@@ -14,6 +14,8 @@ const (
 	codeEmailRegistered  = "EMAIL_ALREADY_REGISTERED"
 	codeIdempotencyReuse = "IDEMPOTENCY_KEY_CONFLICT"
 	codeInternal         = "INTERNAL_ERROR"
+	codeBadCredentials   = "INVALID_CREDENTIALS"
+	codeAccountLocked    = "ACCOUNT_LOCKED"
 )
 
 // fieldError names one invalid input: a body property or a header.
@@ -70,6 +72,27 @@ func translateRegisterError(w http.ResponseWriter, traceID string, err error) {
 		})
 	default:
 		slog.Error("register user failed", "traceId", traceID, "error", err)
+		writeJSON(w, http.StatusInternalServerError, errorResponse{
+			Error: codeInternal, Message: "an unexpected error occurred", TraceID: traceID,
+		})
+	}
+}
+
+// translateLoginError is the only place that maps the errors of the login use case to HTTP.
+// Every credential failure gets the same fixed response, so the client cannot tell an unknown
+// email from a wrong password. The cause of an unexpected error goes only to the log.
+func translateLoginError(w http.ResponseWriter, traceID string, err error) {
+	switch {
+	case errors.Is(err, model.ErrInvalidCredentials):
+		writeJSON(w, http.StatusUnauthorized, errorResponse{
+			Error: codeBadCredentials, Message: "Incorrect email or password", TraceID: traceID,
+		})
+	case errors.Is(err, model.ErrUserLocked):
+		writeJSON(w, http.StatusLocked, errorResponse{
+			Error: codeAccountLocked, Message: "Account temporarily locked after repeated failed attempts", TraceID: traceID,
+		})
+	default:
+		slog.Error("login user failed", "traceId", traceID, "error", err)
 		writeJSON(w, http.StatusInternalServerError, errorResponse{
 			Error: codeInternal, Message: "an unexpected error occurred", TraceID: traceID,
 		})
