@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/out"
@@ -13,6 +14,12 @@ import (
 // likeEscaper makes the wildcards of LIKE ordinary characters, so a prefix such as "a_b" matches
 // only itself.
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+const (
+	countUsersSQL = `SELECT count(*) FROM auth.app_user WHERE deleted_at IS NULL AND email LIKE $1`
+	pageUsersSQL  = `SELECT id::text, email, name FROM auth.app_user WHERE deleted_at IS NULL AND email LIKE $1
+		 ORDER BY email, id LIMIT $2 OFFSET $3`
+)
 
 // UserReader implements out.UserReader over auth.app_user and auth.user_role.
 type UserReader struct {
@@ -28,17 +35,17 @@ func NewUserReader(pool *pgxpool.Pool) *UserReader {
 
 // SearchUsers counts the active accounts whose email starts with prefix and reads one page of them
 // with their active roles. The prefix is compared as stored (lower case) with LIKE 'prefix%', the
-// form a text_pattern_ops index on the email can serve.
+// form the text_pattern_ops index idx_app_user_email_pattern serves (csp-auth-db V023). Both queries
+// run in pgx.QueryExecModeExec: the statement is not prepared, so every execution is planned with the
+// prefix in hand. A prepared statement switches to a generic plan after five executions, and a generic
+// plan cannot use the index because it does not know where the pattern's wildcard is.
 func (r *UserReader) SearchUsers(ctx context.Context, prefix model.EmailPrefix, page model.Page) (out.UserListPage, error) {
 	pattern := likeEscaper.Replace(prefix.String()) + "%"
 	var result out.UserListPage
-	if err := r.pool.QueryRow(ctx,
-		`SELECT count(*) FROM auth.app_user WHERE deleted_at IS NULL AND email LIKE $1`, pattern).Scan(&result.Total); err != nil {
+	if err := r.pool.QueryRow(ctx, countUsersSQL, pgx.QueryExecModeExec, pattern).Scan(&result.Total); err != nil {
 		return out.UserListPage{}, err
 	}
-	rows, err := r.pool.Query(ctx,
-		`SELECT id::text, email, name FROM auth.app_user WHERE deleted_at IS NULL AND email LIKE $1
-		 ORDER BY email, id LIMIT $2 OFFSET $3`, pattern, page.Limit(), page.Offset())
+	rows, err := r.pool.Query(ctx, pageUsersSQL, pgx.QueryExecModeExec, pattern, page.Limit(), page.Offset())
 	if err != nil {
 		return out.UserListPage{}, err
 	}

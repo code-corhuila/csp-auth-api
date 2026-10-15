@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/code-corhuila/csp-auth-api/internal/domain/model"
 )
 
@@ -131,5 +133,40 @@ func TestSearchUsersWithoutPrefixListsEveryone(t *testing.T) {
 
 	if err != nil || found.Total < 1 || len(found.Items) != 1 {
 		t.Errorf("found = %+v, %v, want one item of at least one user", found, err)
+	}
+}
+
+// The prefix search is only fast with idx_app_user_email_pattern (csp-auth-db V023). Sequential
+// scans are switched off for the connection, so the plan shows whether the index can serve the
+// statement the reader sends, planned the way the reader sends it.
+func TestSearchUsersStatementsCanUseTheEmailPatternIndex(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	conn, err := f.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire a connection: %v", err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, `SET enable_seqscan = off`); err != nil {
+		t.Fatalf("disable sequential scans: %v", err)
+	}
+	statements := map[string][]any{countUsersSQL: {"maria%"}, pageUsersSQL: {"maria%", 20, 0}}
+
+	for statement, arguments := range statements {
+		rows, err := conn.Query(ctx, "EXPLAIN "+statement, append([]any{pgx.QueryExecModeExec}, arguments...)...)
+		if err != nil {
+			t.Fatalf("EXPLAIN error = %v", err)
+		}
+		var plan strings.Builder
+		for rows.Next() {
+			var line string
+			if err := rows.Scan(&line); err != nil {
+				t.Fatal(err)
+			}
+			plan.WriteString(line + "\n")
+		}
+		rows.Close()
+		if rows.Err() != nil || !strings.Contains(plan.String(), "idx_app_user_email_pattern") {
+			t.Errorf("plan of %q = %s (error %v), want it to use idx_app_user_email_pattern", statement, plan.String(), rows.Err())
+		}
 	}
 }
