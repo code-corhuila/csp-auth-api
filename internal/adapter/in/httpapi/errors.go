@@ -145,3 +145,19 @@ func translateChangeRoleError(w http.ResponseWriter, traceID string, err error) 
 		writeInternal(w, traceID)
 	}
 }
+
+// translateListUsersError is the only place that maps the errors of the list use case to HTTP.
+func translateListUsersError(w http.ResponseWriter, traceID string, err error) {
+	for sentinel, field := range map[error]string{
+		model.ErrInvalidEmailPrefix: "email",
+		model.ErrInvalidPageNumber:  "page",
+		model.ErrInvalidPageLimit:   "limit",
+	} {
+		if errors.Is(err, sentinel) {
+			writeValidation(w, traceID, []fieldError{{Field: field, Message: sentinel.Error()}})
+			return
+		}
+	}
+	slog.Error("list users failed", "traceId", traceID, "error", err)
+	writeInternal(w, traceID)
+}
