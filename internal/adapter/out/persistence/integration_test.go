@@ -257,6 +257,7 @@ func TestOutboxPayloadHasTheEnvelopeAndNoContactData(t *testing.T) {
 
 func TestFindByEmailLoadsTheUserWithItsRolesAndContactData(t *testing.T) {
 	f, ctx := newFixture(t), context.Background()
+	f.lockAdministrators(t, ctx)
 	user := newUser(t, uniqueEmail(t))
 	if err := f.register(t, ctx, user); err != nil {
 		t.Fatalf("register error = %v", err)
