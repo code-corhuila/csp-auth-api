@@ -11,7 +11,7 @@ import (
 // valid access token.
 func WithLogout(authenticator in.AuthenticateUser, useCase in.Logout) Option {
 	return func(mux *http.ServeMux) {
-		mux.HandleFunc("POST "+BasePath+"/logout", requireAuthentication(authenticator, logout(useCase)))
+		mux.HandleFunc("POST "+BasePath+"/logout", requireAuthenticationEvenIfListIsDown(authenticator, logout(useCase)))
 	}
 }
 
@@ -23,7 +23,7 @@ type logoutRequest struct {
 
 func logout(useCase in.Logout) claimsHandler {
 	return func(w http.ResponseWriter, r *http.Request, claims model.AccessClaims) {
-		traceID := w.Header().Get(headerCorrelationID) // set by requireAuthentication, which wraps this handler
+		traceID := w.Header().Get(headerCorrelationID) // set by the guard, which wraps this handler
 
 		var body logoutRequest
 		if r.ContentLength != 0 {

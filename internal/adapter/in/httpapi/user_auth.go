@@ -40,10 +40,26 @@ type claimsHandler func(w http.ResponseWriter, r *http.Request, claims model.Acc
 // x-required-permissions in the contract): the handler runs only for a valid access token, not
 // revoked by a logout. A missing, invalid or revoked token is 401. The token is never logged.
 func requireAuthentication(authenticator in.AuthenticateUser, next claimsHandler) http.HandlerFunc {
+	return authenticate(authenticator, false, next)
+}
+
+// requireAuthenticationEvenIfListIsDown is requireAuthentication for the logout (ADR-033): a token
+// that is valid but cannot be checked against the list of revoked tokens is let through, so that
+// the refresh tokens are still revoked while Redis is down; the logout then fails when it writes
+// the list. The cause is logged at WARN.
+func requireAuthenticationEvenIfListIsDown(authenticator in.AuthenticateUser, next claimsHandler) http.HandlerFunc {
+	return authenticate(authenticator, true, next)
+}
+
+func authenticate(authenticator in.AuthenticateUser, proceedWhenListIsDown bool, next claimsHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		traceID := correlationID(r)
 		w.Header().Set(headerCorrelationID, traceID)
 		claims, err := authenticator.AuthenticateUser(r.Context(), bearerToken(r))
+		if proceedWhenListIsDown && errors.Is(err, model.ErrRevokedTokensUnavailable) {
+			slog.Warn("revoked token list unavailable, going on without it", "traceId", traceID, "error", err)
+			err = nil
+		}
 		if err != nil {
 			writeAuthenticationError(w, traceID, err)
 			return

@@ -159,6 +159,18 @@ func TestAuthenticateUserFailsClosedWhenTheListCannotBeConsulted(t *testing.T) {
 	}
 }
 
+func TestAuthenticateUserReturnsTheVerifiedClaimsWithTheErrorWhenTheListIsDown(t *testing.T) {
+	revoked := newRevokedList()
+	revoked.err = errors.New("connection refused")
+	useCase, _ := newUserAuthorizerWith(t, revoked)
+
+	claims, err := useCase.AuthenticateUser(context.Background(), "admin-token")
+
+	if !errors.Is(err, model.ErrRevokedTokensUnavailable) || claims.TokenID != "jti-admin" {
+		t.Errorf("claims = %+v, error = %v, want the claims of the token and ErrRevokedTokensUnavailable", claims, err)
+	}
+}
+
 func TestAuthenticateUserOnlyConsultsTheListForAValidToken(t *testing.T) {
 	revoked := newRevokedList()
 	useCase, _ := newUserAuthorizerWith(t, revoked)

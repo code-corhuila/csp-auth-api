@@ -243,8 +243,10 @@ When the variable is empty the features that need Redis are not enabled (`POST /
 `POST /logout`, `GET /users` and `PATCH /users/{userId}/role` (and the email change when it exists) look up the `jti` of the
 access token after verifying its signature and expiration: a token on the list is `401`, before its permissions are judged.
 Only this service reads the list; the other services accept the token until it expires (ADR-028, ADR-033). If Redis cannot be
-consulted the route **fails closed**: `500 INTERNAL_ERROR` and a `WARN` that never contains the token or the `jti`. This includes
-`POST /logout`, so during a Redis outage a sign out is refused before anything is revoked and the client retries later.
+consulted `GET /users` and `PATCH /users/{userId}/role` **fail closed**: `500 INTERNAL_ERROR` and a `WARN` that never contains
+the token or the `jti`. `POST /logout` does not stop at the lookup: it revokes the refresh tokens in PostgreSQL, commits, and
+then fails with `500` when it writes the list, so during a Redis outage a sign out answers `500` but the refresh tokens are
+already revoked, and the client repeats the call.
 Without `APP_AUTH_REDIS_URL` the check is off (INFO line at start) and the routes work as before.
 
 ## Branching
