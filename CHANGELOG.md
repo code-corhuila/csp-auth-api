@@ -44,6 +44,11 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   ([#56](https://github.com/code-corhuila/csp-auth-api/pull/56)).
 - HU-AUTH-002, `POST /api/v1/auth/internal/maintenance/purge` (ADR-030): the endpoint, protected by the service credential
   ([#54](https://github.com/code-corhuila/csp-auth-api/pull/54)), wired in the composition root.
+- HU-AUTH-003, domain and persistence of the role change (ADR-031, issue
+  [#60](https://github.com/code-corhuila/csp-auth-api/issues/60)): the user grants and revokes `ADMIN`, never the last
+  active administrator (`LAST_ADMIN`); the `ChangeUserRole` use case writes the role and the `UserRoleChanged` outbox
+  row in one transaction, only when something changed, and locks the active administrators before it counts them.
+  No route uses it yet.
 - This changelog ([#51](https://github.com/code-corhuila/csp-auth-api/pull/51)).
 
 ### Changed
