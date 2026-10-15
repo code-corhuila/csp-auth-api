@@ -15,7 +15,7 @@ import (
 const idempotencyKeyPrimaryKey = "pk_idempotency_key"
 
 // IdempotencyKeyRepository implements out.IdempotencyKeyRepository over auth.idempotency_key.
-// Rows are only inserted and read: auth_writer has no UPDATE or DELETE on the table.
+// Rows are only inserted and read here; only the purge deletes them (NewIdempotencyKeyPurger).
 type IdempotencyKeyRepository struct {
 	pool *pgxpool.Pool
 }

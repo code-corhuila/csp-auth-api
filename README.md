@@ -65,9 +65,7 @@ fakes of the use cases and every response of `POST /register`, `/login`, `/refre
 AUTH_CONTRACT_FILE=../csp-docs/07-api/contracts/openapi/auth-service.yaml go test ./internal/adapter/in/httpapi/
 ```
 
-The statuses the service answers but the contract does not declare yet (`400` of login and refresh, `423` of refresh and
-`500` of register, login and refresh) are listed in `undocumentedStatuses`; their body is checked against `ErrorResponse`
-only, until `csp-docs` declares them.
+Every status the service answers is declared by the contract (1.4.1 or later), so every response is validated in full.
 
 The PostgreSQL adapter has integration tests behind the `integration` build tag. They need a database with the
 `csp-auth-db` migrations applied and are skipped when `AUTH_TEST_DATABASE_URL` (login `auth_app`) is not set;
@@ -142,6 +140,24 @@ valid token whose `sub` is not in `SERVICE_SUBJECTS` (comma-separated, empty by 
 gets `403 FORBIDDEN`. Issuer and audience are not required. The service has no endpoint that issues these tokens: the
 deployment secret manager provides them, and `csp-infra-postgres/scripts/dev-token.sh <sub> <minutes>` writes one for
 development. The first internal operation is the purge of old rows.
+
+The purge of old rows (ADR-030) deletes, in this order, outbox events older than 30 days, refresh tokens that expired
+or were revoked more than 30 days ago and idempotency keys older than 7 days, at most `batchSize` rows (1 to 500) in
+total per call; it needs the `DELETE` grants of migration V019 of `csp-auth-db` for `auth_writer`.
+
+`POST /api/v1/auth/internal/maintenance/purge` (HU-AUTH-002) runs it. It is enabled by the same two settings as
+`/register`, is not routed by the gateway and is called by `csp-worker` with its service credential (`sub` in
+`SERVICE_SUBJECTS`):
+
+```bash
+curl -i -X POST http://localhost:8081/api/v1/auth/internal/maintenance/purge   -H "Authorization: Bearer $(cat "$AUTH_SERVICE_TOKEN_FILE")"   -H 'Content-Type: application/json'   -d '{"batchSize":100}'
+```
+
+The body is optional and `batchSize` is 1 to 500 (default 100, otherwise `400`). It answers `200` with
+`{"processedCount":N,"hasMore":true|false}`: the rows deleted in this call over the three tables and whether any
+eligible row is left, so the caller repeats it until `hasMore` is `false`. A repeated call is safe. After the purge of an
+`Idempotency-Key`, the same registration answers `409 EMAIL_ALREADY_REGISTERED` instead of the `200` replay. A missing or
+invalid token is `401` and a valid token of another subject is `403`.
 
 The end-to-end tests of these routes (`cmd/auth-api`, tag `integration`) uses the same `AUTH_TEST_DATABASE_URL`:
 
