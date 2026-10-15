@@ -56,11 +56,113 @@ go test ./...                        # run every test
 go run ./cmd/auth-api                # starts on PORT, 8081 by default
 ```
 
+The HTTP adapter has contract tests (`internal/adapter/in/httpapi/contract_test.go`): the real handlers answer through
+fakes of the use cases and every response of `POST /register`, `/login`, `/refresh` and `GET /jwks` is validated against
+`auth-service.yaml` (status, declared headers and body schema). The contract lives in `csp-docs`, so point
+`AUTH_CONTRACT_FILE` at it. Without the variable they are skipped on a workstation; in CI (`CI` set) they fail instead:
+
+```bash
+AUTH_CONTRACT_FILE=../csp-docs/07-api/contracts/openapi/auth-service.yaml go test ./internal/adapter/in/httpapi/
+```
+
+Every status the service answers is declared by the contract (1.4.1 or later), so every response is validated in full.
+
+The PostgreSQL adapter has integration tests behind the `integration` build tag. They need a database with the
+`csp-auth-db` migrations applied and are skipped when `AUTH_TEST_DATABASE_URL` (login `auth_app`) is not set;
+`AUTH_TEST_OUTBOX_READER_URL` (login `worker_app`) enables the outbox payload test:
+
+```bash
+go test -tags integration ./internal/adapter/out/persistence/
+```
+
 With the service running:
 
 ```bash
 curl http://localhost:8081/api/v1/auth/health          # {"status":"ok"}
 curl http://localhost:8081/api/v1/auth/health/ready    # {"status":"ready","dependencies":{}}
+```
+
+`POST /api/v1/auth/register` (HU-AUTH-001) is served by the real use case when **both** `APP_AUTH_DATABASE_URL`
+and a signing key (`APP_AUTH_JWT_PRIVATE_KEY` or `APP_AUTH_JWT_PRIVATE_KEY_FILE`) are set. Without a database URL the
+service starts as before (health, and `/jwks` when a key is set). A database URL without a signing key, an invalid pool
+setting or a database that does not answer stops the service at startup. The pool is closed on shutdown.
+
+To run it with the database:
+
+1. Start the PostgreSQL instance of `csp-infra-postgres` and apply the migrations with the executor of `csp-auth-db`
+   (`docker compose -f deploy/compose.yml --env-file .env --profile tooling run --rm auth-db-migrate`, see its README).
+   The service connects as `auth_app`, never as the executor user.
+2. Export the variables (names only here, see `.env.example`; never commit values):
+   `APP_AUTH_DATABASE_URL` (login `auth_app`, `search_path=auth`), `APP_AUTH_JWT_PRIVATE_KEY_FILE` (RSA key, PEM)
+   and, optionally, `APP_AUTH_BCRYPT_ROUNDS`, `APP_AUTH_JWT_EXPIRY`, `APP_AUTH_REFRESH_TOKEN_EXPIRY`, `APP_AUTH_REFRESH_REUSE_GRACE` and the
+   `APP_AUTH_DATABASE_*` pool limits.
+3. `go run ./cmd/auth-api` and register:
+
+```bash
+curl -i -X POST http://localhost:8081/api/v1/auth/register   -H 'Content-Type: application/json'   -H "Idempotency-Key: $(uuidgen)"   -d '{"email":"ada@example.com","password":"<a password of 8 to 72 bytes>","name":"Ada Lovelace"}'
+```
+
+It requires the `Idempotency-Key` header and a JSON body of at most 1 MiB; it answers `201` with the tokens and the
+user, `200` with the user alone on a replay, `400` with one `details` entry per invalid field, and `409` when the
+email is registered or the key was used by another request. `X-Correlation-Id` is echoed or generated.
+
+`POST /api/v1/auth/login` (HU-AUTH-002) is enabled by the same two settings as `/register`:
+
+```bash
+curl -i -X POST http://localhost:8081/api/v1/auth/login   -H 'Content-Type: application/json'   -d '{"email":"ada@example.com","password":"<the password chosen at registration>"}'
+```
+
+It requires a JSON body of at most 1 MiB with `email` and `password`, and answers `200` with the tokens and the user
+(`Cache-Control: no-store`). A missing or empty field is `400`; an unknown or malformed email and a wrong password get
+the same `401` (`INVALID_CREDENTIALS`), and a locked account gets `423` (`ACCOUNT_LOCKED`) only when the password is
+right. The `429` of the contract belongs to the rate limit (HU-AUTH-005) and is not served yet.
+
+`POST /api/v1/auth/refresh` (HU-AUTH-002) is enabled by the same two settings and renews a session:
+
+```bash
+curl -i -X POST http://localhost:8081/api/v1/auth/refresh   -H 'Content-Type: application/json'   -d '{"refreshToken":"<the refresh token of the last login or refresh>"}'
+```
+
+It requires a JSON body of at most 1 MiB with `refreshToken` and answers `200` with a new pair and the user
+(`Cache-Control: no-store`). The presented token is spent in the same transaction that issues the new one, so a token
+works once and a failure while issuing leaves it valid. An unknown, expired or already used token gets the same `401`
+(`INVALID_REFRESH_TOKEN`). A locked account gets `423`, a missing or empty `refreshToken` gets `400`.
+
+Reuse detection (ADR-029): a token that was already used and is presented again more than
+`APP_AUTH_REFRESH_REUSE_GRACE` seconds after (default 10, maximum 60) ends every active session of its user. The
+revocation is committed although the request fails, one `WARN` with the user id and the id of the token row is logged
+(never the token), and the answer is the same `401` as for any other rejected token. Inside the window the presentation
+is taken as a concurrent refresh and nothing else is revoked; unknown and expired tokens never revoke anything.
+
+Internal operations (ADR-020) accept a **service credential**: an RS256 token signed with the key of this service,
+with `exp` and a `sub` and sent as `Authorization: Bearer`. A missing or invalid token gets `401 UNAUTHORIZED` and a
+valid token whose `sub` is not in `SERVICE_SUBJECTS` (comma-separated, empty by default so that no service is allowed)
+gets `403 FORBIDDEN`. Issuer and audience are not required. The service has no endpoint that issues these tokens: the
+deployment secret manager provides them, and `csp-infra-postgres/scripts/dev-token.sh <sub> <minutes>` writes one for
+development. The first internal operation is the purge of old rows.
+
+The purge of old rows (ADR-030) deletes, in this order, outbox events older than 30 days, refresh tokens that expired
+or were revoked more than 30 days ago and idempotency keys older than 7 days, at most `batchSize` rows (1 to 500) in
+total per call; it needs the `DELETE` grants of migration V019 of `csp-auth-db` for `auth_writer`.
+
+`POST /api/v1/auth/internal/maintenance/purge` (HU-AUTH-002) runs it. It is enabled by the same two settings as
+`/register`, is not routed by the gateway and is called by `csp-worker` with its service credential (`sub` in
+`SERVICE_SUBJECTS`):
+
+```bash
+curl -i -X POST http://localhost:8081/api/v1/auth/internal/maintenance/purge   -H "Authorization: Bearer $(cat "$AUTH_SERVICE_TOKEN_FILE")"   -H 'Content-Type: application/json'   -d '{"batchSize":100}'
+```
+
+The body is optional and `batchSize` is 1 to 500 (default 100, otherwise `400`). It answers `200` with
+`{"processedCount":N,"hasMore":true|false}`: the rows deleted in this call over the three tables and whether any
+eligible row is left, so the caller repeats it until `hasMore` is `false`. A repeated call is safe. After the purge of an
+`Idempotency-Key`, the same registration answers `409 EMAIL_ALREADY_REGISTERED` instead of the `200` replay. A missing or
+invalid token is `401` and a valid token of another subject is `403`.
+
+The end-to-end tests of these routes (`cmd/auth-api`, tag `integration`) uses the same `AUTH_TEST_DATABASE_URL`:
+
+```bash
+go test -tags integration ./...
 ```
 
 With Docker, from the root of the repository:
@@ -73,8 +175,8 @@ docker run --rm -p 8081:8081 csp-auth-api
 The service stops gracefully on `SIGINT` and `SIGTERM`. In the platform, `csp-infra` includes `deploy/compose.yml`,
 which exposes the port on the `platform` network without publishing it: only the gateway reaches the service.
 Copy `.env.example` to `.env` for local values and never commit `.env`. The file lists first the variables the
-service reads today (`PORT` and the `APP_AUTH_HTTP_*` timeouts) and then, apart, the ones reserved for later features
-(database, Redis, JWT, expiries, bcrypt), which the service does not read yet.
+service reads today (HTTP, database, bcrypt and tokens) and then, apart, the ones reserved for later features
+(Redis), which the service does not read yet.
 
 ## Branching
 

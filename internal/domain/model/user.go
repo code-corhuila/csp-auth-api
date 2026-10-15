@@ -13,15 +13,19 @@ const (
 // User is the identity aggregate. Its invariants are enforced here, not in controllers or SQL.
 type User struct {
 	id           string
+	name         Name
 	email        Email
 	passwordHash string
+	phone        Phone
+	address      Address
 	roles        []Role
 	status       UserStatus
 }
 
 // NewUser creates an ACTIVE user. The password must already be a bcrypt hash and the user
-// needs at least one valid role; repeated roles are kept once.
-func NewUser(id string, email Email, passwordHash string, roles []Role) (*User, error) {
+// needs at least one valid role; repeated roles are kept once. Phone and address are
+// contact data: stored with the user, never part of its public projections (ADR-024).
+func NewUser(id string, name Name, email Email, passwordHash string, phone Phone, address Address, roles []Role) (*User, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, ErrInvalidUserID
 	}
@@ -32,12 +36,30 @@ func NewUser(id string, email Email, passwordHash string, roles []Role) (*User, 
 	if err != nil {
 		return nil, err
 	}
-	return &User{id: id, email: email, passwordHash: passwordHash, roles: unique, status: UserActive}, nil
+	return &User{id: id, name: name, email: email, passwordHash: passwordHash, phone: phone, address: address, roles: unique, status: UserActive}, nil
+}
+
+// RestoreUser rebuilds a stored user with the status it had. It keeps the invariants of NewUser
+// (id, bcrypt hash, valid roles) and also requires a known status. Phone and address may be empty:
+// accounts that predate ADR-024 do not have them.
+func RestoreUser(id string, name Name, email Email, passwordHash string, phone Phone, address Address, roles []Role, status UserStatus) (*User, error) {
+	if status != UserActive && status != UserLocked {
+		return nil, ErrInvalidUserStatus
+	}
+	user, err := NewUser(id, name, email, passwordHash, phone, address, roles)
+	if err != nil {
+		return nil, err
+	}
+	user.status = status
+	return user, nil
 }
 
 func (u *User) ID() string           { return u.id }
+func (u *User) Name() Name           { return u.name }
 func (u *User) Email() Email         { return u.email }
 func (u *User) PasswordHash() string { return u.passwordHash }
+func (u *User) Phone() Phone         { return u.phone }
+func (u *User) Address() Address     { return u.address }
 func (u *User) Status() UserStatus   { return u.status }
 
 // Roles returns a copy, so callers cannot change the aggregate.
