@@ -27,8 +27,16 @@ func (f *fakeRevokedTokens) Revoke(_ context.Context, jti string, ttl time.Durat
 }
 
 func (f *fakeRevokedTokens) IsRevoked(_ context.Context, jti string) (bool, error) {
+	f.journal.record("check jti")
+	if f.err != nil {
+		return false, f.err
+	}
 	_, listed := f.ttls[jti]
-	return listed, f.err
+	return listed, nil
+}
+
+func newRevokedList() *fakeRevokedTokens {
+	return &fakeRevokedTokens{journal: &journal{}, ttls: map[string]time.Duration{}}
 }
 
 type logoutFixture struct {

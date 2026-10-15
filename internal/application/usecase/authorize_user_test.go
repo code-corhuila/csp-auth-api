@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/code-corhuila/csp-auth-api/internal/domain/model"
 )
@@ -23,6 +24,11 @@ func (f *fakeAccessTokens) VerifyAccessToken(token string) (model.AccessClaims, 
 
 func newUserAuthorizer(t *testing.T) (*AuthorizeUser, *fakeAccessTokens) {
 	t.Helper()
+	return newUserAuthorizerWith(t, newRevokedList())
+}
+
+func newUserAuthorizerWith(t *testing.T, revoked *fakeRevokedTokens) (*AuthorizeUser, *fakeAccessTokens) {
+	t.Helper()
 	admin, err := model.NewAccessClaims("admin-1", []model.Role{model.RoleAdmin})
 	if err != nil {
 		t.Fatal(err)
@@ -31,8 +37,9 @@ func newUserAuthorizer(t *testing.T) (*AuthorizeUser, *fakeAccessTokens) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	admin.TokenID, client.TokenID = "jti-admin", "jti-client"
 	tokens := &fakeAccessTokens{claims: map[string]model.AccessClaims{"admin-token": admin, "client-token": client}}
-	return NewAuthorizeUser(tokens), tokens
+	return NewAuthorizeUser(tokens, revoked), tokens
 }
 
 func TestAuthorizeUserReturnsTheUserOfATokenWithThePermission(t *testing.T) {
@@ -72,7 +79,7 @@ func TestAuthorizeUserRejectsAMissingOrInvalidTokenBeforeLookingAtThePermission(
 
 func TestAuthorizeUserPassesAnUnexpectedVerifierFailureOn(t *testing.T) {
 	failure := errors.New("key store down")
-	useCase := NewAuthorizeUser(failingAccessTokens{failure})
+	useCase := NewAuthorizeUser(failingAccessTokens{failure}, newRevokedList())
 
 	if _, err := useCase.AuthorizeUser(context.Background(), "any-token", "user:role:update"); !errors.Is(err, failure) {
 		t.Errorf("error = %v, want %v", err, failure)
@@ -104,5 +111,75 @@ func TestAuthenticateUserRejectsAMissingOrInvalidToken(t *testing.T) {
 		if !errors.Is(err, model.ErrAccessTokenInvalid) {
 			t.Errorf("%s: error = %v, want ErrAccessTokenInvalid", name, err)
 		}
+	}
+}
+
+func TestAuthenticateUserRejectsATokenThatALogoutRevoked(t *testing.T) {
+	revoked := newRevokedList()
+	revoked.ttls["jti-client"] = time.Hour
+	useCase, _ := newUserAuthorizerWith(t, revoked)
+
+	_, err := useCase.AuthenticateUser(context.Background(), "client-token")
+
+	if !errors.Is(err, model.ErrAccessTokenInvalid) {
+		t.Errorf("error = %v, want ErrAccessTokenInvalid", err)
+	}
+	if claims, err := useCase.AuthenticateUser(context.Background(), "admin-token"); err != nil || claims.Subject != "admin-1" {
+		t.Errorf("another token: claims = %+v, error = %v, want it accepted", claims, err)
+	}
+}
+
+func TestAuthorizeUserAnswersARevokedTokenAsInvalidEvenWhenItLacksThePermission(t *testing.T) {
+	revoked := newRevokedList()
+	revoked.ttls["jti-client"] = time.Hour
+	useCase, _ := newUserAuthorizerWith(t, revoked)
+
+	_, err := useCase.AuthorizeUser(context.Background(), "client-token", "user:role:update")
+
+	if !errors.Is(err, model.ErrAccessTokenInvalid) {
+		t.Errorf("error = %v, want ErrAccessTokenInvalid and not ErrPermissionDenied", err)
+	}
+}
+
+func TestAuthenticateUserFailsClosedWhenTheListCannotBeConsulted(t *testing.T) {
+	revoked := newRevokedList()
+	revoked.err = errors.New("dial tcp: connection refused")
+	useCase, _ := newUserAuthorizerWith(t, revoked)
+
+	for name, call := range map[string]func() error{
+		"authenticate": func() error { _, err := useCase.AuthenticateUser(context.Background(), "admin-token"); return err },
+		"authorize": func() error {
+			_, err := useCase.AuthorizeUser(context.Background(), "admin-token", "user:role:update")
+			return err
+		},
+	} {
+		if err := call(); !errors.Is(err, model.ErrRevokedTokensUnavailable) || errors.Is(err, model.ErrAccessTokenInvalid) {
+			t.Errorf("%s: error = %v, want ErrRevokedTokensUnavailable", name, err)
+		}
+	}
+}
+
+func TestAuthenticateUserReturnsTheVerifiedClaimsWithTheErrorWhenTheListIsDown(t *testing.T) {
+	revoked := newRevokedList()
+	revoked.err = errors.New("connection refused")
+	useCase, _ := newUserAuthorizerWith(t, revoked)
+
+	claims, err := useCase.AuthenticateUser(context.Background(), "admin-token")
+
+	if !errors.Is(err, model.ErrRevokedTokensUnavailable) || claims.TokenID != "jti-admin" {
+		t.Errorf("claims = %+v, error = %v, want the claims of the token and ErrRevokedTokensUnavailable", claims, err)
+	}
+}
+
+func TestAuthenticateUserOnlyConsultsTheListForAValidToken(t *testing.T) {
+	revoked := newRevokedList()
+	useCase, _ := newUserAuthorizerWith(t, revoked)
+
+	for _, bearer := range []string{"", "forged-token"} {
+		_, _ = useCase.AuthenticateUser(context.Background(), bearer)
+	}
+
+	if len(revoked.journal.steps) != 0 {
+		t.Errorf("the list was consulted %v for tokens that are not valid, want never", revoked.journal.steps)
 	}
 }
