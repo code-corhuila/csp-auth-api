@@ -47,6 +47,25 @@ func (f fixture) adminAssignments(t *testing.T, ctx context.Context, userID stri
 	return live, total, createdBy
 }
 
+// adminLockKey serializes the tests that count or retire the administrators of the shared test
+// database; cmd/auth-api takes the same advisory lock.
+const adminLockKey = 3013
+
+func (f fixture) lockAdministrators(t *testing.T, ctx context.Context) {
+	t.Helper()
+	conn, err := f.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire a connection for the administrators lock: %v", err)
+	}
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, adminLockKey); err != nil {
+		t.Fatalf("take the administrators lock: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, adminLockKey)
+		conn.Release()
+	})
+}
+
 type failingRoleOutbox struct{ err error }
 
 func (o failingRoleOutbox) AppendRoleChanged(context.Context, model.UserRoleChanged) error {
@@ -55,6 +74,7 @@ func (o failingRoleOutbox) AppendRoleChanged(context.Context, model.UserRoleChan
 
 func TestChangeRoleGrantsRevokesAndRevivesTheAssignmentWithItsEvents(t *testing.T) {
 	f, ctx := newFixture(t), context.Background()
+	f.lockAdministrators(t, ctx)
 	reader := openPool(t, readerURLVariable)
 	admin, target := f.registerAdmin(t, ctx), newUser(t, uniqueEmail(t))
 	if err := f.register(t, ctx, target); err != nil {
@@ -179,6 +199,7 @@ func TestChangeRoleReportsAnUnknownUser(t *testing.T) {
 // so exactly two are active.
 func TestARevokeWaitsForTheLockAndCountsWhatTheFirstOneLeft(t *testing.T) {
 	f, ctx := newFixture(t), context.Background()
+	f.lockAdministrators(t, ctx)
 	first, second := f.registerAdmin(t, ctx), f.registerAdmin(t, ctx)
 	_, err := f.pool.Exec(ctx,
 		`UPDATE auth.user_role SET deleted_at = NOW() WHERE deleted_at IS NULL AND user_id NOT IN ($1, $2)
