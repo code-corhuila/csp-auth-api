@@ -69,7 +69,8 @@ Every status the service answers is declared by the contract (1.4.1 or later), s
 
 The PostgreSQL adapter has integration tests behind the `integration` build tag. They need a database with the
 `csp-auth-db` migrations applied and are skipped when `AUTH_TEST_DATABASE_URL` (login `auth_app`) is not set;
-`AUTH_TEST_OUTBOX_READER_URL` (login `worker_app`) enables the outbox payload test:
+`AUTH_TEST_OUTBOX_READER_URL` (login `worker_app`) enables the outbox payload test. The tests that count or retire the
+administrators take an advisory lock (key 3013), because the database is shared by all the packages:
 
 ```bash
 go test -tags integration ./internal/adapter/out/persistence/
@@ -133,6 +134,21 @@ Reuse detection (ADR-029): a token that was already used and is presented again 
 revocation is committed although the request fails, one `WARN` with the user id and the id of the token row is logged
 (never the token), and the answer is the same `401` as for any other rejected token. Inside the window the presentation
 is taken as a concurrent refresh and nothing else is revoked; unknown and expired tokens never revoke anything.
+
+`PATCH /api/v1/auth/users/{userId}/role` (HU-AUTH-003, ADR-031) is enabled by the same two settings and lets an administrator
+grant or revoke the `ADMIN` role. It is protected by the access token of the caller (RS256, `iss` `csp-auth`, `aud` `csp-api`, not
+expired), which must hold the permission `user:role:update`:
+
+```bash
+curl -i -X PATCH http://localhost:8081/api/v1/auth/users/<userId>/role -H "Authorization: Bearer $ACCESS_TOKEN" -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" -d '{"role":"ADMIN","enabled":true}'
+```
+
+It answers `200` with the user after the change; a missing or invalid token is `401`, a token without the permission `403`, an
+invalid `userId`, `Idempotency-Key` or body `400`, an unknown user `404` and the revoke of the last active administrator `409`
+(`LAST_ADMIN`). Asking for the state the user already has is a `200` that writes nothing and publishes no event, so the operation
+is idempotent by itself; the `Idempotency-Key` is validated but not stored. A real change writes the `UserRoleChanged` outbox row in the
+same transaction. The roles are read again from the database at login and at refresh, so the change reaches the user at their next
+token; a token already issued keeps its roles until it expires.
 
 Internal operations (ADR-020) accept a **service credential**: an RS256 token signed with the key of this service,
 with `exp` and a `sub` and sent as `Authorization: Bearer`. A missing or invalid token gets `401 UNAUTHORIZED` and a
