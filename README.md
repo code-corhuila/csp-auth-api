@@ -56,6 +56,14 @@ go test ./...                        # run every test
 go run ./cmd/auth-api                # starts on PORT, 8081 by default
 ```
 
+The PostgreSQL adapter has integration tests behind the `integration` build tag. They need a database with the
+`csp-auth-db` migrations applied and are skipped when `AUTH_TEST_DATABASE_URL` (login `auth_app`) is not set;
+`AUTH_TEST_OUTBOX_READER_URL` (login `worker_app`) enables the outbox payload test:
+
+```bash
+go test -tags integration ./internal/adapter/out/persistence/
+```
+
 With the service running:
 
 ```bash
