@@ -28,7 +28,8 @@ type poolOpener func(ctx context.Context, settings persistence.PoolSettings) (*p
 //     because registration issues tokens.
 //   - A signing key: health and /jwks.
 //   - A signing key and a database URL: also POST /register, POST /login and POST /refresh, served by the real use cases,
-//     and POST /internal/maintenance/purge, open only to the service tokens whose subject is in SERVICE_SUBJECTS.
+//     PATCH /users/{userId}/role, open to the access tokens that hold user:role:update, and
+//     POST /internal/maintenance/purge, open only to the service tokens whose subject is in SERVICE_SUBJECTS.
 //
 // A configured key or database that cannot be used stops the service instead of degrading it.
 func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, open poolOpener) (http.Handler, func(), error) {
@@ -69,6 +70,8 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 	logger.Info("login route enabled")
 	options = append(options, httpapi.WithRefreshSession(newRefreshSession(cfg, pool, issuer)))
 	logger.Info("refresh route enabled")
+	options = append(options, httpapi.WithChangeUserRole(newAuthorizeUser(issuer), newChangeUserRole(pool)))
+	logger.Info("user role route enabled")
 	options = append(options, httpapi.WithPurgeOldRecords(newAuthorizeService(cfg, issuer), newPurgeOldRecords(pool)))
 	logger.Info("purge route enabled")
 	return httpapi.NewHandler(options...), pool.Close, nil
@@ -112,6 +115,22 @@ func newRefreshSession(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issu
 		clock,
 		cfg.RefreshReuseGrace,
 	)
+}
+
+func newAuthorizeUser(issuer *token.Issuer) *usecase.AuthorizeUser {
+	return usecase.NewAuthorizeUser(token.NewAccessTokenVerifier(issuer.PublicKeys(), system.Clock{}))
+}
+
+func newChangeUserRole(pool *pgxpool.Pool) *usecase.ChangeUserRole {
+	users := persistence.NewUserRepository(pool)
+	return usecase.NewChangeUserRole(usecase.ChangeUserRolePorts{
+		Users:        users,
+		Roles:        users,
+		Outbox:       persistence.NewOutboxWriter(pool),
+		IDs:          system.UUIDGenerator{},
+		Clock:        system.Clock{},
+		Transactions: persistence.NewTransactionManager(pool),
+	})
 }
 
 func newAuthorizeService(cfg config.Config, issuer *token.Issuer) *usecase.AuthorizeService {
