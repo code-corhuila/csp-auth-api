@@ -41,7 +41,7 @@ func NewServiceTokenVerifier(keys []model.PublicKey, clock out.Clock) *ServiceTo
 // model.ErrServiceTokenInvalid.
 func (v *ServiceTokenVerifier) VerifyServiceToken(raw string) (string, error) {
 	claims := jwt.RegisteredClaims{}
-	if _, err := v.parser.ParseWithClaims(raw, &claims, v.keyFor); err != nil {
+	if _, err := v.parser.ParseWithClaims(raw, &claims, keyFor(v.keys)); err != nil {
 		return "", fmt.Errorf("%w: %v", model.ErrServiceTokenInvalid, err)
 	}
 	if claims.Subject == "" {
@@ -50,20 +50,22 @@ func (v *ServiceTokenVerifier) VerifyServiceToken(raw string) (string, error) {
 	return claims.Subject, nil
 }
 
-// keyFor picks the verification key by the kid of the token. A token without kid, such as the
-// ones of the development script, is checked against the only key there is.
-func (v *ServiceTokenVerifier) keyFor(token *jwt.Token) (any, error) {
-	kid, _ := token.Header["kid"].(string)
-	if kid == "" {
-		if len(v.keys) == 1 {
-			return v.keys[0].Key, nil
+// keyFor returns the function that picks the verification key by the kid of the token. A token
+// without kid, such as the ones of the development script, is checked against the only key there is.
+func keyFor(keys []model.PublicKey) jwt.Keyfunc {
+	return func(token *jwt.Token) (any, error) {
+		kid, _ := token.Header["kid"].(string)
+		if kid == "" {
+			if len(keys) == 1 {
+				return keys[0].Key, nil
+			}
+			return nil, fmt.Errorf("the token has no kid and %d keys are published", len(keys))
 		}
-		return nil, fmt.Errorf("the token has no kid and %d keys are published", len(v.keys))
-	}
-	for _, key := range v.keys {
-		if key.KeyID == kid {
-			return key.Key, nil
+		for _, key := range keys {
+			if key.KeyID == kid {
+				return key.Key, nil
+			}
 		}
+		return nil, errors.New("the kid of the token is unknown")
 	}
-	return nil, errors.New("the kid of the token is unknown")
 }
