@@ -150,6 +150,19 @@ is idempotent by itself; the `Idempotency-Key` is validated but not stored. A re
 same transaction. The roles are read again from the database at login and at refresh, so the change reaches the user at their next
 token; a token already issued keeps its roles until it expires.
 
+`GET /api/v1/auth/users` (HU-AUTH-003, ADR-031) is enabled by the same settings and has the same guard: the permission `user:role:update`.
+It lists the accounts so an administrator can find the one to change:
+
+```bash
+curl -i "http://localhost:8081/api/v1/auth/users?email=maria&page=1&limit=20" -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+`email` is a case-insensitive **prefix** of 1 to 254 characters (`%`, `_` and `\` are ordinary characters); `page` starts at 1 and `limit`
+is 1 to 100 (default 20). The answer is `{data, meta}` with `id`, `email`, `name` and `roles` of each user, without permissions,
+ordered by email and then id; soft-deleted accounts are not listed. An invalid parameter is `400`, a missing or invalid token `401` and a
+token without the permission `403`. The prefix match is `LIKE 'prefix%'`, which a `text_pattern_ops` index on `auth.app_user (email)`
+serves; the index belongs to `csp-auth-db`.
+
 Internal operations (ADR-020) accept a **service credential**: an RS256 token signed with the key of this service,
 with `exp` and a `sub` and sent as `Authorization: Bearer`. A missing or invalid token gets `401 UNAUTHORIZED` and a
 valid token whose `sub` is not in `SERVICE_SUBJECTS` (comma-separated, empty by default so that no service is allowed)
