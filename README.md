@@ -161,7 +161,8 @@ curl -i "http://localhost:8081/api/v1/auth/users?email=maria&page=1&limit=20" -H
 is 1 to 100 (default 20). The answer is `{data, meta}` with `id`, `email`, `name` and `roles` of each user, without permissions,
 ordered by email and then id; soft-deleted accounts are not listed. An invalid parameter is `400`, a missing or invalid token `401` and a
 token without the permission `403`. The prefix match is `LIKE 'prefix%'`, which a `text_pattern_ops` index on `auth.app_user (email)`
-serves; the index belongs to `csp-auth-db`.
+serves (`idx_app_user_email_pattern`, migration V023 of `csp-auth-db`, which the integration tests need). The two statements run with
+`pgx.QueryExecModeExec`, so each one is planned with its prefix and a generic plan never replaces it.
 
 Internal operations (ADR-020) accept a **service credential**: an RS256 token signed with the key of this service,
 with `exp` and a `sub` and sent as `Authorization: Bearer`. A missing or invalid token gets `401 UNAUTHORIZED` and a
