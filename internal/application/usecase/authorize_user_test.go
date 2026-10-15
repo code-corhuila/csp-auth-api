@@ -84,3 +84,25 @@ type failingAccessTokens struct{ err error }
 func (f failingAccessTokens) VerifyAccessToken(string) (model.AccessClaims, error) {
 	return model.AccessClaims{}, f.err
 }
+
+func TestAuthenticateUserReturnsTheClaimsOfAValidTokenWhateverItsPermissions(t *testing.T) {
+	useCase, _ := newUserAuthorizer(t)
+
+	claims, err := useCase.AuthenticateUser(context.Background(), "client-token")
+
+	if err != nil || claims.Subject != "client-1" {
+		t.Errorf("claims = %+v, error = %v, want the claims of client-1", claims, err)
+	}
+}
+
+func TestAuthenticateUserRejectsAMissingOrInvalidToken(t *testing.T) {
+	for name, bearer := range map[string]string{"empty": "", "unknown": "forged-token"} {
+		useCase, _ := newUserAuthorizer(t)
+
+		_, err := useCase.AuthenticateUser(context.Background(), bearer)
+
+		if !errors.Is(err, model.ErrAccessTokenInvalid) {
+			t.Errorf("%s: error = %v, want ErrAccessTokenInvalid", name, err)
+		}
+	}
+}

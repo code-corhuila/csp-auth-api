@@ -23,7 +23,7 @@ func newAccessVerifier(keys ...*rsa.PrivateKey) *AccessTokenVerifier {
 func accessTokenClaims() jwt.MapClaims {
 	return jwt.MapClaims{
 		"sub": "550e8400-e29b-41d4-a716-446655440000", "iss": "csp-auth", "aud": "csp-api",
-		"iat": verifiedAt.Unix(), "exp": verifiedAt.Add(time.Hour).Unix(),
+		"jti": "jti-7", "iat": verifiedAt.Unix(), "exp": verifiedAt.Add(time.Hour).Unix(),
 		"roles": []string{"ADMIN"}, "permissions": []string{"user:role:update"},
 	}
 }
@@ -40,7 +40,13 @@ func TestAccessVerifierReturnsTheClaimsOfATokenOfTheIssuer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VerifyAccessToken() error = %v", err)
 	}
-	if want := adminClaims(t); !reflect.DeepEqual(claims, want) {
+	want := adminClaims(t)
+	want.TokenID, want.ExpiresAt = "jti-1", verifiedAt.Add(time.Hour)
+	if !claims.ExpiresAt.Equal(want.ExpiresAt) {
+		t.Errorf("ExpiresAt = %v, want %v", claims.ExpiresAt, want.ExpiresAt)
+	}
+	claims.ExpiresAt = want.ExpiresAt
+	if !reflect.DeepEqual(claims, want) {
 		t.Errorf("claims = %+v, want %+v", claims, want)
 	}
 	if !claims.Allows("user:role:update") || claims.Allows("unknown:permission") {
@@ -66,6 +72,7 @@ func TestAccessVerifierRejectsEveryTokenThatTheIssuerWouldNotHaveSigned(t *testi
 		"unknown kid":             serviceToken(t, key, jwt.SigningMethodRS256, accessTokenClaims(), "unknown"),
 		"expired":                 serviceToken(t, key, jwt.SigningMethodRS256, with("exp", verifiedAt.Add(-time.Second).Unix()), ""),
 		"without exp":             serviceToken(t, key, jwt.SigningMethodRS256, with("exp", nil), ""),
+		"without jti":             serviceToken(t, key, jwt.SigningMethodRS256, with("jti", nil), ""),
 		"without sub":             serviceToken(t, key, jwt.SigningMethodRS256, with("sub", nil), ""),
 		"another issuer":          serviceToken(t, key, jwt.SigningMethodRS256, with("iss", "someone-else"), ""),
 		"without issuer":          serviceToken(t, key, jwt.SigningMethodRS256, with("iss", nil), ""),
