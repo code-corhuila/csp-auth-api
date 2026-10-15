@@ -82,6 +82,12 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   replaces `id IN (SELECT ...)`, whose generic plan did a Hash Semi Join with a Seq Scan of the whole table. The
   behaviour is the same (issue [#32](https://github.com/code-corhuila/csp-auth-api/issues/32)).
 
+### Fixed
+
+- The container image builds again: `deploy/Dockerfile` copies `go.sum` together with `go.mod` before `go mod download`;
+  without it `go build` failed with `missing go.sum entry` (HU-AUTH-003, issue
+  [#81](https://github.com/code-corhuila/csp-auth-api/issues/81)).
+
 ## Before the changelog
 
 - Base scaffold: governance files, Go module and hexagonal packages, CI workflow, Dockerfile and compose file, and the
