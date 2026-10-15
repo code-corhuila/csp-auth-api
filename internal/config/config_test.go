@@ -186,3 +186,25 @@ func TestLoadRejectsARefreshReuseGraceOutsideOneToSixtySeconds(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadReadsTheRedisSettings(t *testing.T) {
+	cfg, err := Load(lookupFrom(nil))
+	if err != nil || cfg.RedisURL != "" || cfg.RedisTimeout != 2*time.Second {
+		t.Fatalf("default: RedisURL = %q, RedisTimeout = %v, err = %v; want empty and 2s", cfg.RedisURL, cfg.RedisTimeout, err)
+	}
+	cfg, err = Load(lookupFrom(map[string]string{
+		"APP_AUTH_REDIS_URL":     "redis://auth_app:secret@redis:6379/0",
+		"APP_AUTH_REDIS_TIMEOUT": "500ms",
+	}))
+	if err != nil || cfg.RedisURL != "redis://auth_app:secret@redis:6379/0" || cfg.RedisTimeout != 500*time.Millisecond {
+		t.Fatalf("RedisURL = %q, RedisTimeout = %v, err = %v", cfg.RedisURL, cfg.RedisTimeout, err)
+	}
+}
+
+func TestLoadRejectsAnInvalidRedisTimeout(t *testing.T) {
+	for _, value := range []string{"0", "-1s", "soon", "2"} {
+		if _, err := Load(lookupFrom(map[string]string{"APP_AUTH_REDIS_TIMEOUT": value})); err == nil {
+			t.Errorf("APP_AUTH_REDIS_TIMEOUT=%s: Load() error = nil", value)
+		}
+	}
+}
