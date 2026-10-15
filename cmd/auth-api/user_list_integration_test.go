@@ -54,7 +54,7 @@ func TestListUsersEndToEndAgainstTheDatabase(t *testing.T) {
 	}
 	adminEmail, adminID, _ := signUp("-a")
 	_, targetID, clientToken := signUp("-b")
-	conn := connect(t, ctx, databaseURL)
+	conn := lockAdministrators(t, ctx, databaseURL)
 	if _, err := conn.Exec(ctx, `INSERT INTO auth.user_role (user_id, role_id) SELECT $1, id FROM auth.role WHERE name = 'ADMIN'`, adminID); err != nil {
 		t.Fatalf("seed the administrator: %v", err)
 	}

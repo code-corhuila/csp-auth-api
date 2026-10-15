@@ -141,6 +141,7 @@ func TestChangeRoleGrantsRevokesAndRevivesTheAssignmentWithItsEvents(t *testing.
 
 func TestChangeRoleThatChangesNothingWritesNoEvent(t *testing.T) {
 	f, ctx := newFixture(t), context.Background()
+	f.lockAdministrators(t, ctx)
 	reader := openPool(t, readerURLVariable)
 	admin, target := f.registerAdmin(t, ctx), newUser(t, uniqueEmail(t))
 	if err := f.register(t, ctx, target); err != nil {
@@ -163,6 +164,7 @@ func TestChangeRoleThatChangesNothingWritesNoEvent(t *testing.T) {
 
 func TestChangeRoleRollsBackTheAssignmentWhenTheEventCannotBeWritten(t *testing.T) {
 	f, ctx := newFixture(t), context.Background()
+	f.lockAdministrators(t, ctx)
 	admin, target := f.registerAdmin(t, ctx), newUser(t, uniqueEmail(t))
 	if err := f.register(t, ctx, target); err != nil {
 		t.Fatalf("register error = %v", err)
