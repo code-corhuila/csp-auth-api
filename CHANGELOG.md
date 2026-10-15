@@ -5,6 +5,8 @@ All notable changes of `csp-auth-api` are recorded here. The format follows
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-15
+
 Everything below is in `develop`; it is promoted to `qa` and `main` only when it is ordered.
 
 ### Added
