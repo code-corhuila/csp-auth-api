@@ -193,6 +193,7 @@ func TestUpdateUserRoleResponsesFulfillTheContract(t *testing.T) {
 		"403 without permission":    {&fakeUserAuthorizer{err: model.ErrPermissionDenied}, &fakeChangeRole{}, roleAttempt{key: roleKey, body: grantBody, headers: withTrace()}},
 		"404 unknown user":          {&fakeUserAuthorizer{}, &fakeChangeRole{err: model.ErrUserNotFound}, roleAttempt{key: roleKey, body: grantBody, headers: headers(nil)}},
 		"409 last administrator":    {&fakeUserAuthorizer{}, &fakeChangeRole{err: model.ErrLastAdmin}, roleAttempt{key: roleKey, body: `{"role":"ADMIN","enabled":false}`, headers: withTrace()}},
+		"409 user without roles":    {&fakeUserAuthorizer{}, &fakeChangeRole{err: model.ErrNoRoles}, roleAttempt{key: roleKey, body: `{"role":"ADMIN","enabled":false}`, headers: withTrace()}},
 		"500 unexpected":            {&fakeUserAuthorizer{}, &fakeChangeRole{err: errors.New("driver failure")}, roleAttempt{key: roleKey, body: grantBody, headers: withTrace()}},
 		"500 authorizer unexpected": {&fakeUserAuthorizer{err: errors.New("key store down")}, &fakeChangeRole{}, roleAttempt{key: roleKey, body: grantBody, headers: withTrace()}},
 	}
