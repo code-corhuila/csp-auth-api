@@ -73,10 +73,16 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   with the remaining life of the token; `204`, `401` and `500` as the contract declares them. The route is enabled only
   with `APP_AUTH_REDIS_URL`. The verified claims now carry the `jti` and the expiration, and a token without `jti` is
   invalid. Contract, integration and end-to-end tests against PostgreSQL and Redis.
+- HU-AUTH-003, check of the revoked token list (ADR-033, issue [#88](https://github.com/code-corhuila/csp-auth-api/issues/88)):
+  `POST /logout`, `GET /users` and `PATCH /users/{userId}/role` answer `401` for an access token that a logout revoked (before
+  judging its permissions), and `GET /users` and `PATCH` role fail closed with `500 INTERNAL_ERROR` and a `WARN` without the token or the `jti` when Redis
+  cannot be consulted; `POST /logout` goes on, revokes the refresh tokens and answers `500` when it cannot write the list. Without `APP_AUTH_REDIS_URL` the check is off, which the log says at start.
 - This changelog ([#51](https://github.com/code-corhuila/csp-auth-api/pull/51)).
 
 ### Changed
 
+- The end-to-end refresh test expires the token with one hour instead of one second, like the persistence tests: the database clock and the Go clock were compared with a one second margin (HU-AUTH-003, issue [#94](https://github.com/code-corhuila/csp-auth-api/issues/94)).
+- The persistence integration tests no longer depend on the clock or on the table statistics: the tests that expire a refresh token use one hour instead of one second (the database clock and the Go clock were compared with a one second margin), the test of the email prefix index plans on a table with enough rows inside a rolled back transaction with `SET LOCAL`, and the role change test finds its events by identity instead of by the order of `created_at` (the clock of a database container can step backwards). Found running the suite repeatedly against a fresh PostgreSQL 16 (HU-AUTH-003, issue [#92](https://github.com/code-corhuila/csp-auth-api/issues/92)).
 - The contract tests validate every response in full: `auth-service.yaml` 1.4.1 declares the `400`, `423` and `500`
   answers that were listed as undocumented, so the exception list is removed
   ([#52](https://github.com/code-corhuila/csp-auth-api/issues/52)).

@@ -137,7 +137,7 @@ func TestRevokeByHashIgnoresUnknownExpiredAndSoftDeletedTokens(t *testing.T) {
 	repository := NewRefreshTokenRepository(f.pool)
 	_, expiredOpaque := saveToken(t, f, ctx, repository)
 	_, deletedOpaque := saveToken(t, f, ctx, repository)
-	if _, err := f.pool.Exec(ctx, `UPDATE auth.refresh_token SET expires_at = NOW() - INTERVAL '1 second' WHERE token_hash = $1`, model.HashOpaqueToken(expiredOpaque)); err != nil {
+	if _, err := f.pool.Exec(ctx, `UPDATE auth.refresh_token SET expires_at = NOW() - INTERVAL '1 hour' WHERE token_hash = $1`, model.HashOpaqueToken(expiredOpaque)); err != nil {
 		t.Fatalf("expire the token: %v", err)
 	}
 	if _, err := f.pool.Exec(ctx, `UPDATE auth.refresh_token SET deleted_at = NOW() WHERE token_hash = $1`, model.HashOpaqueToken(deletedOpaque)); err != nil {
@@ -229,7 +229,7 @@ func TestRevokeAllActiveByUserKeepsTheRevocationInstantOfSpentExpiredAndSoftDele
 	if _, ok, err := repository.RevokeByHash(ctx, model.HashOpaqueToken(spentOpaque), earlier); err != nil || !ok {
 		t.Fatalf("RevokeByHash() = %v, %v", ok, err)
 	}
-	if _, err := f.pool.Exec(ctx, `UPDATE auth.refresh_token SET expires_at = NOW() - INTERVAL '1 second' WHERE id = $1`, expired.ID()); err != nil {
+	if _, err := f.pool.Exec(ctx, `UPDATE auth.refresh_token SET expires_at = NOW() - INTERVAL '1 hour' WHERE id = $1`, expired.ID()); err != nil {
 		t.Fatalf("expire the token: %v", err)
 	}
 	if _, err := f.pool.Exec(ctx, `UPDATE auth.refresh_token SET deleted_at = NOW() WHERE id = $1`, deleted.ID()); err != nil {
@@ -312,7 +312,7 @@ func TestRevokeActiveByUserAndHashIsNotAnErrorForAnUnknownSpentOrExpiredToken(t 
 	if _, ok, err := repository.RevokeByHash(ctx, model.HashOpaqueToken(spentOpaque), earlier); err != nil || !ok {
 		t.Fatalf("RevokeByHash() = %v, %v", ok, err)
 	}
-	if _, err := f.pool.Exec(ctx, `UPDATE auth.refresh_token SET expires_at = NOW() - INTERVAL '1 second' WHERE id = $1`, expired.ID()); err != nil {
+	if _, err := f.pool.Exec(ctx, `UPDATE auth.refresh_token SET expires_at = NOW() - INTERVAL '1 hour' WHERE id = $1`, expired.ID()); err != nil {
 		t.Fatalf("expire the token: %v", err)
 	}
 

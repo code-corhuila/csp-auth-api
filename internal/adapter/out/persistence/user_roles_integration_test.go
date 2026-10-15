@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/system"
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/in"
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/out"
@@ -72,6 +74,41 @@ func (o failingRoleOutbox) AppendRoleChanged(context.Context, model.UserRoleChan
 	return o.err
 }
 
+// newRoleChangedEvents returns the "enabled" flag of every UserRoleChanged event of the user that is not
+// in seen yet, and adds them to seen. It finds the events by identity, never by the order of created_at:
+// the clock of a database container can step backwards between two transactions.
+func newRoleChangedEvents(t *testing.T, ctx context.Context, reader *pgxpool.Pool, userID string, seen map[string]bool) []bool {
+	t.Helper()
+	rows, err := reader.Query(ctx, `SELECT id::text, payload FROM auth.outbox_event WHERE aggregate_id = $1 AND event_type = 'UserRoleChanged'`, userID)
+	if err != nil {
+		t.Fatalf("outbox query error = %v", err)
+	}
+	defer rows.Close()
+	var enabled []bool
+	for rows.Next() {
+		var id string
+		var payload []byte
+		if err := rows.Scan(&id, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if seen[id] {
+			continue
+		}
+		var event struct {
+			Payload struct {
+				UserID, Role string
+				Enabled      bool
+			}
+		}
+		if err := json.Unmarshal(payload, &event); err != nil || event.Payload.UserID != userID || event.Payload.Role != "ADMIN" {
+			t.Fatalf("payload = %s, %v, want the ADMIN change of %s", payload, err, userID)
+		}
+		seen[id] = true
+		enabled = append(enabled, event.Payload.Enabled)
+	}
+	return enabled
+}
+
 func TestChangeRoleGrantsRevokesAndRevivesTheAssignmentWithItsEvents(t *testing.T) {
 	f, ctx := newFixture(t), context.Background()
 	f.lockAdministrators(t, ctx)
@@ -95,12 +132,21 @@ func TestChangeRoleGrantsRevokesAndRevivesTheAssignmentWithItsEvents(t *testing.
 		t.Errorf("FindByEmail() = %v, %v, want the user with ADMIN (what login and refresh read)", found, err)
 	}
 
+	seen := map[string]bool{}
+	if events := newRoleChangedEvents(t, ctx, reader, target.ID(), seen); len(events) != 1 || !events[0] {
+		t.Errorf("after grant: events enabled = %v, want one grant", events)
+	}
+
 	command.Enabled = false
 	if revoked, err := useCase.ChangeRole(ctx, command); err != nil || len(revoked.Roles) != 1 {
 		t.Fatalf("revoke = %+v, %v, want only CLIENT", revoked, err)
 	}
 	if live, total, _ := f.adminAssignments(t, ctx, target.ID()); live != 0 || total != 1 {
 		t.Errorf("after revoke: live = %d, total = %d, want 0 and 1 (soft delete)", live, total)
+	}
+
+	if events := newRoleChangedEvents(t, ctx, reader, target.ID(), seen); len(events) != 1 || events[0] {
+		t.Errorf("after revoke: events enabled = %v, want one revoke", events)
 	}
 
 	command.Enabled = true
@@ -112,30 +158,8 @@ func TestChangeRoleGrantsRevokesAndRevivesTheAssignmentWithItsEvents(t *testing.
 		t.Errorf("after second grant: live = %d, total = %d, created_by = %q, want the revived row assigned by %q", live, total, createdBy, target.ID())
 	}
 
-	rows, err := reader.Query(ctx, `SELECT payload FROM auth.outbox_event WHERE aggregate_id = $1 AND event_type = 'UserRoleChanged' ORDER BY created_at, id`, target.ID())
-	if err != nil {
-		t.Fatalf("outbox query error = %v", err)
-	}
-	defer rows.Close()
-	var enabled []bool
-	for rows.Next() {
-		var payload []byte
-		if err := rows.Scan(&payload); err != nil {
-			t.Fatal(err)
-		}
-		var event struct {
-			Payload struct {
-				UserID, Role string
-				Enabled      bool
-			}
-		}
-		if err := json.Unmarshal(payload, &event); err != nil || event.Payload.UserID != target.ID() || event.Payload.Role != "ADMIN" {
-			t.Fatalf("payload = %s, %v, want the ADMIN change of %s", payload, err, target.ID())
-		}
-		enabled = append(enabled, event.Payload.Enabled)
-	}
-	if len(enabled) != 3 || !enabled[0] || enabled[1] || !enabled[2] {
-		t.Errorf("events enabled = %v, want grant, revoke, grant", enabled)
+	if events := newRoleChangedEvents(t, ctx, reader, target.ID(), seen); len(events) != 1 || !events[0] {
+		t.Errorf("after the second grant: events enabled = %v, want one grant", events)
 	}
 }
 
