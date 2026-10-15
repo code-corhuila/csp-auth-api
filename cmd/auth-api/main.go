@@ -14,6 +14,8 @@ import (
 	"syscall"
 
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/in/httpapi"
+	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/system"
+	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/token"
 	"github.com/code-corhuila/csp-auth-api/internal/config"
 )
 
@@ -43,8 +45,12 @@ func run(ctx context.Context, logger *slog.Logger, lookup config.Lookup) error {
 // serve answers on listener until ctx is cancelled or the server fails. Taking the listener
 // lets a test bind its own port instead of guessing a free one.
 func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, listener net.Listener) error {
+	handler, err := newHandler(cfg)
+	if err != nil {
+		return err
+	}
 	server := &http.Server{
-		Handler:           httpapi.NewHandler(),
+		Handler:           handler,
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,
@@ -70,4 +76,21 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, listener
 		return err
 	}
 	return nil
+}
+
+// newHandler wires the routes. The signing key is optional until login exists: without one the
+// service publishes no keys; with one, it must be valid or the service does not start.
+func newHandler(cfg config.Config) (http.Handler, error) {
+	if cfg.JWTPrivateKey == "" && cfg.JWTPrivateKeyFile == "" {
+		return httpapi.NewHandler(), nil
+	}
+	key, err := token.LoadPrivateKey(cfg.JWTPrivateKey, cfg.JWTPrivateKeyFile)
+	if err != nil {
+		return nil, err
+	}
+	issuer, err := token.NewIssuer(key, cfg.AccessTokenTTL, system.Clock{}, system.UUIDGenerator{})
+	if err != nil {
+		return nil, err
+	}
+	return httpapi.NewHandler(httpapi.WithPublicKeys(issuer)), nil
 }
