@@ -170,3 +170,35 @@ func TestJWKSResponseFulfillsTheContract(t *testing.T) {
 
 	requireContract(t, http.MethodGet, BasePath+"/jwks", rec)
 }
+
+func TestUpdateUserRoleResponsesFulfillTheContract(t *testing.T) {
+	path := BasePath + "/users/{userId}/role"
+	headers := func(extra map[string]string) map[string]string {
+		merged := withTrace()
+		for name, value := range extra {
+			merged[name] = value
+		}
+		return merged
+	}
+	cases := map[string]struct {
+		authorizer *fakeUserAuthorizer
+		useCase    in.ChangeUserRole
+		a          roleAttempt
+	}{
+		"200 granted":               {&fakeUserAuthorizer{}, &fakeChangeRole{summary: promotedUser()}, roleAttempt{key: roleKey, body: grantBody, headers: withTrace()}},
+		"200 no change":             {&fakeUserAuthorizer{}, &fakeChangeRole{summary: promotedUser()}, roleAttempt{key: roleKey, body: `{"role":"ADMIN","enabled":false}`, headers: withTrace()}},
+		"400 invalid fields":        {&fakeUserAuthorizer{}, &fakeChangeRole{}, roleAttempt{key: "short", body: `{}`, headers: withTrace()}},
+		"400 role not changeable":   {&fakeUserAuthorizer{}, &fakeChangeRole{err: model.ErrRoleNotChangeable}, roleAttempt{key: roleKey, body: `{"role":"CLIENT","enabled":true}`, headers: withTrace()}},
+		"401 no token":              {&fakeUserAuthorizer{err: model.ErrAccessTokenInvalid}, &fakeChangeRole{}, roleAttempt{key: roleKey, body: grantBody, headers: withTrace()}},
+		"403 without permission":    {&fakeUserAuthorizer{err: model.ErrPermissionDenied}, &fakeChangeRole{}, roleAttempt{key: roleKey, body: grantBody, headers: withTrace()}},
+		"404 unknown user":          {&fakeUserAuthorizer{}, &fakeChangeRole{err: model.ErrUserNotFound}, roleAttempt{key: roleKey, body: grantBody, headers: headers(nil)}},
+		"409 last administrator":    {&fakeUserAuthorizer{}, &fakeChangeRole{err: model.ErrLastAdmin}, roleAttempt{key: roleKey, body: `{"role":"ADMIN","enabled":false}`, headers: withTrace()}},
+		"500 unexpected":            {&fakeUserAuthorizer{}, &fakeChangeRole{err: errors.New("driver failure")}, roleAttempt{key: roleKey, body: grantBody, headers: withTrace()}},
+		"500 authorizer unexpected": {&fakeUserAuthorizer{err: errors.New("key store down")}, &fakeChangeRole{}, roleAttempt{key: roleKey, body: grantBody, headers: withTrace()}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			requireContract(t, http.MethodPatch, path, sendRoleChange(c.authorizer, c.useCase, c.a))
+		})
+	}
+}
