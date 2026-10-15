@@ -83,6 +83,7 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Changed
 
+- The persistence integration tests no longer depend on the clock or on the table statistics: the tests that expire a refresh token use one hour instead of one second (the database clock and the Go clock were compared with a one second margin), the test of the email prefix index plans on a table with enough rows inside a rolled back transaction with `SET LOCAL`, and the role change test finds its events by identity instead of by the order of `created_at` (the clock of a database container can step backwards). Found running the suite repeatedly against a fresh PostgreSQL 16 (HU-AUTH-003, issue [#92](https://github.com/code-corhuila/csp-auth-api/issues/92)).
 - The contract tests validate every response in full: `auth-service.yaml` 1.4.1 declares the `400`, `423` and `500`
   answers that were listed as undocumented, so the exception list is removed
   ([#52](https://github.com/code-corhuila/csp-auth-api/issues/52)).

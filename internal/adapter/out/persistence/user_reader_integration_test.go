@@ -137,23 +137,30 @@ func TestSearchUsersWithoutPrefixListsEveryone(t *testing.T) {
 	}
 }
 
-// The prefix search is only fast with idx_app_user_email_pattern (csp-auth-db V023). Sequential
-// scans are switched off for the connection, so the plan shows whether the index can serve the
-// statement the reader sends, planned the way the reader sends it.
+// The prefix search is only fast with idx_app_user_email_pattern (csp-auth-db V023). The plan
+// shows whether the index can serve the statements the reader sends, planned the way the reader
+// sends them. A table that is empty and never analyzed makes every index cost the same, so the
+// planner would pick any of them: the test works on a table with enough rows, inside a
+// transaction that is rolled back, and switches sequential scans off only for that transaction.
 func TestSearchUsersStatementsCanUseTheEmailPatternIndex(t *testing.T) {
 	f, ctx := newFixture(t), context.Background()
-	conn, err := f.pool.Acquire(ctx)
+	tx, err := f.pool.Begin(ctx)
 	if err != nil {
-		t.Fatalf("acquire a connection: %v", err)
+		t.Fatalf("begin: %v", err)
 	}
-	defer conn.Release()
-	if _, err := conn.Exec(ctx, `SET enable_seqscan = off`); err != nil {
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `INSERT INTO auth.app_user (email, name, password_hash, phone, address)
+		SELECT 'plan-' || n || '@example.com', 'Plan ' || n, 'hash', '3001234567', 'Calle 1 # 2-3'
+		FROM generate_series(1, 5000) AS n`); err != nil {
+		t.Fatalf("insert the rows of the plan: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `SET LOCAL enable_seqscan = off`); err != nil {
 		t.Fatalf("disable sequential scans: %v", err)
 	}
-	statements := map[string][]any{countUsersSQL: {"maria%"}, pageUsersSQL: {"maria%", 20, 0}}
+	statements := map[string][]any{countUsersSQL: {"plan-1%"}, pageUsersSQL: {"plan-1%", 20, 0}}
 
 	for statement, arguments := range statements {
-		rows, err := conn.Query(ctx, "EXPLAIN "+statement, append([]any{pgx.QueryExecModeExec}, arguments...)...)
+		rows, err := tx.Query(ctx, "EXPLAIN "+statement, append([]any{pgx.QueryExecModeExec}, arguments...)...)
 		if err != nil {
 			t.Fatalf("EXPLAIN error = %v", err)
 		}
