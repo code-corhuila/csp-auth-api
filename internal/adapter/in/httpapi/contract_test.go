@@ -196,6 +196,8 @@ func TestUpdateUserRoleResponsesFulfillTheContract(t *testing.T) {
 		"409 user without roles":    {&fakeUserAuthorizer{}, &fakeChangeRole{err: model.ErrNoRoles}, roleAttempt{key: roleKey, body: `{"role":"ADMIN","enabled":false}`, headers: withTrace()}},
 		"500 unexpected":            {&fakeUserAuthorizer{}, &fakeChangeRole{err: errors.New("driver failure")}, roleAttempt{key: roleKey, body: grantBody, headers: withTrace()}},
 		"500 authorizer unexpected": {&fakeUserAuthorizer{err: errors.New("key store down")}, &fakeChangeRole{}, roleAttempt{key: roleKey, body: grantBody, headers: withTrace()}},
+		"401 revoked token":         {&fakeUserAuthorizer{err: model.ErrAccessTokenInvalid}, &fakeChangeRole{}, roleAttempt{key: roleKey, body: grantBody, headers: withTrace()}},
+		"500 revoked list down":     {&fakeUserAuthorizer{err: errRevokedListDown}, &fakeChangeRole{}, roleAttempt{key: roleKey, body: grantBody, headers: withTrace()}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -219,6 +221,8 @@ func TestListUsersResponsesFulfillTheContract(t *testing.T) {
 		"403 without permission":    {&fakeUserAuthorizer{err: model.ErrPermissionDenied}, &fakeListUsers{}, ""},
 		"500 unexpected":            {&fakeUserAuthorizer{}, &fakeListUsers{err: errors.New("driver failure")}, ""},
 		"500 authorizer unexpected": {&fakeUserAuthorizer{err: errors.New("key store down")}, &fakeListUsers{}, ""},
+		"401 revoked token":         {&fakeUserAuthorizer{err: model.ErrAccessTokenInvalid}, &fakeListUsers{}, "?email=mar"},
+		"500 revoked list down":     {&fakeUserAuthorizer{err: errRevokedListDown}, &fakeListUsers{}, "?email=mar"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -241,6 +245,8 @@ func TestLogoutResponsesFulfillTheContract(t *testing.T) {
 		"401 no token":            {&fakeAuthenticator{err: model.ErrAccessTokenInvalid}, &fakeLogout{}, logoutAttempt{headers: withTrace()}},
 		"500 unexpected":          {&fakeAuthenticator{}, &fakeLogout{err: errors.New("redis down")}, logoutAttempt{headers: withTrace()}},
 		"500 verifier unexpected": {&fakeAuthenticator{err: errors.New("key store down")}, &fakeLogout{}, logoutAttempt{}},
+		"401 revoked token":       {&fakeAuthenticator{err: model.ErrAccessTokenInvalid}, &fakeLogout{}, logoutAttempt{body: `{"allDevices":true}`, headers: withTrace()}},
+		"500 revoked list down":   {&fakeAuthenticator{err: errRevokedListDown}, &fakeLogout{}, logoutAttempt{headers: withTrace()}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

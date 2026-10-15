@@ -73,6 +73,10 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   with the remaining life of the token; `204`, `401` and `500` as the contract declares them. The route is enabled only
   with `APP_AUTH_REDIS_URL`. The verified claims now carry the `jti` and the expiration, and a token without `jti` is
   invalid. Contract, integration and end-to-end tests against PostgreSQL and Redis.
+- HU-AUTH-003, check of the revoked token list (ADR-033, issue [#88](https://github.com/code-corhuila/csp-auth-api/issues/88)):
+  `POST /logout`, `GET /users` and `PATCH /users/{userId}/role` answer `401` for an access token that a logout revoked (before
+  judging its permissions), and fail closed with `500 INTERNAL_ERROR` and a `WARN` without the token or the `jti` when Redis
+  cannot be consulted. Without `APP_AUTH_REDIS_URL` the check is off, which the log says at start.
 - This changelog ([#51](https://github.com/code-corhuila/csp-auth-api/pull/51)).
 
 ### Changed

@@ -45,16 +45,8 @@ func TestLogoutEndToEndAgainstTheDatabaseAndRedis(t *testing.T) {
 		t.Fatalf("redis.NewClient() error = %v", err)
 	}
 	t.Cleanup(func() { _ = checker.Close() })
-	ids := system.UUIDGenerator{}
 	signUp := func(name string) (email, access, refreshToken string) {
-		email = name + "-" + ids.NewID() + "@example.com"
-		body := fmt.Sprintf(`{"email":%q,"password":%q,"name":"Ada Lovelace","phone":"+573001234567","address":"Calle 1 # 2-3"}`, email, e2ePassword)
-		status, payload := register(t, server.URL, ids.NewID(), body)
-		if status != http.StatusCreated {
-			t.Fatalf("register status = %d, want 201; body = %v", status, payload)
-		}
-		access, _ = payload["accessToken"].(string)
-		refreshToken, _ = payload["refreshToken"].(string)
+		email, _, access, refreshToken = signUpUser(t, server.URL, name)
 		return email, access, refreshToken
 	}
 	signIn := func(email string) (access, refreshToken string) {
@@ -97,8 +89,8 @@ func TestLogoutEndToEndAgainstTheDatabaseAndRedis(t *testing.T) {
 	})
 
 	t.Run("a refresh token of another user, an unknown one and one already revoked do not fail the call and revoke nothing", func(t *testing.T) {
-		access, _ := signIn(email)
 		for name, presented := range map[string]string{"another user's": otherRefresh, "unknown": "never-issued", "already revoked": firstRefresh} {
+			access, _ := signIn(email) // a logged out access token is 401, so each call needs its own
 			if status := logout(t, server.URL, access, fmt.Sprintf(`{"refreshToken":%q}`, presented)); status != http.StatusNoContent {
 				t.Errorf("%s: status = %d, want 204", name, status)
 			}
@@ -140,28 +132,41 @@ func TestLogoutEndToEndAgainstTheDatabaseAndRedis(t *testing.T) {
 		}
 	})
 
-	t.Run("with Redis down the call is 500, the refresh token stays revoked and a retry once Redis is back is 204", func(t *testing.T) {
-		access, refreshToken := signIn(email)
+	t.Run("with Redis down the call is 500 and the access token is not listed", func(t *testing.T) {
+		access, _ := signIn(email)
 		down := cfg
 		down.RedisURL = "redis://auth_app:unused@127.0.0.1:1/0"
 		down.RedisTimeout = 300 * time.Millisecond
 		downServer := startLogoutServer(t, down)
 
-		if status := logout(t, downServer.URL, access, fmt.Sprintf(`{"refreshToken":%q}`, refreshToken)); status != http.StatusInternalServerError {
+		if status := logout(t, downServer.URL, access, ""); status != http.StatusInternalServerError {
 			t.Fatalf("status = %d, want 500", status)
 		}
 
-		if status, _, payload := refresh(t, server.URL, refreshToken); status != http.StatusUnauthorized || payload["error"] != "INVALID_REFRESH_TOKEN" {
-			t.Errorf("the refresh token after the failed call: status = %d, body = %v, want it revoked", status, payload)
-		}
 		if listed(t, checker, access) {
 			t.Error("the access token was listed although Redis was down")
 		}
-		if status := logout(t, server.URL, access, fmt.Sprintf(`{"refreshToken":%q}`, refreshToken)); status != http.StatusNoContent {
-			t.Errorf("retry: status = %d, want 204", status)
+		if status := logout(t, server.URL, access, ""); status != http.StatusNoContent {
+			t.Errorf("retry once Redis is back: status = %d, want 204", status)
 		}
-		assertListedForItsRemainingLife(t, checker, access)
 	})
+}
+
+// signUpUser registers a user with a unique email and returns the email, the id and the session.
+func signUpUser(t *testing.T, baseURL, name string) (email, id, access, refreshToken string) {
+	t.Helper()
+	ids := system.UUIDGenerator{}
+	email = name + "-" + ids.NewID() + "@example.com"
+	body := fmt.Sprintf(`{"email":%q,"password":%q,"name":"Ada Lovelace","phone":"+573001234567","address":"Calle 1 # 2-3"}`, email, e2ePassword)
+	status, payload := register(t, baseURL, ids.NewID(), body)
+	if status != http.StatusCreated {
+		t.Fatalf("register status = %d, want 201; body = %v", status, payload)
+	}
+	user, _ := payload["user"].(map[string]any)
+	id, _ = user["id"].(string)
+	access, _ = payload["accessToken"].(string)
+	refreshToken, _ = payload["refreshToken"].(string)
+	return email, id, access, refreshToken
 }
 
 func startLogoutServer(t *testing.T, cfg config.Config) *httptest.Server {

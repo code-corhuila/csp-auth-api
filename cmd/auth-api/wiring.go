@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -32,8 +33,9 @@ type poolOpener func(ctx context.Context, settings persistence.PoolSettings) (*p
 //   - A signing key and a database URL: also POST /register, POST /login and POST /refresh, served by the real use cases,
 //     GET /users and PATCH /users/{userId}/role, open to the access tokens that hold user:role:update, and
 //     POST /internal/maintenance/purge, open only to the service tokens whose subject is in SERVICE_SUBJECTS.
-//   - Also an APP_AUTH_REDIS_URL: POST /logout, which lists the revoked access tokens in Redis. Without it the
-//     route is not enabled.
+//   - Also an APP_AUTH_REDIS_URL: POST /logout, which lists the revoked access tokens in Redis, and the check of
+//     that list on POST /logout, GET /users and PATCH /users/{userId}/role. Without it the route is not enabled and
+//     the other two work without the check.
 //
 // A configured key or database that cannot be used stops the service instead of degrading it.
 func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, open poolOpener) (http.Handler, func(), error) {
@@ -74,29 +76,49 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 	logger.Info("login route enabled")
 	options = append(options, httpapi.WithRefreshSession(newRefreshSession(cfg, pool, issuer)))
 	logger.Info("refresh route enabled")
-	options = append(options, httpapi.WithChangeUserRole(newAuthorizeUser(issuer), newChangeUserRole(pool)))
-	logger.Info("user role route enabled")
-	options = append(options, httpapi.WithListUsers(newAuthorizeUser(issuer), usecase.NewListUsers(persistence.NewUserReader(pool))))
-	logger.Info("user list route enabled")
-	options = append(options, httpapi.WithPurgeOldRecords(newAuthorizeService(cfg, issuer), newPurgeOldRecords(pool)))
-	logger.Info("purge route enabled")
-	closeAll := pool.Close
-	if cfg.RedisURL == "" {
-		logger.Info("logout route not enabled: APP_AUTH_REDIS_URL is not set")
-		return httpapi.NewHandler(options...), closeAll, nil
-	}
-	client, err := redis.NewClient(redis.ClientSettings{URL: cfg.RedisURL, Timeout: cfg.RedisTimeout})
+	revoked, closeRedis, err := openRevokedTokens(logger, cfg)
 	if err != nil {
 		pool.Close()
 		return nil, noop, err
 	}
-	options = append(options, httpapi.WithLogout(newAuthorizeUser(issuer), newLogout(pool, redis.NewRevokedTokens(client))))
-	logger.Info("logout route enabled")
+	authorizer := newAuthorizeUser(issuer, revoked)
+	options = append(options, httpapi.WithChangeUserRole(authorizer, newChangeUserRole(pool)))
+	logger.Info("user role route enabled")
+	options = append(options, httpapi.WithListUsers(authorizer, usecase.NewListUsers(persistence.NewUserReader(pool))))
+	logger.Info("user list route enabled")
+	options = append(options, httpapi.WithPurgeOldRecords(newAuthorizeService(cfg, issuer), newPurgeOldRecords(pool)))
+	logger.Info("purge route enabled")
+	if cfg.RedisURL != "" {
+		options = append(options, httpapi.WithLogout(authorizer, newLogout(pool, revoked)))
+		logger.Info("logout route enabled")
+	}
 	return httpapi.NewHandler(options...), func() {
-		_ = client.Close()
+		closeRedis()
 		pool.Close()
 	}, nil
 }
+
+// openRevokedTokens connects the list of revoked access tokens when APP_AUTH_REDIS_URL is set (the client
+// does not connect until it is used). Without it there is no list: the routes that consult it work without
+// the check and logout is not enabled, which the log says once.
+func openRevokedTokens(logger *slog.Logger, cfg config.Config) (out.RevokedTokens, func(), error) {
+	if cfg.RedisURL == "" {
+		logger.Info("APP_AUTH_REDIS_URL is not set: logout is not enabled and revoked access tokens are not checked")
+		return noRevokedTokens{}, func() {}, nil
+	}
+	client, err := redis.NewClient(redis.ClientSettings{URL: cfg.RedisURL, Timeout: cfg.RedisTimeout})
+	if err != nil {
+		return nil, nil, err
+	}
+	return redis.NewRevokedTokens(client), func() { _ = client.Close() }, nil
+}
+
+// noRevokedTokens is the list of a service without Redis: nothing is ever revoked.
+type noRevokedTokens struct{}
+
+func (noRevokedTokens) Revoke(context.Context, string, time.Duration) error { return nil }
+
+func (noRevokedTokens) IsRevoked(context.Context, string) (bool, error) { return false, nil }
 
 func newRegisterUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer) *usecase.RegisterUser {
 	clock, ids := system.Clock{}, system.UUIDGenerator{}
@@ -147,8 +169,8 @@ func newLogout(pool *pgxpool.Pool, revoked out.RevokedTokens) *usecase.Logout {
 	)
 }
 
-func newAuthorizeUser(issuer *token.Issuer) *usecase.AuthorizeUser {
-	return usecase.NewAuthorizeUser(token.NewAccessTokenVerifier(issuer.PublicKeys(), system.Clock{}))
+func newAuthorizeUser(issuer *token.Issuer, revoked out.RevokedTokens) *usecase.AuthorizeUser {
+	return usecase.NewAuthorizeUser(token.NewAccessTokenVerifier(issuer.PublicKeys(), system.Clock{}), revoked)
 }
 
 func newChangeUserRole(pool *pgxpool.Pool) *usecase.ChangeUserRole {
