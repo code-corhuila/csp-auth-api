@@ -145,7 +145,7 @@ curl -i -X PATCH http://localhost:8081/api/v1/auth/users/<userId>/role -H "Autho
 
 It answers `200` with the user after the change; a missing or invalid token is `401`, a token without the permission `403`, an
 invalid `userId`, `Idempotency-Key` or body `400`, an unknown user `404` and the revoke of the last active administrator `409`
-(`LAST_ADMIN`). Asking for the state the user already has is a `200` that writes nothing and publishes no event, so the operation
+(`LAST_ADMIN`), as is revoking the only role of a user (`USER_WITHOUT_ROLES`; `LAST_ADMIN` wins when both apply). Asking for the state the user already has is a `200` that writes nothing and publishes no event, so the operation
 is idempotent by itself; the `Idempotency-Key` is validated but not stored. A real change writes the `UserRoleChanged` outbox row in the
 same transaction. The roles are read again from the database at login and at refresh, so the change reaches the user at their next
 token; a token already issued keeps its roles until it expires.

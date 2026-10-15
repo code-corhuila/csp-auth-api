@@ -21,6 +21,7 @@ const (
 	codeForbidden        = "FORBIDDEN"
 	codeNotFound         = "NOT_FOUND"
 	codeLastAdmin        = "LAST_ADMIN"
+	codeNoRoles          = "USER_WITHOUT_ROLES"
 )
 
 // fieldError names one invalid input: a body property or a header.
@@ -139,6 +140,10 @@ func translateChangeRoleError(w http.ResponseWriter, traceID string, err error) 
 	case errors.Is(err, model.ErrLastAdmin):
 		writeJSON(w, http.StatusConflict, errorResponse{
 			Error: codeLastAdmin, Message: "The last active administrator cannot lose the ADMIN role", TraceID: traceID,
+		})
+	case errors.Is(err, model.ErrNoRoles):
+		writeJSON(w, http.StatusConflict, errorResponse{
+			Error: codeNoRoles, Message: "A user must keep at least one role", TraceID: traceID,
 		})
 	default:
 		slog.Error("change user role failed", "traceId", traceID, "error", err)

@@ -136,6 +136,7 @@ func TestChangeUserRoleTranslatesTheErrorsOfTheUseCase(t *testing.T) {
 		"CLIENT role":        {model.ErrRoleNotChangeable, http.StatusBadRequest, "VALIDATION_ERROR"},
 		"unknown user":       {model.ErrUserNotFound, http.StatusNotFound, "NOT_FOUND"},
 		"last administrator": {model.ErrLastAdmin, http.StatusConflict, "LAST_ADMIN"},
+		"only role":          {model.ErrNoRoles, http.StatusConflict, "USER_WITHOUT_ROLES"},
 		"unexpected":         {errors.New("driver failure"), http.StatusInternalServerError, "INTERNAL_ERROR"},
 	}
 	for name, c := range cases {

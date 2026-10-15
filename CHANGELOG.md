@@ -56,7 +56,8 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 - HU-AUTH-003, `PATCH /api/v1/auth/users/{userId}/role` (ADR-031, issue
   [#62](https://github.com/code-corhuila/csp-auth-api/issues/62)): the administrator grants or revokes `ADMIN`; `400`,
   `401`, `403`, `404` and `409 LAST_ADMIN` as the contract declares them, contract tests against `auth-service.yaml` 1.5.0
-  and an end-to-end test that checks the effect at login and refresh.
+  and an end-to-end test that checks the effect at login and refresh. Revoking the only role of a user is
+  `409 USER_WITHOUT_ROLES`; `LAST_ADMIN` wins when both rules apply.
 - HU-AUTH-003, `GET /api/v1/auth/users` (ADR-031, issue [#63](https://github.com/code-corhuila/csp-auth-api/issues/63)): paged
   search of accounts by email prefix for the administrator, ordered by email and id, with the roles of each user and no
   permissions; contract tests against `auth-service.yaml` 1.5.0 and integration tests of the query.
