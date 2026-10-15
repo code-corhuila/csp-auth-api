@@ -49,6 +49,7 @@ func pageOf(t *testing.T, number, limit int) model.Page {
 
 func TestSearchUsersPagesByEmailThenIdWithItsActiveRoles(t *testing.T) {
 	f, ctx := newFixture(t), context.Background()
+	f.lockAdministrators(t, ctx)
 	reader := NewUserReader(f.pool)
 	prefix := "pg" + strings.ReplaceAll(newUUID(t)[:8], "-", "")
 	users := f.registerWithPrefix(t, ctx, prefix, "1", "2", "3")

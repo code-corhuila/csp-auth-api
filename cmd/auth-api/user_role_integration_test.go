@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/persistence"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/system"
@@ -33,11 +34,7 @@ func TestChangeUserRoleEndToEndAgainstTheDatabase(t *testing.T) {
 		t.Skip("AUTH_TEST_DATABASE_URL is not set: the end-to-end test needs a PostgreSQL with the csp-auth-db migrations")
 	}
 	ctx := context.Background()
-	lock := connect(t, ctx, url)
-	if _, err := lock.Exec(ctx, `SELECT pg_advisory_lock($1)`, adminLockKey); err != nil {
-		t.Fatalf("take the administrators lock: %v", err)
-	}
-	t.Cleanup(func() { _, _ = lock.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, adminLockKey) })
+	lock := lockAdministrators(t, ctx, url)
 
 	cfg := testConfig(t)
 	cfg.DatabaseURL = url
@@ -167,6 +164,18 @@ func TestChangeUserRoleEndToEndAgainstTheDatabase(t *testing.T) {
 			t.Errorf("login after the revoke: roles = %v, want no ADMIN", signedIn)
 		}
 	})
+}
+
+// lockAdministrators takes the advisory lock until the test ends and returns the connection that holds it.
+// Every test that creates an administrator or counts them takes it.
+func lockAdministrators(t *testing.T, ctx context.Context, databaseURL string) *pgx.Conn {
+	t.Helper()
+	conn := connect(t, ctx, databaseURL)
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, adminLockKey); err != nil {
+		t.Fatalf("take the administrators lock: %v", err)
+	}
+	t.Cleanup(func() { _, _ = conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, adminLockKey) })
+	return conn
 }
 
 func patchRole(t *testing.T, baseURL, bearer, userID, body string) (int, map[string]any) {
