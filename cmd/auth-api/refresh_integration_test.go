@@ -88,7 +88,7 @@ func TestRefreshEndToEndAgainstTheDatabase(t *testing.T) {
 		_, _, again := login(t, server.URL, fmt.Sprintf(`{"email":%q,"password":%q}`, email, e2ePassword))
 		token, _ := again["refreshToken"].(string)
 		conn := connect(t, context.Background(), url)
-		if _, err := conn.Exec(context.Background(), `UPDATE auth.refresh_token SET expires_at = NOW() - INTERVAL '1 second' WHERE token_hash = $1`, model.HashOpaqueToken(token)); err != nil {
+		if _, err := conn.Exec(context.Background(), `UPDATE auth.refresh_token SET expires_at = NOW() - INTERVAL '1 hour' WHERE token_hash = $1`, model.HashOpaqueToken(token)); err != nil {
 			t.Fatalf("expire the token: %v", err)
 		}
 		expiredStatus, _, expired := refresh(t, server.URL, token)
