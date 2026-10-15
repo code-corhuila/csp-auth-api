@@ -240,3 +240,40 @@ func TestPurgeUseCaseOverTheRealTablesIsBoundedByTheBatchSizeAndFinishesInTwoCal
 		t.Error("the idempotency key of one day was deleted")
 	}
 }
+
+func TestPurgersDeleteTheOldestRowsUpToTheLimitAndKeepTheYoungOnesAcrossRepeatedCalls(t *testing.T) {
+	p, ctx := newPurgeFixture(t), context.Background()
+	tokenCutoff, keyCutoff := time.Now().Add(-30*day), time.Now().Add(-7*day)
+	oldTokens := []string{p.seedToken(t, 33*day, 0), p.seedToken(t, 31*day, 0), p.seedToken(t, -day, 32*day)}
+	youngToken := p.seedToken(t, 29*day, 0)
+	oldKeys := []string{p.seedKey(t, 10*day), p.seedKey(t, 9*day), p.seedKey(t, 8*day)}
+	youngKey := p.seedKey(t, 6*day)
+
+	for name, run := range map[string]func(limit int) (int, error){
+		"tokens": func(limit int) (int, error) { return p.tokens.DeleteOlderThan(ctx, tokenCutoff, limit) },
+		"keys":   func(limit int) (int, error) { return p.keys.DeleteOlderThan(ctx, keyCutoff, limit) },
+	} {
+		if first, err := run(2); err != nil || first != 2 {
+			t.Fatalf("%s: DeleteOlderThan(limit 2) = %d, %v, want 2", name, first, err)
+		}
+		if rest, err := run(2); err != nil || rest != 1 {
+			t.Fatalf("%s: second DeleteOlderThan(limit 2) = %d, %v, want the 1 left", name, rest, err)
+		}
+		if again, err := run(2); err != nil || again != 0 {
+			t.Errorf("%s: a repeated call deleted %d, %v, want 0", name, again, err)
+		}
+	}
+	for _, id := range oldTokens {
+		if p.present(t, "auth.refresh_token", "id", id) {
+			t.Errorf("token %s older than the cutoff was not deleted", id)
+		}
+	}
+	for _, key := range oldKeys {
+		if p.present(t, "auth.idempotency_key", "key", key) {
+			t.Errorf("key %s older than the cutoff was not deleted", key)
+		}
+	}
+	if !p.present(t, "auth.refresh_token", "id", youngToken) || !p.present(t, "auth.idempotency_key", "key", youngKey) {
+		t.Error("a row younger than the cutoff was deleted")
+	}
+}
