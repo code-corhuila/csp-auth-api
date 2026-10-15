@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"reflect"
 	"strings"
 	"testing"
@@ -12,12 +13,16 @@ import (
 	"github.com/code-corhuila/csp-auth-api/internal/domain/model"
 )
 
-const presentedToken = "presented-opaque-token"
+const (
+	presentedToken = "presented-opaque-token"
+	reuseGrace     = 10 * time.Second
+)
 
 // storedRefreshTokens is an in-memory refresh token table keyed by digest.
 type storedRefreshTokens struct {
-	rows map[string]*model.RefreshToken
-	err  error
+	rows         map[string]*model.RefreshToken
+	err          error
+	revokeAllErr error
 }
 
 func (s *storedRefreshTokens) Save(_ context.Context, token *model.RefreshToken) error {
@@ -45,6 +50,20 @@ func (s *storedRefreshTokens) RevokeByHash(_ context.Context, hash string, at ti
 	}
 	token.Revoke(at)
 	return token.UserID(), true, nil
+}
+
+func (s *storedRefreshTokens) RevokeAllActiveByUser(_ context.Context, userID string, at time.Time) (int, error) {
+	if s.revokeAllErr != nil {
+		return 0, s.revokeAllErr
+	}
+	revoked := 0
+	for _, token := range s.rows {
+		if token.UserID() == userID && token.IsValidAt(at) {
+			token.Revoke(at)
+			revoked++
+		}
+	}
+	return revoked, nil
 }
 
 func (s *storedRefreshTokens) snapshot() map[string]*model.RefreshToken {
@@ -104,7 +123,7 @@ func newRefreshFixture(t *testing.T, user *model.User) *refreshFixture {
 	}
 	tokens.rows[stored.Hash()] = stored
 	f := &refreshFixture{tokens: tokens, users: &refreshUsers{user: user}, sessions: &loginSessions{}}
-	f.useCase = NewRefreshSession(tokens, f.users, rollingBack{tokens}, loginTokens{}, f.sessions, fakeClock{})
+	f.useCase = NewRefreshSession(tokens, f.users, rollingBack{tokens}, loginTokens{}, f.sessions, fakeClock{}, reuseGrace)
 	return f
 }
 
@@ -232,15 +251,106 @@ func TestRefreshSurfacesRepositoryFailures(t *testing.T) {
 	}
 }
 
-func TestRefreshOfARevokedTokenRevokesNothingElse(t *testing.T) {
+// addToken stores an active token of userID, valid for an hour, under the digest of opaque.
+func (f *refreshFixture) addToken(id, userID, opaque string) {
+	token := model.RestoreRefreshToken(id, userID, model.HashOpaqueToken(opaque), "", registeredAt.Add(time.Hour), nil)
+	f.tokens.rows[token.Hash()] = token
+}
+
+// revokedAt reads the table again, because a rolled back transaction replaces its rows.
+func (f *refreshFixture) revokedAt(opaque string) *time.Time {
+	return f.tokens.rows[model.HashOpaqueToken(opaque)].RevokedAt()
+}
+
+func TestRefreshOfATokenSpentInsideTheGraceWindowRevokesNothingElse(t *testing.T) {
+	for _, age := range []time.Duration{time.Second, reuseGrace} {
+		f := newRefreshFixture(t, storedUser(t, model.UserActive, model.RoleClient))
+		f.addToken("token-2", "user-1", "sibling")
+		f.stored().Revoke(registeredAt.Add(-age))
+
+		_, err := f.useCase.Refresh(context.Background(), in.RefreshSessionCommand{RefreshToken: presentedToken})
+
+		if err != model.ErrRefreshTokenRejected || f.revokedAt("sibling") != nil {
+			t.Errorf("spent %v ago: error = %v, sibling revoked = %v, want ErrRefreshTokenRejected and the other token untouched", age, err, f.revokedAt("sibling"))
+		}
+	}
+}
+
+func TestRefreshOfATokenSpentAfterTheGraceWindowRevokesTheActiveTokensOfThatUserOnly(t *testing.T) {
 	f := newRefreshFixture(t, storedUser(t, model.UserActive, model.RoleClient))
-	sibling := model.RestoreRefreshToken("token-2", "user-1", model.HashOpaqueToken("sibling"), "", registeredAt.Add(time.Hour), nil)
-	f.tokens.rows[sibling.Hash()] = sibling
+	f.addToken("token-2", "user-1", "sibling")
+	f.addToken("token-3", "user-2", "stranger")
+	f.stored().Revoke(registeredAt.Add(-reuseGrace - time.Second))
+
+	result, err := f.useCase.Refresh(context.Background(), in.RefreshSessionCommand{RefreshToken: presentedToken})
+
+	if err != model.ErrRefreshTokenRejected || !reflect.DeepEqual(result, in.LoginUserResult{}) {
+		t.Errorf("result = %+v, error = %v, want an empty result and ErrRefreshTokenRejected, as for an unknown token", result, err)
+	}
+	if got := f.revokedAt("sibling"); got == nil || !got.Equal(registeredAt) {
+		t.Errorf("sibling revokedAt = %v, want revoked now although the request failed", got)
+	}
+	if f.revokedAt("stranger") != nil {
+		t.Error("a token of another user was revoked")
+	}
+	if len(f.sessions.commands) != 0 {
+		t.Error("a reused token must not open a session")
+	}
+}
+
+func TestRefreshOfAnUnknownOrExpiredTokenNeverRevokesAnything(t *testing.T) {
+	cases := map[string]func(*refreshFixture) string{
+		"unknown": func(*refreshFixture) string { return "never-issued" },
+		"expired and revoked long ago": func(f *refreshFixture) string {
+			old := model.RestoreRefreshToken("token-9", "user-1", model.HashOpaqueToken("old"), "", registeredAt.Add(-time.Hour), ptr(registeredAt.Add(-2*time.Hour)))
+			f.tokens.rows[old.Hash()] = old
+			return "old"
+		},
+	}
+	for name, arrange := range cases {
+		f := newRefreshFixture(t, storedUser(t, model.UserActive, model.RoleClient))
+		active := f.stored()
+
+		_, err := f.useCase.Refresh(context.Background(), in.RefreshSessionCommand{RefreshToken: arrange(f)})
+
+		if err != model.ErrRefreshTokenRejected || active.RevokedAt() != nil {
+			t.Errorf("%s: error = %v, active revoked = %v, want ErrRefreshTokenRejected and nothing revoked", name, err, active.RevokedAt())
+		}
+	}
+}
+
+func ptr(at time.Time) *time.Time { return &at }
+
+func TestRefreshOfAReusedTokenLogsAWarningWithoutTheToken(t *testing.T) {
+	var logged strings.Builder
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	f := newRefreshFixture(t, storedUser(t, model.UserActive, model.RoleClient))
+	f.addToken("token-2", "user-1", "sibling")
+	f.stored().Revoke(registeredAt.Add(-time.Minute))
+
+	_, _ = f.useCase.Refresh(context.Background(), in.RefreshSessionCommand{RefreshToken: presentedToken})
+
+	out := logged.String()
+	for _, want := range []string{"level=WARN", "userId=user-1", "tokenId=token-1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log %q does not contain %q", out, want)
+		}
+	}
+	if strings.Contains(out, presentedToken) || strings.Contains(out, model.HashOpaqueToken(presentedToken)) {
+		t.Errorf("log %q leaks the token or its digest", out)
+	}
+}
+
+func TestRefreshOfAReusedTokenStillAnswersTheSameRejectionWhenTheRevocationFails(t *testing.T) {
+	f := newRefreshFixture(t, storedUser(t, model.UserActive, model.RoleClient))
+	f.tokens.revokeAllErr = errors.New("boom")
 	f.stored().Revoke(registeredAt.Add(-time.Minute))
 
 	_, err := f.useCase.Refresh(context.Background(), in.RefreshSessionCommand{RefreshToken: presentedToken})
 
-	if err != model.ErrRefreshTokenRejected || sibling.RevokedAt() != nil {
-		t.Errorf("error = %v, sibling revoked = %v, want ErrRefreshTokenRejected and the other token untouched", err, sibling.RevokedAt())
+	if err != model.ErrRefreshTokenRejected {
+		t.Errorf("error = %v, want ErrRefreshTokenRejected: the detection must not change the answer", err)
 	}
 }

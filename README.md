@@ -56,6 +56,19 @@ go test ./...                        # run every test
 go run ./cmd/auth-api                # starts on PORT, 8081 by default
 ```
 
+The HTTP adapter has contract tests (`internal/adapter/in/httpapi/contract_test.go`): the real handlers answer through
+fakes of the use cases and every response of `POST /register`, `/login`, `/refresh` and `GET /jwks` is validated against
+`auth-service.yaml` (status, declared headers and body schema). The contract lives in `csp-docs`, so point
+`AUTH_CONTRACT_FILE` at it. Without the variable they are skipped on a workstation; in CI (`CI` set) they fail instead:
+
+```bash
+AUTH_CONTRACT_FILE=../csp-docs/07-api/contracts/openapi/auth-service.yaml go test ./internal/adapter/in/httpapi/
+```
+
+The statuses the service answers but the contract does not declare yet (`400` of login and refresh, `423` of refresh and
+`500` of register, login and refresh) are listed in `undocumentedStatuses`; their body is checked against `ErrorResponse`
+only, until `csp-docs` declares them.
+
 The PostgreSQL adapter has integration tests behind the `integration` build tag. They need a database with the
 `csp-auth-db` migrations applied and are skipped when `AUTH_TEST_DATABASE_URL` (login `auth_app`) is not set;
 `AUTH_TEST_OUTBOX_READER_URL` (login `worker_app`) enables the outbox payload test:
@@ -83,7 +96,7 @@ To run it with the database:
    The service connects as `auth_app`, never as the executor user.
 2. Export the variables (names only here, see `.env.example`; never commit values):
    `APP_AUTH_DATABASE_URL` (login `auth_app`, `search_path=auth`), `APP_AUTH_JWT_PRIVATE_KEY_FILE` (RSA key, PEM)
-   and, optionally, `APP_AUTH_BCRYPT_ROUNDS`, `APP_AUTH_JWT_EXPIRY`, `APP_AUTH_REFRESH_TOKEN_EXPIRY` and the
+   and, optionally, `APP_AUTH_BCRYPT_ROUNDS`, `APP_AUTH_JWT_EXPIRY`, `APP_AUTH_REFRESH_TOKEN_EXPIRY`, `APP_AUTH_REFRESH_REUSE_GRACE` and the
    `APP_AUTH_DATABASE_*` pool limits.
 3. `go run ./cmd/auth-api` and register:
 
@@ -115,8 +128,13 @@ curl -i -X POST http://localhost:8081/api/v1/auth/refresh   -H 'Content-Type: ap
 It requires a JSON body of at most 1 MiB with `refreshToken` and answers `200` with a new pair and the user
 (`Cache-Control: no-store`). The presented token is spent in the same transaction that issues the new one, so a token
 works once and a failure while issuing leaves it valid. An unknown, expired or already used token gets the same `401`
-(`INVALID_REFRESH_TOKEN`) and nothing else is revoked. A locked account gets `423`, a missing or empty `refreshToken`
-gets `400`.
+(`INVALID_REFRESH_TOKEN`). A locked account gets `423`, a missing or empty `refreshToken` gets `400`.
+
+Reuse detection (ADR-029): a token that was already used and is presented again more than
+`APP_AUTH_REFRESH_REUSE_GRACE` seconds after (default 10, maximum 60) ends every active session of its user. The
+revocation is committed although the request fails, one `WARN` with the user id and the id of the token row is logged
+(never the token), and the answer is the same `401` as for any other rejected token. Inside the window the presentation
+is taken as a concurrent refresh and nothing else is revoked; unknown and expired tokens never revoke anything.
 
 The end-to-end tests of these routes (`cmd/auth-api`, tag `integration`) uses the same `AUTH_TEST_DATABASE_URL`:
 
