@@ -312,7 +312,7 @@ func TestRevokeActiveByUserAndHashIsNotAnErrorForAnUnknownSpentOrExpiredToken(t 
 	if _, ok, err := repository.RevokeByHash(ctx, model.HashOpaqueToken(spentOpaque), earlier); err != nil || !ok {
 		t.Fatalf("RevokeByHash() = %v, %v", ok, err)
 	}
-	if _, err := f.pool.Exec(ctx, `UPDATE auth.refresh_token SET expires_at = NOW() - INTERVAL '1 second' WHERE id = $1`, expired.ID()); err != nil {
+	if _, err := f.pool.Exec(ctx, `UPDATE auth.refresh_token SET expires_at = NOW() - INTERVAL '1 hour' WHERE id = $1`, expired.ID()); err != nil {
 		t.Fatalf("expire the token: %v", err)
 	}
 

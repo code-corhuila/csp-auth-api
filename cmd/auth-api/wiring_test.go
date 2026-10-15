@@ -286,3 +286,20 @@ func TestNewHandlerFailsFastOnAnInvalidRedisURLWithoutRevealingIt(t *testing.T) 
 		t.Errorf("error = %v, want an error that does not show the password", err)
 	}
 }
+
+func TestOpenRevokedTokensWorksWithoutCheckWhenRedisIsNotConfigured(t *testing.T) {
+	var logs strings.Builder
+
+	list, closeList, err := openRevokedTokens(slogTo(&logs), testConfig(t))
+	defer closeList()
+
+	if err != nil {
+		t.Fatalf("openRevokedTokens() error = %v", err)
+	}
+	if revoked, err := list.IsRevoked(context.Background(), "any-jti"); revoked || err != nil {
+		t.Errorf("IsRevoked() = %v, %v, want false and no error", revoked, err)
+	}
+	if !strings.Contains(logs.String(), "APP_AUTH_REDIS_URL is not set") {
+		t.Errorf("log = %q, want a line that says the check is off", logs.String())
+	}
+}
