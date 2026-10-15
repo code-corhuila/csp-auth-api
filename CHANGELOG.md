@@ -69,6 +69,12 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   writes `blacklist:{jti}` with the remaining life of the token and checks it with `EXISTS`; `APP_AUTH_REDIS_URL` and
   `APP_AUTH_REDIS_TIMEOUT` (default 2s, connect, read and write). Integration tests run against Redis 7 with the ACL of
   `auth_app`. No route uses it yet.
+- HU-AUTH-003, `POST /api/v1/auth/logout` (ADR-033, issue [#87](https://github.com/code-corhuila/csp-auth-api/issues/87)): the
+  `Logout` use case revokes the refresh tokens in PostgreSQL in one transaction (the presented one if it is the user's, or all
+  with `allDevices`; an unknown, foreign or revoked one is not an error) and then lists the `jti` of the access token in Redis
+  with the remaining life of the token; `204`, `401` and `500` as the contract declares them. The route is enabled only
+  with `APP_AUTH_REDIS_URL`. The verified claims now carry the `jti` and the expiration, and a token without `jti` is
+  invalid. Contract, integration and end-to-end tests against PostgreSQL and Redis.
 - This changelog ([#51](https://github.com/code-corhuila/csp-auth-api/pull/51)).
 
 ### Changed

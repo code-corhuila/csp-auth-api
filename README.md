@@ -173,6 +173,21 @@ token without the permission `403`. The prefix match is `LIKE 'prefix%'`, which 
 serves (`idx_app_user_email_pattern`, migration V023 of `csp-auth-db`, which the integration tests need). The two statements run with
 `pgx.QueryExecModeExec`, so each one is planned with its prefix and a generic plan never replaces it.
 
+`POST /api/v1/auth/logout` (HU-AUTH-003, ADR-033) ends the session of the caller. It needs a valid access token (any role) and
+**`APP_AUTH_REDIS_URL`**: without it the route is not enabled (`404`, and the log says so). The body is optional:
+
+```bash
+curl -i -X POST http://localhost:8081/api/v1/auth/logout -H "Authorization: Bearer $ACCESS_TOKEN"   -H 'Content-Type: application/json' -d '{"refreshToken":"'"$REFRESH_TOKEN"'","allDevices":false}'
+```
+
+With `allDevices: true` every active refresh token of the user is revoked; otherwise only `refreshToken`, if it is sent and
+belongs to the user. A refresh token that is unknown, another user's or already revoked does not fail the call and revokes
+nothing. The refresh tokens are revoked in PostgreSQL in **one transaction that is committed first**; then `jti` of the access
+token is written to Redis (`blacklist:{jti}`, `SET` with a ttl of its remaining life, at least one second) and the answer is `204`.
+If Redis cannot be written the answer is `500 INTERNAL_ERROR` although the refresh tokens are already revoked: the client repeats
+the call, which is idempotent. A missing or invalid access token is `401`. Reading the list on the protected routes is a
+separate change of the same story.
+
 Internal operations (ADR-020) accept a **service credential**: an RS256 token signed with the key of this service,
 with `exp` and a `sub` and sent as `Authorization: Bearer`. A missing or invalid token gets `401 UNAUTHORIZED` and a
 valid token whose `sub` is not in `SERVICE_SUBJECTS` (comma-separated, empty by default so that no service is allowed)
@@ -198,14 +213,6 @@ eligible row is left, so the caller repeats it until `hasMore` is `false`. A rep
 `Idempotency-Key`, the same registration answers `409 EMAIL_ALREADY_REGISTERED` instead of the `200` replay. A missing or
 invalid token is `401` and a valid token of another subject is `403`.
 
-## Redis
-
-`APP_AUTH_REDIS_URL` (`redis://auth_app:<password>@redis:6379/0`, URL-safe password) points at the Redis of
-`csp-infra-redis` (ADR-028). It holds the list of revoked access tokens, one key `blacklist:{jti}` per token that lives
-as long as the token does. `APP_AUTH_REDIS_TIMEOUT` (default `2s`) bounds the connection, every read and every write
-(Norma 5.3.10). The client does not connect at start: an unreachable Redis is an error of the first command that needs it.
-When the variable is empty the features that need Redis are not enabled.
-
 The end-to-end tests of these routes (`cmd/auth-api`, tag `integration`) uses the same `AUTH_TEST_DATABASE_URL`:
 
 ```bash
@@ -223,6 +230,14 @@ The service stops gracefully on `SIGINT` and `SIGTERM`. In the platform, `csp-in
 which exposes the port on the `platform` network without publishing it: only the gateway reaches the service.
 Copy `.env.example` to `.env` for local values and never commit `.env`. The file lists first the variables the
 service reads (HTTP, database, bcrypt, tokens and Redis).
+
+## Redis
+
+`APP_AUTH_REDIS_URL` (`redis://auth_app:<password>@redis:6379/0`, URL-safe password) points at the Redis of
+`csp-infra-redis` (ADR-028). It holds the list of revoked access tokens, one key `blacklist:{jti}` per token that lives
+as long as the token does. `APP_AUTH_REDIS_TIMEOUT` (default `2s`) bounds the connection, every read and every write
+(Norma 5.3.10). The client does not connect at start: an unreachable Redis is an error of the first command that needs it.
+When the variable is empty the features that need Redis are not enabled (`POST /logout`, with an INFO line in the log).
 
 ## Branching
 

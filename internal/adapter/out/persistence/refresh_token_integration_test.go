@@ -277,3 +277,59 @@ func revokedAt(t *testing.T, f fixture, hash string) *time.Time {
 	}
 	return at
 }
+
+func TestRevokeActiveByUserAndHashRevokesTheTokenOfThatUserOnly(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	repository := NewRefreshTokenRepository(f.pool)
+	mine, mineOpaque := saveToken(t, f, ctx, repository)
+	theirs, theirsOpaque := saveToken(t, f, ctx, repository)
+	at := time.Now().UTC().Truncate(time.Microsecond)
+
+	if err := repository.RevokeActiveByUserAndHash(ctx, theirs.UserID(), model.HashOpaqueToken(mineOpaque), at); err != nil {
+		t.Fatalf("RevokeActiveByUserAndHash() with the token of another user error = %v", err)
+	}
+	if got := revokedAt(t, f, mine.Hash()); got != nil {
+		t.Fatalf("the token of %s has revoked_at = %v after a call of another user, want NULL", mine.UserID(), got)
+	}
+	if err := repository.RevokeActiveByUserAndHash(ctx, mine.UserID(), model.HashOpaqueToken(mineOpaque), at); err != nil {
+		t.Fatalf("RevokeActiveByUserAndHash() error = %v", err)
+	}
+
+	if got := revokedAt(t, f, mine.Hash()); got == nil || !got.Equal(at) {
+		t.Errorf("revoked_at = %v, want %v", got, at)
+	}
+	if got := revokedAt(t, f, model.HashOpaqueToken(theirsOpaque)); got != nil {
+		t.Errorf("the token of another user has revoked_at = %v, want NULL", got)
+	}
+}
+
+func TestRevokeActiveByUserAndHashIsNotAnErrorForAnUnknownSpentOrExpiredToken(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	repository := NewRefreshTokenRepository(f.pool)
+	spent, spentOpaque := saveToken(t, f, ctx, repository)
+	expired, expiredOpaque := saveToken(t, f, ctx, repository)
+	earlier := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	if _, ok, err := repository.RevokeByHash(ctx, model.HashOpaqueToken(spentOpaque), earlier); err != nil || !ok {
+		t.Fatalf("RevokeByHash() = %v, %v", ok, err)
+	}
+	if _, err := f.pool.Exec(ctx, `UPDATE auth.refresh_token SET expires_at = NOW() - INTERVAL '1 second' WHERE id = $1`, expired.ID()); err != nil {
+		t.Fatalf("expire the token: %v", err)
+	}
+
+	for name, call := range map[string][2]string{
+		"unknown": {spent.UserID(), model.HashOpaqueToken("never-issued")},
+		"spent":   {spent.UserID(), model.HashOpaqueToken(spentOpaque)},
+		"expired": {expired.UserID(), model.HashOpaqueToken(expiredOpaque)},
+	} {
+		if err := repository.RevokeActiveByUserAndHash(ctx, call[0], call[1], time.Now().UTC()); err != nil {
+			t.Errorf("%s: error = %v, want none", name, err)
+		}
+	}
+
+	if got := revokedAt(t, f, spent.Hash()); got == nil || !got.Equal(earlier) {
+		t.Errorf("spent token revoked_at = %v, want it unchanged at %v", got, earlier)
+	}
+	if got := revokedAt(t, f, expired.Hash()); got != nil {
+		t.Errorf("expired token revoked_at = %v, want NULL", got)
+	}
+}

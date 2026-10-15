@@ -3,6 +3,7 @@ package model
 import (
 	"crypto/rsa"
 	"slices"
+	"time"
 )
 
 var clientPermissions = []string{
@@ -42,11 +43,14 @@ func (r Role) permissions() []string {
 }
 
 // AccessClaims is the identity part of an access token: who the user is and what the roles allow.
-// The issuer adds the registered claims (iss, aud, iat, exp, jti).
+// The issuer adds the registered claims (iss, aud, iat, exp, jti); the verifier of a token reads
+// the jti and the expiration back into TokenID and ExpiresAt, which identify the token to revoke.
 type AccessClaims struct {
 	Subject     string
 	Roles       []Role
 	Permissions []string
+	TokenID     string
+	ExpiresAt   time.Time
 }
 
 // NewAccessClaims resolves the permissions of roles, without duplicates, in a stable order.
