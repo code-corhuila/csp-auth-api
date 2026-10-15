@@ -19,6 +19,8 @@ const (
 	codeBadRefreshToken  = "INVALID_REFRESH_TOKEN"
 	codeUnauthorized     = "UNAUTHORIZED"
 	codeForbidden        = "FORBIDDEN"
+	codeNotFound         = "NOT_FOUND"
+	codeLastAdmin        = "LAST_ADMIN"
 )
 
 // fieldError names one invalid input: a body property or a header.
@@ -121,5 +123,25 @@ func translateRefreshError(w http.ResponseWriter, traceID string, err error) {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{
 			Error: codeInternal, Message: "an unexpected error occurred", TraceID: traceID,
 		})
+	}
+}
+
+// translateChangeRoleError is the only place that maps the errors of the role change use case to
+// HTTP. The cause of an unexpected error goes only to the log.
+func translateChangeRoleError(w http.ResponseWriter, traceID string, err error) {
+	switch {
+	case errors.Is(err, model.ErrUnknownRole), errors.Is(err, model.ErrRoleNotChangeable):
+		writeValidation(w, traceID, []fieldError{{Field: "role", Message: err.Error()}})
+	case errors.Is(err, model.ErrUserNotFound):
+		writeJSON(w, http.StatusNotFound, errorResponse{
+			Error: codeNotFound, Message: "The requested resource does not exist", TraceID: traceID,
+		})
+	case errors.Is(err, model.ErrLastAdmin):
+		writeJSON(w, http.StatusConflict, errorResponse{
+			Error: codeLastAdmin, Message: "The last active administrator cannot lose the ADMIN role", TraceID: traceID,
+		})
+	default:
+		slog.Error("change user role failed", "traceId", traceID, "error", err)
+		writeInternal(w, traceID)
 	}
 }
