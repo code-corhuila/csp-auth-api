@@ -28,7 +28,7 @@ type poolOpener func(ctx context.Context, settings persistence.PoolSettings) (*p
 //     because registration issues tokens.
 //   - A signing key: health and /jwks.
 //   - A signing key and a database URL: also POST /register, POST /login and POST /refresh, served by the real use cases,
-//     PATCH /users/{userId}/role, open to the access tokens that hold user:role:update, and
+//     GET /users and PATCH /users/{userId}/role, open to the access tokens that hold user:role:update, and
 //     POST /internal/maintenance/purge, open only to the service tokens whose subject is in SERVICE_SUBJECTS.
 //
 // A configured key or database that cannot be used stops the service instead of degrading it.
@@ -72,6 +72,8 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 	logger.Info("refresh route enabled")
 	options = append(options, httpapi.WithChangeUserRole(newAuthorizeUser(issuer), newChangeUserRole(pool)))
 	logger.Info("user role route enabled")
+	options = append(options, httpapi.WithListUsers(newAuthorizeUser(issuer), usecase.NewListUsers(persistence.NewUserReader(pool))))
+	logger.Info("user list route enabled")
 	options = append(options, httpapi.WithPurgeOldRecords(newAuthorizeService(cfg, issuer), newPurgeOldRecords(pool)))
 	logger.Info("purge route enabled")
 	return httpapi.NewHandler(options...), pool.Close, nil
