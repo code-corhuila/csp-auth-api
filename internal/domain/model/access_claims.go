@@ -1,6 +1,9 @@
 package model
 
-import "crypto/rsa"
+import (
+	"crypto/rsa"
+	"slices"
+)
 
 var clientPermissions = []string{
 	"catalog:read",
@@ -68,6 +71,11 @@ func NewAccessClaims(userID string, roles []Role) (AccessClaims, error) {
 		}
 	}
 	return AccessClaims{Subject: userID, Roles: roles, Permissions: permissions}, nil
+}
+
+// Allows reports whether the claims include permission.
+func (c AccessClaims) Allows(permission string) bool {
+	return slices.Contains(c.Permissions, permission)
 }
 
 // PublicKey is a signature verification key identified by KeyID, as published to the other services.
