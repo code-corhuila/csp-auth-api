@@ -190,7 +190,8 @@ the call, which is idempotent. A missing or invalid access token is `401`. The l
 `PATCH /api/v1/auth/me/email` and `POST /api/v1/auth/me/email/verify` (HU-AUTH-004, ADR-034) change the email of the caller in two
 steps. Both need an access token that holds `profile:update:self` (any signed-in user) and an `Idempotency-Key` (accepted, not
 stored: repeating the request is harmless). The account is always the one in the token, and the routes are enabled by the same
-two settings as the other protected routes.
+two settings as the other protected routes **and by `APP_AUTH_SMTP_HOST`**: without it the two routes answer `404` and the start-up
+log says so once (see [Email delivery](#email-delivery-smtp)).
 
 ```bash
 curl -i -X PATCH http://localhost:8081/api/v1/auth/me/email -H "Authorization: Bearer $ACCESS_TOKEN" -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" -d '{"email":"new.address@example.com"}'
@@ -201,10 +202,8 @@ The request normalizes the address to lower case and answers `202` with no body:
 is `400`, an address used by any active account (the own one included) is `409 EMAIL_ALREADY_REGISTERED`, and the fourth request of a
 user in a rolling hour (superseded ones count) is `429 RATE_LIMITED` with `Retry-After: 3600`. A new request replaces the pending one.
 The code has six digits (`crypto/rand`, leading zeros kept), lasts 15 minutes and is handed to the `VerificationCodeSender` port
-inside the transaction of the request. **The only adapter is `LogVerificationCodeSender`, a deliberate temporary decision of
-ADR-034: it writes the code in the service log at INFO** (`email verification code issued`, with `userId`, `requestId` and `code`)
-so the team can verify the flow in development and QA; nothing sends emails yet, and the adapter must be replaced before the email
-change goes to `main`.
+inside the transaction of the request. The adapter is `SMTPVerificationCodeSender` (ADR-034): it sends one plain-text message in Spanish
+through the SMTP relay and nowhere else. If the relay fails the request is rolled back and the answer is `500`; the user asks again.
 
 The verification answers `204` when the code is right: in one transaction the email of the account changes, `email_verified` becomes
 true, the request is consumed and `UserEmailChanged` (user id and new email only) is written to the outbox. A malformed code, no pending
@@ -274,6 +273,35 @@ the token or the `jti`. `POST /logout` does not stop at the lookup: it revokes t
 then fails with `500` when it writes the list, so during a Redis outage a sign out answers `500` but the refresh tokens are
 already revoked, and the client repeats the call.
 Without `APP_AUTH_REDIS_URL` the check is off (INFO line at start) and the routes work as before.
+
+## Email delivery (SMTP)
+
+The code of the email change goes to the SMTP relay of the platform (`net/smtp`, ADR-034). All the settings are domain variables,
+never versioned (Annex G):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `APP_AUTH_SMTP_HOST` | empty | Relay host. Empty: `PATCH /me/email` and `POST /me/email/verify` are not registered (`404`). |
+| `APP_AUTH_SMTP_PORT` | `587` | Relay port, 1 to 65535. |
+| `APP_AUTH_SMTP_USER`, `APP_AUTH_SMTP_PASSWORD` | empty | Credentials (AUTH PLAIN, sent only over TLS or to a local catcher). Empty user: no authentication. |
+| `APP_AUTH_SMTP_FROM` | none | Sender address, required when the host is set. |
+| `APP_AUTH_SMTP_TLS` | `starttls` | `starttls` requires the relay to offer STARTTLS and fails otherwise; `none` is only for a local catcher. |
+| `APP_AUTH_SMTP_TIMEOUT` | `5s` | Go duration that bounds the whole exchange, connection included. |
+
+A `404` on the two routes therefore means the service runs without `APP_AUTH_SMTP_HOST`, not that the route does not exist. A relay that
+fails is a `500` with a `WARN` that carries the user id and the class of the error (`connect`, `tls`, `auth`, `rejected`, `timeout`,
+`canceled`...); the code, the address and the credentials are never logged. The SMTP call runs inside the database transaction, so a slow
+relay holds a connection for up to the timeout.
+
+To try it locally with Mailpit (a catcher that keeps the messages, never use it outside a developer machine):
+
+```bash
+docker compose -f deploy/compose.yml --profile mail up -d mailpit
+APP_AUTH_SMTP_HOST=localhost APP_AUTH_SMTP_PORT=1025 APP_AUTH_SMTP_TLS=none APP_AUTH_SMTP_FROM=no-reply@cinesync.local go run ./cmd/auth-api
+```
+
+Inside the platform network the service uses `APP_AUTH_SMTP_HOST=mailpit` and port `1025`. Mailpit publishes SMTP (1025) and the web UI
+on the loopback only; the message with the code appears at `http://localhost:8025` after `PATCH /me/email`.
 
 ## Branching
 

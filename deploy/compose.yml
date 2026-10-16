@@ -16,6 +16,13 @@
 #                                    Registration needs the database URL and one of the two.
 #   APP_AUTH_REDIS_URL               Redis URL, redis://auth_app:<password>@redis:6379/0 (csp-infra-redis, ADR-028). Optional:
 #                                    without it the logout route is not enabled.
+#   APP_AUTH_SMTP_HOST               SMTP relay that delivers the email verification code (ADR-034). Optional: without it
+#                                    PATCH /me/email and POST /me/email/verify are not enabled (404).
+#   APP_AUTH_SMTP_FROM               Sender address, required when the host is set. APP_AUTH_SMTP_USER and
+#                                    APP_AUTH_SMTP_PASSWORD authenticate against the relay (provided as secrets, never versioned).
+#   APP_AUTH_SMTP_PORT (587), APP_AUTH_SMTP_TLS (starttls, or none for a local catcher only), APP_AUTH_SMTP_TIMEOUT (5s).
+#   Local: `--profile mail up mailpit` with APP_AUTH_SMTP_HOST=mailpit APP_AUTH_SMTP_PORT=1025 APP_AUTH_SMTP_TLS=none
+#   APP_AUTH_SMTP_FROM=no-reply@cinesync.local; the messages are read at http://localhost:8025.
 # Optional, the service default applies when empty:
 #   APP_AUTH_DATABASE_MAX_CONNECTIONS, APP_AUTH_DATABASE_MIN_CONNECTIONS,
 #   APP_AUTH_DATABASE_CONNECT_TIMEOUT, APP_AUTH_DATABASE_QUERY_TIMEOUT,
@@ -49,6 +56,14 @@ services:
       # Without it the logout route is off. The timeout is a Go duration that bounds connect, read and write.
       APP_AUTH_REDIS_URL: ${APP_AUTH_REDIS_URL:-}
       APP_AUTH_REDIS_TIMEOUT: ${APP_AUTH_REDIS_TIMEOUT:-}
+      # SMTP relay of the email verification code (ADR-034). Without a host the email change routes are off.
+      APP_AUTH_SMTP_HOST: ${APP_AUTH_SMTP_HOST:-}
+      APP_AUTH_SMTP_PORT: ${APP_AUTH_SMTP_PORT:-}
+      APP_AUTH_SMTP_USER: ${APP_AUTH_SMTP_USER:-}
+      APP_AUTH_SMTP_PASSWORD: ${APP_AUTH_SMTP_PASSWORD:-}
+      APP_AUTH_SMTP_FROM: ${APP_AUTH_SMTP_FROM:-}
+      APP_AUTH_SMTP_TLS: ${APP_AUTH_SMTP_TLS:-}
+      APP_AUTH_SMTP_TIMEOUT: ${APP_AUTH_SMTP_TIMEOUT:-}
       # Password hashing cost.
       APP_AUTH_BCRYPT_ROUNDS: ${APP_AUTH_BCRYPT_ROUNDS:-}
       # Signing key of the tokens (Norma 5.3.7); csp-infra mounts the PEM file when the file form is used.
@@ -66,6 +81,15 @@ services:
     restart: on-failure
     # expose, not ports: only the gateway is reachable from the host.
     expose: ["8081"]
+    networks: [platform]
+
+  # Local mail catcher, only for development (profile `mail`). Never use it outside a developer machine.
+  mailpit:
+    image: axllent/mailpit:v1.21.8
+    profiles: [mail]
+    # SMTP on 1025 (the service reaches it on the platform network) and the web UI on 8025, both published on the loopback only.
+    expose: ["1025"]
+    ports: ["127.0.0.1:1025:1025", "127.0.0.1:8025:8025"]
     networks: [platform]
 
 networks:

@@ -3,18 +3,14 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -25,42 +21,6 @@ const (
 	emailChangePath = "/api/v1/auth/me/email"
 	emailVerifyPath = "/api/v1/auth/me/email/verify"
 )
-
-// syncBuffer is a log destination the server can write while the test reads it.
-type syncBuffer struct {
-	mu     sync.Mutex
-	buffer bytes.Buffer
-}
-
-func (b *syncBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buffer.Write(p)
-}
-
-func (b *syncBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buffer.String()
-}
-
-// issuedCode reads the code of the last "email verification code issued" line of userID, the way the
-// team does while the log is the only delivery (ADR-034).
-func issuedCode(t *testing.T, logs *syncBuffer, userID string) string {
-	t.Helper()
-	var code string
-	scanner := bufio.NewScanner(strings.NewReader(logs.String()))
-	for scanner.Scan() {
-		var line struct{ Msg, UserID, Code string }
-		if err := json.Unmarshal(scanner.Bytes(), &line); err == nil && line.Msg == "email verification code issued" && line.UserID == userID {
-			code = line.Code
-		}
-	}
-	if code == "" {
-		t.Fatalf("no verification code of %s in the log", userID)
-	}
-	return code
-}
 
 func callEmail(t *testing.T, baseURL, method, path, bearer, body string) (int, http.Header, string) {
 	t.Helper()
@@ -111,7 +71,7 @@ func emailChangedEventCount(t *testing.T, ctx context.Context, url, userID strin
 }
 
 // The test changes an email over HTTP with real access tokens, PostgreSQL with the csp-auth-db
-// migrations (V001-V025) and the log as the only delivery of the code (ADR-034, HU-AUTH-004): the
+// migrations (V001-V025) and an in-process SMTP relay as the delivery of the code (ADR-034, HU-AUTH-004): the
 // account is untouched until the right code arrives, a wrong code is counted, the right one changes
 // the email and publishes one event without the code, the session keeps working, and an address
 // that is taken or a fourth request in the hour is refused.
@@ -125,8 +85,9 @@ func TestEmailChangeEndToEndAgainstTheDatabase(t *testing.T) {
 	cfg.DatabaseURL = databaseURL
 	cfg.BcryptRounds = 4
 	cfg.JWTPrivateKey = generatedKeyPEM(t)
-	logs := &syncBuffer{}
-	handler, closeDatabase, err := newHandler(ctx, slogJSONTo(logs), cfg, persistence.NewPool)
+	relay := startFakeSMTP(t)
+	relay.configure(&cfg)
+	handler, closeDatabase, err := newHandler(ctx, discardLogger(), cfg, persistence.NewPool)
 	if err != nil {
 		t.Fatalf("newHandler() error = %v", err)
 	}
@@ -169,7 +130,7 @@ func TestEmailChangeEndToEndAgainstTheDatabase(t *testing.T) {
 		if status != http.StatusAccepted || body != "" {
 			t.Fatalf("status = %d, body = %q, want 202 and no body", status, body)
 		}
-		code := issuedCode(t, logs, userID)
+		code := relay.codeFor(t, newEmail)
 		if strings.Contains(body, code) {
 			t.Error("the response carries the code")
 		}
@@ -185,7 +146,7 @@ func TestEmailChangeEndToEndAgainstTheDatabase(t *testing.T) {
 	})
 
 	t.Run("a wrong, malformed or missing code is the same 400 and the right code is still accepted", func(t *testing.T) {
-		code := issuedCode(t, logs, userID)
+		code := relay.codeFor(t, newEmail)
 		wrong := "000000"
 		if code == wrong {
 			wrong = "000001"
@@ -210,7 +171,7 @@ func TestEmailChangeEndToEndAgainstTheDatabase(t *testing.T) {
 	})
 
 	t.Run("the right code is 204, changes the email, keeps the session and publishes one event without the code", func(t *testing.T) {
-		code := issuedCode(t, logs, userID)
+		code := relay.codeFor(t, newEmail)
 
 		if status, body := verifyCode(t, server.URL, access, code); status != http.StatusNoContent {
 			t.Fatalf("status = %d, body = %s, want 204", status, body)
@@ -236,6 +197,21 @@ func TestEmailChangeEndToEndAgainstTheDatabase(t *testing.T) {
 		}
 	})
 
+	t.Run("a relay that is down is 500 and the account can ask again", func(t *testing.T) {
+		down := cfg
+		down.SMTPPort = 1
+		downServer := startLogoutServer(t, down)
+		_, downID, downAccess, _ := signUpUser(t, downServer.URL, "e2e-down")
+		target := "e2e-down-" + downID + "@example.com"
+
+		if status, _, _ := requestChange(t, downServer.URL, downAccess, target); status != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500 (the request rolls back)", status)
+		}
+		if status, _, _ := requestChange(t, server.URL, downAccess, target); status != http.StatusAccepted {
+			t.Errorf("the same request with the relay up: status = %d, want 202 (a failed delivery does not count)", status)
+		}
+	})
+
 	t.Run("the fourth request in the hour is 429 with Retry-After", func(t *testing.T) {
 		_, limitedID, limitedAccess, _ := signUpUser(t, server.URL, "e2e-limited")
 		for i := 1; i <= 3; i++ {
@@ -255,7 +231,7 @@ func TestEmailChangeEndToEndAgainstTheDatabase(t *testing.T) {
 		if status, _, _ := requestChange(t, server.URL, contestedAccess, target); status != http.StatusAccepted {
 			t.Fatalf("request status = %d, want 202", status)
 		}
-		code := issuedCode(t, logs, contestedID)
+		code := relay.codeFor(t, target)
 		registerBody := fmt.Sprintf(`{"email":%q,"password":%q,"name":"Ada Lovelace","phone":"+573001234567","address":"Calle 1 # 2-3"}`, target, e2ePassword)
 		if status, payload := register(t, server.URL, "e2e-taken-key-"+contestedID, registerBody); status != http.StatusCreated {
 			t.Fatalf("register the account that takes the address: status = %d, body = %v", status, payload)
@@ -273,10 +249,6 @@ func TestEmailChangeEndToEndAgainstTheDatabase(t *testing.T) {
 	})
 }
 
-func slogJSONTo(w io.Writer) *slog.Logger {
-	return slog.New(slog.NewJSONHandler(w, nil))
-}
-
 // The email change checks the list of revoked access tokens like the other protected routes (ADR-033):
 // after a logout the same token is 401 on both steps, and with Redis down they fail closed with 500.
 func TestEmailChangeRejectsARevokedTokenAndFailsClosedWhenTheListIsDownEndToEnd(t *testing.T) {
@@ -289,6 +261,7 @@ func TestEmailChangeRejectsARevokedTokenAndFailsClosedWhenTheListIsDownEndToEnd(
 	cfg.RedisURL = redisURL
 	cfg.BcryptRounds = 4
 	cfg.JWTPrivateKey = generatedKeyPEM(t)
+	startFakeSMTP(t).configure(&cfg)
 	server := startLogoutServer(t, cfg)
 	redisDown := cfg
 	redisDown.RedisURL = "redis://auth_app:unused@127.0.0.1:1/0"

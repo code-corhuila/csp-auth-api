@@ -86,15 +86,22 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   hour, code handed to `VerificationCodeSender` inside the transaction) and `VerifyEmailChange` use cases. No route yet.
 - HU-AUTH-004, adapters of the email change (ADR-034, issue [#103](https://github.com/code-corhuila/csp-auth-api/issues/103)):
   PostgreSQL repository of `auth.email_verification` (row lock per user, rolling-hour count, supersede, `FOR UPDATE`, savepoint
-  for the duplicate email), `UserEmailChanged` outbox row, `crypto/rand` code generator and the temporary
-  `LogVerificationCodeSender`. No route yet.
+  for the duplicate email), `UserEmailChanged` outbox row, `crypto/rand` code generator and the first sender of
+  the code (replaced by the SMTP sender, see below). No route yet.
 - HU-AUTH-004, `PATCH /api/v1/auth/me/email` and `POST /api/v1/auth/me/email/verify` (ADR-034, issue [#104](https://github.com/code-corhuila/csp-auth-api/issues/104)):
   both steps of the email change with the guards of the protected routes (`profile:update:self`, revoked token `401`, list down `500`),
-  `400`, `409`, `429` with `Retry-After` and one `400` for every rejected code; wired in the composition root with the log sender
-  as the only delivery. Contract tests against `auth-service.yaml` 1.6.0 and an end-to-end test against PostgreSQL and Redis.
+  `400`, `409`, `429` with `Retry-After` and one `400` for every rejected code; wired in the composition root. Contract tests against `auth-service.yaml` 1.6.0 and an end-to-end test against PostgreSQL and Redis.
+- HU-AUTH-004, delivery of the email verification code by SMTP (ADR-034, issue [#109](https://github.com/code-corhuila/csp-auth-api/issues/109)):
+  `SMTPVerificationCodeSender` (`net/smtp`, plain-text message in Spanish, STARTTLS required unless `APP_AUTH_SMTP_TLS=none`, timeout
+  for the whole exchange) and the settings `APP_AUTH_SMTP_HOST`, `_PORT`, `_USER`, `_PASSWORD`, `_FROM`, `_TLS` and `_TIMEOUT`. Without
+  `APP_AUTH_SMTP_HOST` the two email change routes are not enabled (`404`, one INFO line at start). A failure of the relay is a `500` and a
+  `WARN` with the user id and the class of the error; the code and the address are never logged. `deploy/compose.yml` offers an
+  optional Mailpit under the profile `mail`.
 
 ### Changed
 
+- The log adapter of the verification code (`LogVerificationCodeSender`) is removed: the code is no longer written in the service log
+  (HU-AUTH-004, issue [#109](https://github.com/code-corhuila/csp-auth-api/issues/109)).
 - The end-to-end refresh test expires the token with one hour instead of one second, like the persistence tests: the database clock and the Go clock were compared with a one second margin (HU-AUTH-003, issue [#94](https://github.com/code-corhuila/csp-auth-api/issues/94)).
 - The persistence integration tests no longer depend on the clock or on the table statistics: the tests that expire a refresh token use one hour instead of one second (the database clock and the Go clock were compared with a one second margin), the test of the email prefix index plans on a table with enough rows inside a rolled back transaction with `SET LOCAL`, and the role change test finds its events by identity instead of by the order of `created_at` (the clock of a database container can step backwards). Found running the suite repeatedly against a fresh PostgreSQL 16 (HU-AUTH-003, issue [#92](https://github.com/code-corhuila/csp-auth-api/issues/92)).
 - The contract tests validate every response in full: `auth-service.yaml` 1.4.1 declares the `400`, `423` and `500`
