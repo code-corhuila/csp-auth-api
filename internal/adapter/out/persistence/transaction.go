@@ -17,6 +17,7 @@ type executor interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, arguments ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, arguments ...any) pgx.Row
+	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
 // TransactionManager implements out.TransactionManager (Unit of Work). The transaction travels in
