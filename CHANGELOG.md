@@ -80,6 +80,10 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   judging its permissions), and `GET /users` and `PATCH` role fail closed with `500 INTERNAL_ERROR` and a `WARN` without the token or the `jti` when Redis
   cannot be consulted; `POST /logout` goes on, revokes the refresh tokens and answers `500` when it cannot write the list. Without `APP_AUTH_REDIS_URL` the check is off, which the log says at start.
 - This changelog ([#51](https://github.com/code-corhuila/csp-auth-api/pull/51)).
+- HU-AUTH-004, domain and use cases of the email change (ADR-034, issue
+  [#102](https://github.com/code-corhuila/csp-auth-api/issues/102)): `EmailChangeRequest` (six digits, 15 minutes, 5 wrong
+  codes), `VerificationCode`, the `UserEmailChanged` event and the `RequestEmailChange` (3 requests per user per rolling
+  hour, code handed to `VerificationCodeSender` inside the transaction) and `VerifyEmailChange` use cases. No route yet.
 
 ### Changed
 
