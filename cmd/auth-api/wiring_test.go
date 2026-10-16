@@ -304,26 +304,34 @@ func TestOpenRevokedTokensWorksWithoutCheckWhenRedisIsNotConfigured(t *testing.T
 	}
 }
 
-func TestNewHandlerServesTheEmailChangeRoutesOnlyWithTheDatabase(t *testing.T) {
+func TestNewHandlerServesTheEmailChangeRoutesOnlyWithTheDatabaseAndAnSMTPHost(t *testing.T) {
 	withKey := testConfig(t)
 	withKey.JWTPrivateKey = generatedKeyPEM(t)
 	withDatabase := withKey
 	withDatabase.DatabaseURL = "postgres://user:secret@127.0.0.1:1/db"
+	withHost := withDatabase
+	withHost.SMTPHost, withHost.SMTPFrom = "mailpit", "no-reply@cinesync.local"
+	keyAndHost := withKey
+	keyAndHost.SMTPHost, keyAndHost.SMTPFrom = withHost.SMTPHost, withHost.SMTPFrom
 	var settings persistence.PoolSettings
 	var opened int
 
 	for name, c := range map[string]struct {
-		cfg  config.Config
-		want int
+		cfg     config.Config
+		want    int
+		logLine string
 	}{
-		"key without database":       {withKey, http.StatusNotFound},
-		"database and key, no token": {withDatabase, http.StatusUnauthorized},
+		"key without database":                  {withKey, http.StatusNotFound, ""},
+		"key and host without database":         {keyAndHost, http.StatusNotFound, ""},
+		"database and key, no SMTP host":        {withDatabase, http.StatusNotFound, "APP_AUTH_SMTP_HOST is not set: the email change is not enabled"},
+		"database, key and SMTP host, no token": {withHost, http.StatusUnauthorized, "email change routes enabled"},
 	} {
 		for _, route := range []struct{ method, path string }{
 			{http.MethodPatch, "/api/v1/auth/me/email"},
 			{http.MethodPost, "/api/v1/auth/me/email/verify"},
 		} {
-			handler, closeDatabase, err := newHandler(context.Background(), discardLogger(), c.cfg, lazyPool(&settings, &opened))
+			var logs strings.Builder
+			handler, closeDatabase, err := newHandler(context.Background(), slogTo(&logs), c.cfg, lazyPool(&settings, &opened))
 			if err != nil {
 				t.Fatalf("%s: newHandler() error = %v", name, err)
 			}
@@ -332,6 +340,9 @@ func TestNewHandlerServesTheEmailChangeRoutesOnlyWithTheDatabase(t *testing.T) {
 			closeDatabase()
 			if rec.Code != c.want {
 				t.Errorf("%s %s %s: status = %d, want %d", name, route.method, route.path, rec.Code, c.want)
+			}
+			if !strings.Contains(logs.String(), c.logLine) || strings.Count(logs.String(), "email change") > 1 {
+				t.Errorf("%s: log = %q, want exactly one email change line containing %q", name, logs.String(), c.logLine)
 			}
 		}
 	}

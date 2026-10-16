@@ -208,3 +208,58 @@ func TestLoadRejectsAnInvalidRedisTimeout(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadReadsTheSMTPSettings(t *testing.T) {
+	cfg, err := Load(lookupFrom(nil))
+	if err != nil || cfg.SMTPHost != "" || cfg.SMTPPort != 587 || cfg.SMTPTLS != "starttls" || cfg.SMTPTimeout != 5*time.Second {
+		t.Fatalf("default: %+v, err = %v; want no host, port 587, starttls and 5s", cfg, err)
+	}
+	cfg, err = Load(lookupFrom(map[string]string{
+		"APP_AUTH_SMTP_HOST":     "mailpit",
+		"APP_AUTH_SMTP_PORT":     "1025",
+		"APP_AUTH_SMTP_USER":     "relay",
+		"APP_AUTH_SMTP_PASSWORD": "secret",
+		"APP_AUTH_SMTP_FROM":     "no-reply@cinesync.local",
+		"APP_AUTH_SMTP_TLS":      "none",
+		"APP_AUTH_SMTP_TIMEOUT":  "2s",
+	}))
+	if err != nil || cfg.SMTPHost != "mailpit" || cfg.SMTPPort != 1025 || cfg.SMTPUser != "relay" || cfg.SMTPPassword != "secret" ||
+		cfg.SMTPFrom != "no-reply@cinesync.local" || cfg.SMTPTLS != "none" || cfg.SMTPTimeout != 2*time.Second {
+		t.Fatalf("cfg = %+v, err = %v", cfg, err)
+	}
+}
+
+func TestLoadRejectsAnInvalidSMTPSetting(t *testing.T) {
+	base := map[string]string{"APP_AUTH_SMTP_HOST": "smtp.example.com", "APP_AUTH_SMTP_FROM": "no-reply@example.com"}
+	if _, err := Load(lookupFrom(base)); err != nil {
+		t.Fatalf("valid settings: Load() error = %v", err)
+	}
+	for name, change := range map[string]map[string]string{
+		"from missing":         {"APP_AUTH_SMTP_FROM": ""},
+		"from not an email":    {"APP_AUTH_SMTP_FROM": "no-reply"},
+		"from with a name":     {"APP_AUTH_SMTP_FROM": "Cinesync <no-reply@example.com>"},
+		"port zero":            {"APP_AUTH_SMTP_PORT": "0"},
+		"port too large":       {"APP_AUTH_SMTP_PORT": "65536"},
+		"port not a number":    {"APP_AUTH_SMTP_PORT": "smtp"},
+		"unknown tls mode":     {"APP_AUTH_SMTP_TLS": "ssl"},
+		"timeout not a time":   {"APP_AUTH_SMTP_TIMEOUT": "5"},
+		"timeout not positive": {"APP_AUTH_SMTP_TIMEOUT": "0s"},
+	} {
+		env := map[string]string{}
+		for k, v := range base {
+			env[k] = v
+		}
+		for k, v := range change {
+			env[k] = v
+		}
+		if _, err := Load(lookupFrom(env)); err == nil {
+			t.Errorf("%s: Load() error = nil", name)
+		}
+	}
+}
+
+func TestLoadDoesNotValidateTheSMTPSettingsWithoutAHost(t *testing.T) {
+	if _, err := Load(lookupFrom(map[string]string{"APP_AUTH_SMTP_FROM": "not-an-email"})); err != nil {
+		t.Errorf("no host: Load() error = %v, want none because the email change is not enabled", err)
+	}
+}
