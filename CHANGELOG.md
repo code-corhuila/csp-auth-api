@@ -78,6 +78,18 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   judging its permissions), and `GET /users` and `PATCH` role fail closed with `500 INTERNAL_ERROR` and a `WARN` without the token or the `jti` when Redis
   cannot be consulted; `POST /logout` goes on, revokes the refresh tokens and answers `500` when it cannot write the list. Without `APP_AUTH_REDIS_URL` the check is off, which the log says at start.
 - This changelog ([#51](https://github.com/code-corhuila/csp-auth-api/pull/51)).
+- HU-AUTH-004, domain and use cases of the email change (ADR-034, issue
+  [#102](https://github.com/code-corhuila/csp-auth-api/issues/102)): `EmailChangeRequest` (six digits, 15 minutes, 5 wrong
+  codes), `VerificationCode`, the `UserEmailChanged` event and the `RequestEmailChange` (3 requests per user per rolling
+  hour, code handed to `VerificationCodeSender` inside the transaction) and `VerifyEmailChange` use cases. No route yet.
+- HU-AUTH-004, adapters of the email change (ADR-034, issue [#103](https://github.com/code-corhuila/csp-auth-api/issues/103)):
+  PostgreSQL repository of `auth.email_verification` (row lock per user, rolling-hour count, supersede, `FOR UPDATE`, savepoint
+  for the duplicate email), `UserEmailChanged` outbox row, `crypto/rand` code generator and the temporary
+  `LogVerificationCodeSender`. No route yet.
+- HU-AUTH-004, `PATCH /api/v1/auth/me/email` and `POST /api/v1/auth/me/email/verify` (ADR-034, issue [#104](https://github.com/code-corhuila/csp-auth-api/issues/104)):
+  both steps of the email change with the guards of the protected routes (`profile:update:self`, revoked token `401`, list down `500`),
+  `400`, `409`, `429` with `Retry-After` and one `400` for every rejected code; wired in the composition root with the log sender
+  as the only delivery. Contract tests against `auth-service.yaml` 1.6.0 and an end-to-end test against PostgreSQL and Redis.
 
 ### Changed
 

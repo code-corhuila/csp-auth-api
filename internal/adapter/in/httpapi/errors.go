@@ -22,6 +22,7 @@ const (
 	codeNotFound         = "NOT_FOUND"
 	codeLastAdmin        = "LAST_ADMIN"
 	codeNoRoles          = "USER_WITHOUT_ROLES"
+	codeRateLimited      = "RATE_LIMITED"
 )
 
 // fieldError names one invalid input: a body property or a header.
@@ -172,4 +173,42 @@ func translateListUsersError(w http.ResponseWriter, traceID string, err error) {
 func translateLogoutError(w http.ResponseWriter, traceID string, err error) {
 	slog.Error("logout failed", "traceId", traceID, "error", err)
 	writeInternal(w, traceID)
+}
+
+// translateRequestEmailChangeError is the only place that maps the errors of the email change request
+// to HTTP. The cause of an unexpected error goes only to the log, which never sees the code.
+func translateRequestEmailChangeError(w http.ResponseWriter, traceID string, err error) {
+	switch {
+	case errors.Is(err, model.ErrInvalidEmail):
+		writeValidation(w, traceID, []fieldError{{Field: "email", Message: err.Error()}})
+	case errors.Is(err, model.ErrEmailAlreadyRegistered):
+		writeJSON(w, http.StatusConflict, errorResponse{
+			Error: codeEmailRegistered, Message: "the email is already registered", TraceID: traceID,
+		})
+	case errors.Is(err, model.ErrTooManyEmailChangeRequests):
+		w.Header().Set("Retry-After", retryAfterEmailChange)
+		writeJSON(w, http.StatusTooManyRequests, errorResponse{
+			Error: codeRateLimited, Message: "Too many requests", TraceID: traceID,
+		})
+	default:
+		slog.Error("request email change failed", "traceId", traceID, "error", err)
+		writeInternal(w, traceID)
+	}
+}
+
+// translateVerifyEmailChangeError is the only place that maps the errors of the email verification to
+// HTTP. Every rejected code gets the same fixed answer, so the client cannot tell a wrong code from
+// an expired or missing request.
+func translateVerifyEmailChangeError(w http.ResponseWriter, traceID string, err error) {
+	switch {
+	case errors.Is(err, model.ErrVerificationRejected):
+		writeValidation(w, traceID, []fieldError{{Field: "verificationCode", Message: model.ErrVerificationRejected.Error()}})
+	case errors.Is(err, model.ErrEmailAlreadyRegistered):
+		writeJSON(w, http.StatusConflict, errorResponse{
+			Error: codeEmailRegistered, Message: "the email is already registered", TraceID: traceID,
+		})
+	default:
+		slog.Error("verify email change failed", "traceId", traceID, "error", err)
+		writeInternal(w, traceID)
+	}
 }
