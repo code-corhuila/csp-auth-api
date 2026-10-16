@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/smtp"
@@ -44,9 +45,13 @@ type SMTPVerificationCodeSender struct {
 
 var _ out.VerificationCodeSender = (*SMTPVerificationCodeSender)(nil)
 
-// NewSMTPVerificationCodeSender creates a sender for the relay in settings.
-func NewSMTPVerificationCodeSender(settings Settings, logger *slog.Logger) *SMTPVerificationCodeSender {
-	return &SMTPVerificationCodeSender{settings: settings, logger: logger, now: time.Now}
+// NewSMTPVerificationCodeSender creates a sender for the relay in settings. It refuses a TLS mode that
+// is neither TLSStartTLS nor TLSNone, the empty one included: an unknown mode must never send in clear.
+func NewSMTPVerificationCodeSender(settings Settings, logger *slog.Logger) (*SMTPVerificationCodeSender, error) {
+	if settings.TLS != TLSStartTLS && settings.TLS != TLSNone {
+		return nil, fmt.Errorf("smtp tls mode must be %q or %q", TLSStartTLS, TLSNone)
+	}
+	return &SMTPVerificationCodeSender{settings: settings, logger: logger, now: time.Now}, nil
 }
 
 // deliveryError carries only the class of a failure: the text of an SMTP error can quote the address.
@@ -92,13 +97,17 @@ func (s *SMTPVerificationCodeSender) deliver(ctx context.Context, delivery out.V
 		return "io", err
 	}
 	defer client.Close()
-	if s.settings.TLS == TLSStartTLS {
+	switch s.settings.TLS {
+	case TLSStartTLS:
 		if ok, _ := client.Extension("STARTTLS"); !ok {
 			return "tls", errors.New("the relay does not offer STARTTLS")
 		}
 		if err := client.StartTLS(&tls.Config{ServerName: s.settings.Host, RootCAs: s.settings.RootCAs, MinVersion: tls.VersionTLS12}); err != nil {
 			return "tls", err
 		}
+	case TLSNone: // clear text, only for a local catcher
+	default:
+		return "tls", errors.New("unknown tls mode")
 	}
 	if s.settings.User != "" {
 		if err := client.Auth(smtp.PlainAuth("", s.settings.User, s.settings.Password, s.settings.Host)); err != nil {

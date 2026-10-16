@@ -45,7 +45,10 @@ func newSender(settings Settings, logs io.Writer) *SMTPVerificationCodeSender {
 	if settings.Timeout == 0 {
 		settings.Timeout = 2 * time.Second
 	}
-	sender := NewSMTPVerificationCodeSender(settings, slog.New(slog.NewTextHandler(logs, nil)))
+	sender, err := NewSMTPVerificationCodeSender(settings, slog.New(slog.NewTextHandler(logs, nil)))
+	if err != nil {
+		panic(err)
+	}
 	sender.now = func() time.Time { return testNow }
 	return sender
 }
@@ -176,6 +179,30 @@ func TestSendFailsWhenStartTLSIsRequiredAndNotOffered(t *testing.T) {
 	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), testUserID) || !strings.Contains(logs.String(), "errorClass=tls") {
 		t.Errorf("log = %q, want a WARN with the user id and errorClass=tls", logs.String())
 	}
+}
+
+func TestTheConstructorRejectsAnyTLSModeThatIsNotStartTLSOrNone(t *testing.T) {
+	for _, mode := range []string{"", "STARTTLS", "tls", "false"} {
+		if _, err := NewSMTPVerificationCodeSender(Settings{Host: "127.0.0.1", Port: 25, TLS: mode}, slog.New(slog.NewTextHandler(io.Discard, nil))); err == nil {
+			t.Errorf("TLS %q: error = nil, want the mode rejected", mode)
+		}
+	}
+}
+
+func TestSendNeverFallsBackToClearForAnUnknownTLSMode(t *testing.T) {
+	server := newFakeServer(t, true)
+	server.start()
+	var logs bytes.Buffer
+	sender := newSender(Settings{Host: "127.0.0.1", Port: server.port(), TLS: TLSNone}, &logs)
+	sender.settings.TLS = ""
+
+	if err := sender.Send(context.Background(), delivery(t)); err == nil {
+		t.Fatal("Send() error = nil, want an error for an unknown TLS mode")
+	}
+	if len(server.mails()) != 0 {
+		t.Error("a message was sent for an unknown TLS mode")
+	}
+	assertNothingSecretIn(t, logs.String())
 }
 
 func TestSendFailures(t *testing.T) {
