@@ -23,8 +23,9 @@ type OutboxWriter struct {
 }
 
 var (
-	_ out.OutboxWriter   = (*OutboxWriter)(nil)
-	_ out.UserRoleOutbox = (*OutboxWriter)(nil)
+	_ out.OutboxWriter           = (*OutboxWriter)(nil)
+	_ out.UserRoleOutbox         = (*OutboxWriter)(nil)
+	_ out.UserEmailChangedOutbox = (*OutboxWriter)(nil)
 )
 
 // NewOutboxWriter creates a writer over pool.
@@ -106,5 +107,33 @@ func userRoleChangedEnvelope(event model.UserRoleChanged) ([]byte, error) {
 		Source:      eventSource,
 		AggregateID: event.AggregateID(),
 		Payload:     userRoleChangedPayload{UserID: event.UserID, Role: event.Role, Enabled: event.Enabled, ChangedBy: event.ChangedBy},
+	})
+}
+
+// AppendEmailChanged stores the UserEmailChanged envelope (ADR-034), in the transaction carried by ctx.
+func (w *OutboxWriter) AppendEmailChanged(ctx context.Context, event model.UserEmailChanged) error {
+	payload, err := userEmailChangedEnvelope(event)
+	if err != nil {
+		return err
+	}
+	return w.insert(ctx, event.EventID, event.AggregateID(), event.EventType(), payload)
+}
+
+type userEmailChangedPayload struct {
+	UserID string `json:"userId"`
+	Email  string `json:"email"`
+}
+
+// userEmailChangedEnvelope builds the published message (events.md): the user and the new email
+// only, never the verification code and not the old address.
+func userEmailChangedEnvelope(event model.UserEmailChanged) ([]byte, error) {
+	return json.Marshal(envelope[userEmailChangedPayload]{
+		EventID:     event.EventID,
+		EventType:   event.EventType(),
+		OccurredAt:  event.OccurredAt.UTC(),
+		Version:     envelopeVersion,
+		Source:      eventSource,
+		AggregateID: event.AggregateID(),
+		Payload:     userEmailChangedPayload{UserID: event.UserID, Email: event.Email},
 	})
 }

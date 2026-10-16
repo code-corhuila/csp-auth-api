@@ -82,6 +82,10 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   [#102](https://github.com/code-corhuila/csp-auth-api/issues/102)): `EmailChangeRequest` (six digits, 15 minutes, 5 wrong
   codes), `VerificationCode`, the `UserEmailChanged` event and the `RequestEmailChange` (3 requests per user per rolling
   hour, code handed to `VerificationCodeSender` inside the transaction) and `VerifyEmailChange` use cases. No route yet.
+- HU-AUTH-004, adapters of the email change (ADR-034, issue [#103](https://github.com/code-corhuila/csp-auth-api/issues/103)):
+  PostgreSQL repository of `auth.email_verification` (row lock per user, rolling-hour count, supersede, `FOR UPDATE`, savepoint
+  for the duplicate email), `UserEmailChanged` outbox row, `crypto/rand` code generator and the temporary
+  `LogVerificationCodeSender`. No route yet.
 
 ### Changed
 
