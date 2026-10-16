@@ -91,7 +91,13 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 	options = append(options, httpapi.WithListUsers(authorizer, usecase.NewListUsers(persistence.NewUserReader(pool))))
 	logger.Info("user list route enabled")
 	if cfg.SMTPHost != "" {
-		options = append(options, httpapi.WithEmailChange(authorizer, newRequestEmailChange(cfg, logger, pool), newVerifyEmailChange(pool)))
+		requestEmailChange, err := newRequestEmailChange(cfg, logger, pool)
+		if err != nil {
+			closeRedis()
+			pool.Close()
+			return nil, noop, err
+		}
+		options = append(options, httpapi.WithEmailChange(authorizer, requestEmailChange, newVerifyEmailChange(pool)))
 		logger.Info("email change routes enabled")
 	} else {
 		logger.Info("APP_AUTH_SMTP_HOST is not set: the email change is not enabled")
@@ -209,19 +215,23 @@ func newPurgeOldRecords(pool *pgxpool.Pool) *usecase.PurgeOldRecords {
 }
 
 // newRequestEmailChange delivers the verification code through the SMTP relay of the configuration (ADR-034).
-func newRequestEmailChange(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool) *usecase.RequestEmailChange {
+func newRequestEmailChange(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool) (*usecase.RequestEmailChange, error) {
+	sender, err := mail.NewSMTPVerificationCodeSender(mail.Settings{
+		Host: cfg.SMTPHost, Port: cfg.SMTPPort, User: cfg.SMTPUser, Password: cfg.SMTPPassword,
+		From: cfg.SMTPFrom, TLS: cfg.SMTPTLS, Timeout: cfg.SMTPTimeout,
+	}, logger)
+	if err != nil {
+		return nil, err
+	}
 	return usecase.NewRequestEmailChange(usecase.RequestEmailChangePorts{
-		Users:    persistence.NewUserRepository(pool),
-		Requests: persistence.NewEmailVerificationRepository(pool),
-		Codes:    system.NewVerificationCodeGenerator(),
-		Sender: mail.NewSMTPVerificationCodeSender(mail.Settings{
-			Host: cfg.SMTPHost, Port: cfg.SMTPPort, User: cfg.SMTPUser, Password: cfg.SMTPPassword,
-			From: cfg.SMTPFrom, TLS: cfg.SMTPTLS, Timeout: cfg.SMTPTimeout,
-		}, logger),
+		Users:        persistence.NewUserRepository(pool),
+		Requests:     persistence.NewEmailVerificationRepository(pool),
+		Codes:        system.NewVerificationCodeGenerator(),
+		Sender:       sender,
 		IDs:          system.UUIDGenerator{},
 		Clock:        system.Clock{},
 		Transactions: persistence.NewTransactionManager(pool),
-	})
+	}), nil
 }
 
 func newVerifyEmailChange(pool *pgxpool.Pool) *usecase.VerifyEmailChange {
