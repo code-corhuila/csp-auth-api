@@ -86,6 +86,10 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   PostgreSQL repository of `auth.email_verification` (row lock per user, rolling-hour count, supersede, `FOR UPDATE`, savepoint
   for the duplicate email), `UserEmailChanged` outbox row, `crypto/rand` code generator and the temporary
   `LogVerificationCodeSender`. No route yet.
+- HU-AUTH-004, `PATCH /api/v1/auth/me/email` and `POST /api/v1/auth/me/email/verify` (ADR-034, issue [#104](https://github.com/code-corhuila/csp-auth-api/issues/104)):
+  both steps of the email change with the guards of the protected routes (`profile:update:self`, revoked token `401`, list down `500`),
+  `400`, `409`, `429` with `Retry-After` and one `400` for every rejected code; wired in the composition root with the log sender
+  as the only delivery. Contract tests against `auth-service.yaml` 1.6.0 and an end-to-end test against PostgreSQL and Redis.
 
 ### Changed
 
