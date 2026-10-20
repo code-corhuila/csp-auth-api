@@ -3,8 +3,10 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"math"
+	"net/mail"
 	"strconv"
 	"strings"
 	"time"
@@ -31,7 +33,13 @@ const (
 	maxRefreshReuseGrace     = time.Minute
 )
 
-// Config holds the settings of the HTTP server, the database pool, Redis, the password hashing and the tokens.
+// The two ways to secure the SMTP connection (ADR-034): STARTTLS is required unless the relay is a local catcher.
+const (
+	SMTPTLSStartTLS = "starttls"
+	SMTPTLSNone     = "none"
+)
+
+// Config holds the settings of the HTTP server, the database pool, Redis, SMTP, the password hashing and the tokens.
 // Every limit is explicit (Norma 5.3.10).
 type Config struct {
 	Port                   int
@@ -54,6 +62,13 @@ type Config struct {
 	RefreshReuseGrace      time.Duration
 	RedisURL               string
 	RedisTimeout           time.Duration
+	SMTPHost               string
+	SMTPPort               int
+	SMTPUser               string
+	SMTPPassword           string
+	SMTPFrom               string
+	SMTPTLS                string
+	SMTPTimeout            time.Duration
 }
 
 // Lookup returns the value of an environment variable, as os.LookupEnv does.
@@ -85,6 +100,9 @@ func Load(lookup Lookup) (Config, error) {
 		return Config{}, err
 	}
 	if err := loadRedis(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
+	if err := loadSMTP(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
 
@@ -134,6 +152,38 @@ func loadRedis(lookup Lookup, cfg *Config) error {
 	cfg.RedisURL, _ = lookup("APP_AUTH_REDIS_URL")
 	var err error
 	cfg.RedisTimeout, err = durationValue(lookup, "APP_AUTH_REDIS_TIMEOUT", 2*time.Second)
+	return err
+}
+
+// loadSMTP reads the SMTP relay that delivers the email verification code (ADR-034). An empty host means the
+// email change is not enabled and nothing else is validated; the timeout bounds the whole exchange (Norma 5.3.10).
+func loadSMTP(lookup Lookup, cfg *Config) error {
+	cfg.SMTPHost, _ = lookup("APP_AUTH_SMTP_HOST")
+	cfg.SMTPUser, _ = lookup("APP_AUTH_SMTP_USER")
+	cfg.SMTPPassword, _ = lookup("APP_AUTH_SMTP_PASSWORD")
+	cfg.SMTPFrom, _ = lookup("APP_AUTH_SMTP_FROM")
+	cfg.SMTPTLS = SMTPTLSStartTLS
+	if mode, _ := lookup("APP_AUTH_SMTP_TLS"); mode != "" {
+		cfg.SMTPTLS = mode
+	}
+	cfg.SMTPPort, cfg.SMTPTimeout = 587, 5*time.Second
+	if cfg.SMTPHost == "" {
+		return nil
+	}
+	var err error
+	if cfg.SMTPPort, err = intValue(lookup, "APP_AUTH_SMTP_PORT", 587); err != nil {
+		return err
+	}
+	if cfg.SMTPPort < 1 || cfg.SMTPPort > 65535 {
+		return fmt.Errorf("APP_AUTH_SMTP_PORT %d is out of range 1-65535", cfg.SMTPPort)
+	}
+	if address, err := mail.ParseAddress(cfg.SMTPFrom); err != nil || address.Address != cfg.SMTPFrom {
+		return errors.New("APP_AUTH_SMTP_FROM must be an email address when APP_AUTH_SMTP_HOST is set")
+	}
+	if cfg.SMTPTLS != SMTPTLSStartTLS && cfg.SMTPTLS != SMTPTLSNone {
+		return fmt.Errorf("APP_AUTH_SMTP_TLS must be %q or %q", SMTPTLSStartTLS, SMTPTLSNone)
+	}
+	cfg.SMTPTimeout, err = durationValue(lookup, "APP_AUTH_SMTP_TIMEOUT", 5*time.Second)
 	return err
 }
 

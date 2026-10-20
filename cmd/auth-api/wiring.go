@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/in/httpapi"
-	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/logging"
+	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/mail"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/persistence"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/redis"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/security"
@@ -33,8 +33,9 @@ type poolOpener func(ctx context.Context, settings persistence.PoolSettings) (*p
 //   - A signing key: health and /jwks.
 //   - A signing key and a database URL: also POST /register, POST /login and POST /refresh, served by the real use cases,
 //     GET /users and PATCH /users/{userId}/role, open to the access tokens that hold user:role:update, and
-//     PATCH /me/email and POST /me/email/verify, open to the access tokens that hold profile:update:self (the
-//     verification code goes to the service log, ADR-034), and
+//     PATCH /me/email and POST /me/email/verify when APP_AUTH_SMTP_HOST is set (the verification code goes
+//     to that SMTP relay, ADR-034; without it the two routes are not enabled), open to the access tokens that
+//     hold profile:update:self, and
 //     POST /internal/maintenance/purge, open only to the service tokens whose subject is in SERVICE_SUBJECTS.
 //   - Also an APP_AUTH_REDIS_URL: POST /logout, which lists the revoked access tokens in Redis, and the check of
 //     that list on POST /logout, GET /users, PATCH /users/{userId}/role and the email change. Without it the route is not enabled and
@@ -89,8 +90,12 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 	logger.Info("user role route enabled")
 	options = append(options, httpapi.WithListUsers(authorizer, usecase.NewListUsers(persistence.NewUserReader(pool))))
 	logger.Info("user list route enabled")
-	options = append(options, httpapi.WithEmailChange(authorizer, newRequestEmailChange(logger, pool), newVerifyEmailChange(pool)))
-	logger.Info("email change routes enabled")
+	if cfg.SMTPHost != "" {
+		options = append(options, httpapi.WithEmailChange(authorizer, newRequestEmailChange(cfg, logger, pool), newVerifyEmailChange(pool)))
+		logger.Info("email change routes enabled")
+	} else {
+		logger.Info("APP_AUTH_SMTP_HOST is not set: the email change is not enabled")
+	}
 	options = append(options, httpapi.WithPurgeOldRecords(newAuthorizeService(cfg, issuer), newPurgeOldRecords(pool)))
 	logger.Info("purge route enabled")
 	if cfg.RedisURL != "" {
@@ -203,14 +208,16 @@ func newPurgeOldRecords(pool *pgxpool.Pool) *usecase.PurgeOldRecords {
 	)
 }
 
-// newRequestEmailChange delivers the verification code with the log sender, the only adapter of
-// the port for now (ADR-034).
-func newRequestEmailChange(logger *slog.Logger, pool *pgxpool.Pool) *usecase.RequestEmailChange {
+// newRequestEmailChange delivers the verification code through the SMTP relay of the configuration (ADR-034).
+func newRequestEmailChange(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool) *usecase.RequestEmailChange {
 	return usecase.NewRequestEmailChange(usecase.RequestEmailChangePorts{
-		Users:        persistence.NewUserRepository(pool),
-		Requests:     persistence.NewEmailVerificationRepository(pool),
-		Codes:        system.NewVerificationCodeGenerator(),
-		Sender:       logging.NewVerificationCodeSender(logger),
+		Users:    persistence.NewUserRepository(pool),
+		Requests: persistence.NewEmailVerificationRepository(pool),
+		Codes:    system.NewVerificationCodeGenerator(),
+		Sender: mail.NewSMTPVerificationCodeSender(mail.Settings{
+			Host: cfg.SMTPHost, Port: cfg.SMTPPort, User: cfg.SMTPUser, Password: cfg.SMTPPassword,
+			From: cfg.SMTPFrom, TLS: cfg.SMTPTLS, Timeout: cfg.SMTPTimeout,
+		}, logger),
 		IDs:          system.UUIDGenerator{},
 		Clock:        system.Clock{},
 		Transactions: persistence.NewTransactionManager(pool),
