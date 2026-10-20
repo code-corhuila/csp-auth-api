@@ -44,6 +44,10 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   expired or revoked more than 30 days ago and idempotency keys older than 7 days are deleted in that order, at most
   `batchSize` rows in total per call. It needs the `DELETE` grants of `csp-auth-db` V019
   ([#56](https://github.com/code-corhuila/csp-auth-api/pull/56)).
+- HU-AUTH-004, the purge also deletes `auth.email_verification` rows whose `expires_at` is more than 7 days in the past,
+  verified or not, after the idempotency keys and inside the same `batchSize`; the code is stored in clear, so it is
+  not kept longer (ADR-034, ADR-030). It needs the `DELETE` grant of `csp-auth-db` V026; the request and the response do
+  not change.
 - HU-AUTH-002, `POST /api/v1/auth/internal/maintenance/purge` (ADR-030): the endpoint, protected by the service credential
   ([#54](https://github.com/code-corhuila/csp-auth-api/pull/54)), wired in the composition root.
 - HU-AUTH-003, domain and persistence of the role change (ADR-031, issue
