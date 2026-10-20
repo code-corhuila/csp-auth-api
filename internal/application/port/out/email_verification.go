@@ -13,8 +13,9 @@ type EmailVerificationRepository interface {
 	// LockRequestsOf serializes the requests of a user until the transaction ends, so two
 	// concurrent requests are counted and superseded one after the other.
 	LockRequestsOf(ctx context.Context, userID string) error
-	// CountRequestsSince counts the requests of the user made at or after since, superseded ones included.
-	CountRequestsSince(ctx context.Context, userID string, since time.Time) (int, error)
+	// RequestTimesSince returns the instants of the requests of the user made at or after since,
+	// superseded ones included, oldest first.
+	RequestTimesSince(ctx context.Context, userID string, since time.Time) ([]time.Time, error)
 	// SupersedePending soft-deletes the pending request of the user, if any, at at.
 	SupersedePending(ctx context.Context, userID string, at time.Time) error
 	// Add stores a new pending request.

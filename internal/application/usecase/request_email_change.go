@@ -55,12 +55,12 @@ func (c *RequestEmailChange) request(ctx context.Context, userID string, email m
 	if taken {
 		return model.ErrEmailAlreadyRegistered
 	}
-	made, err := c.ports.Requests.CountRequestsSince(ctx, userID, now.Add(-model.EmailChangeRequestWindow))
+	requestedAt, err := c.ports.Requests.RequestTimesSince(ctx, userID, now.Add(-model.EmailChangeRequestWindow))
 	if err != nil {
 		return err
 	}
-	if made >= model.MaxEmailChangeRequests {
-		return model.ErrTooManyEmailChangeRequests
+	if err := model.CheckEmailChangeRate(requestedAt, now); err != nil {
+		return err
 	}
 	if err := c.ports.Requests.SupersedePending(ctx, userID, now); err != nil {
 		return err

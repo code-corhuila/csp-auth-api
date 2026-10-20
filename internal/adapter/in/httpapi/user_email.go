@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/in"
 	"github.com/code-corhuila/csp-auth-api/internal/domain/model"
@@ -93,6 +95,15 @@ func problemsOf(checks []check) []fieldError {
 	return problems
 }
 
-// retryAfterEmailChange is the Retry-After of a rejected request: the whole rolling window, an upper
-// bound of the wait because the oldest request of the window is not known here.
-var retryAfterEmailChange = strconv.Itoa(int(model.EmailChangeRequestWindow.Seconds()))
+// retryAfterSeconds is the Retry-After of a request rejected by the limit: the time until the oldest
+// blocking request leaves the window, rounded up to whole seconds and never under one. An error that
+// carries no wait gets the whole window, the upper bound.
+func retryAfterSeconds(err error) string {
+	wait := model.EmailChangeRequestWindow
+	var limited *model.EmailChangeRateLimitedError
+	if errors.As(err, &limited) {
+		wait = limited.RetryAfter
+	}
+	seconds := int((wait + time.Second - 1) / time.Second)
+	return strconv.Itoa(max(seconds, 1))
+}
