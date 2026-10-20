@@ -210,6 +210,7 @@ func newPurgeOldRecords(pool *pgxpool.Pool) *usecase.PurgeOldRecords {
 		persistence.NewOutboxPurger(pool),
 		persistence.NewRefreshTokenPurger(pool),
 		persistence.NewIdempotencyKeyPurger(pool),
+		persistence.NewEmailVerificationPurger(pool),
 		system.Clock{},
 	)
 }
