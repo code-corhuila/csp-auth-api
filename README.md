@@ -289,6 +289,12 @@ never versioned (Annex G):
 | `APP_AUTH_SMTP_TLS` | `starttls` | `starttls` requires the relay to offer STARTTLS and fails otherwise; `none` is only for a local catcher. |
 | `APP_AUTH_SMTP_TIMEOUT` | `5s` | Go duration that bounds the whole exchange, connection included. |
 
+Where the variables go: `deploy/compose.yml` passes the seven of them through from the platform environment (the `.env` of `csp-infra`;
+in development its git-ignored `env/dev.env`, which may point at the local Mailpit below with `APP_AUTH_SMTP_TLS=none`), and `.env.example`
+lists them with no value for the host, user, password and sender. In qa and main the SMTP relay and its credentials are provided by Oscar and
+set per environment as secrets (`APP_AUTH_SMTP_HOST`, `_USER`, `_PASSWORD`, `_FROM`); they are never versioned. Without
+`APP_AUTH_SMTP_HOST` the two email change routes answer `404`.
+
 A `404` on the two routes therefore means the service runs without `APP_AUTH_SMTP_HOST`, not that the route does not exist. A relay that
 fails is a `500` with a `WARN` that carries the user id and the class of the error (`connect`, `tls`, `auth`, `rejected`, `timeout`,
 `canceled`...); the code, the address and the credentials are never logged. The SMTP call runs inside the database transaction, so a slow

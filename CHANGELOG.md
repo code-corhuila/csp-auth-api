@@ -119,6 +119,7 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 - HU-AUTH-002, the purge deletes by primary key (ADR-030): `DELETE ... WHERE id = ANY(ARRAY(SELECT ... LIMIT n))`
   replaces `id IN (SELECT ...)`, whose generic plan did a Hash Semi Join with a Seq Scan of the whole table. The
   behaviour is the same (issue [#32](https://github.com/code-corhuila/csp-auth-api/issues/32)).
+- HU-AUTH-004, the README says where the SMTP variables go per environment: the relay and its credentials are provided as secrets in qa and main, never versioned, and without `APP_AUTH_SMTP_HOST` the two email change routes answer `404`.
 
 ### Fixed
 
