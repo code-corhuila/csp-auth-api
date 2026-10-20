@@ -220,8 +220,9 @@ deployment secret manager provides them, and `csp-infra-postgres/scripts/dev-tok
 development. The first internal operation is the purge of old rows.
 
 The purge of old rows (ADR-030) deletes, in this order, outbox events older than 30 days, refresh tokens that expired
-or were revoked more than 30 days ago and idempotency keys older than 7 days, at most `batchSize` rows (1 to 500) in
-total per call; it needs the `DELETE` grants of migration V019 of `csp-auth-db` for `auth_writer`.
+or were revoked more than 30 days ago, idempotency keys older than 7 days and email change requests (`auth.email_verification`)
+that expired more than 7 days ago, verified or not, at most `batchSize` rows (1 to 500) in total per call; it needs the
+`DELETE` grants of migrations V019 and V026 of `csp-auth-db` for `auth_writer`.
 
 `POST /api/v1/auth/internal/maintenance/purge` (HU-AUTH-002) runs it. It is enabled by the same two settings as
 `/register`, is not routed by the gateway and is called by `csp-worker` with its service credential (`sub` in
@@ -232,7 +233,7 @@ curl -i -X POST http://localhost:8081/api/v1/auth/internal/maintenance/purge   -
 ```
 
 The body is optional and `batchSize` is 1 to 500 (default 100, otherwise `400`). It answers `200` with
-`{"processedCount":N,"hasMore":true|false}`: the rows deleted in this call over the three tables and whether any
+`{"processedCount":N,"hasMore":true|false}`: the rows deleted in this call over the four tables and whether any
 eligible row is left, so the caller repeats it until `hasMore` is `false`. A repeated call is safe. After the purge of an
 `Idempotency-Key`, the same registration answers `409 EMAIL_ALREADY_REGISTERED` instead of the `200` replay. A missing or
 invalid token is `401` and a valid token of another subject is `403`.
@@ -287,6 +288,12 @@ never versioned (Annex G):
 | `APP_AUTH_SMTP_FROM` | none | Sender address, required when the host is set. |
 | `APP_AUTH_SMTP_TLS` | `starttls` | `starttls` requires the relay to offer STARTTLS and fails otherwise; `none` is only for a local catcher. |
 | `APP_AUTH_SMTP_TIMEOUT` | `5s` | Go duration that bounds the whole exchange, connection included. |
+
+Where the variables go: `deploy/compose.yml` passes the seven of them through from the platform environment (the `.env` of `csp-infra`;
+in development its git-ignored `env/dev.env`, which may point at the local Mailpit below with `APP_AUTH_SMTP_TLS=none`), and `.env.example`
+lists them with no value for the host, user, password and sender. In qa and main the SMTP relay and its credentials are provided by Oscar and
+set per environment as secrets (`APP_AUTH_SMTP_HOST`, `_USER`, `_PASSWORD`, `_FROM`); they are never versioned. Without
+`APP_AUTH_SMTP_HOST` the two email change routes answer `404`.
 
 A `404` on the two routes therefore means the service runs without `APP_AUTH_SMTP_HOST`, not that the route does not exist. A relay that
 fails is a `500` with a `WARN` that carries the user id and the class of the error (`connect`, `tls`, `auth`, `rejected`, `timeout`,
