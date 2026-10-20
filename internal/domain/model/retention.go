@@ -26,16 +26,17 @@ func NewPurgeBatchSize(value int) (PurgeBatchSize, error) {
 }
 
 // RetentionPolicy is how long each kind of auth record is kept before the purge may delete it
-// (ADR-030): outbox events 30 days, refresh tokens 30 days after they expire or are revoked, and
-// idempotency keys 7 days.
+// (ADR-030): outbox events 30 days, refresh tokens 30 days after they expire or are revoked,
+// idempotency keys 7 days and email verification requests 7 days after they expire.
 type RetentionPolicy struct {
-	OutboxEvents    time.Duration
-	RefreshTokens   time.Duration
-	IdempotencyKeys time.Duration
+	OutboxEvents       time.Duration
+	RefreshTokens      time.Duration
+	IdempotencyKeys    time.Duration
+	EmailVerifications time.Duration
 }
 
 // DefaultRetentionPolicy returns the retention that ADR-030 fixes.
 func DefaultRetentionPolicy() RetentionPolicy {
 	const day = 24 * time.Hour
-	return RetentionPolicy{OutboxEvents: 30 * day, RefreshTokens: 30 * day, IdempotencyKeys: 7 * day}
+	return RetentionPolicy{OutboxEvents: 30 * day, RefreshTokens: 30 * day, IdempotencyKeys: 7 * day, EmailVerifications: 7 * day}
 }

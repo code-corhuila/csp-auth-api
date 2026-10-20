@@ -12,24 +12,26 @@ import (
 
 // PurgeOldRecords implements in.PurgeOldRecords (ADR-030).
 type PurgeOldRecords struct {
-	outbox          out.PurgeableRecords
-	refreshTokens   out.PurgeableRecords
-	idempotencyKeys out.PurgeableRecords
-	retention       model.RetentionPolicy
-	clock           out.Clock
+	outbox             out.PurgeableRecords
+	refreshTokens      out.PurgeableRecords
+	idempotencyKeys    out.PurgeableRecords
+	emailVerifications out.PurgeableRecords
+	retention          model.RetentionPolicy
+	clock              out.Clock
 }
 
 var _ in.PurgeOldRecords = (*PurgeOldRecords)(nil)
 
-// NewPurgeOldRecords wires the use case with the three tables it purges and the retention of
+// NewPurgeOldRecords wires the use case with the four tables it purges and the retention of
 // ADR-030.
-func NewPurgeOldRecords(outbox, refreshTokens, idempotencyKeys out.PurgeableRecords, clock out.Clock) *PurgeOldRecords {
+func NewPurgeOldRecords(outbox, refreshTokens, idempotencyKeys, emailVerifications out.PurgeableRecords, clock out.Clock) *PurgeOldRecords {
 	return &PurgeOldRecords{
-		outbox:          outbox,
-		refreshTokens:   refreshTokens,
-		idempotencyKeys: idempotencyKeys,
-		retention:       model.DefaultRetentionPolicy(),
-		clock:           clock,
+		outbox:             outbox,
+		refreshTokens:      refreshTokens,
+		idempotencyKeys:    idempotencyKeys,
+		emailVerifications: emailVerifications,
+		retention:          model.DefaultRetentionPolicy(),
+		clock:              clock,
 	}
 }
 
@@ -40,7 +42,8 @@ type purgeStep struct {
 	cutoff  time.Time
 }
 
-// Purge deletes old rows in the order outbox events, refresh tokens, idempotency keys, at most
+// Purge deletes old rows in the order outbox events, refresh tokens, idempotency keys, email
+// verification requests, at most
 // the batch size in total: each table gets what the previous ones left of the batch. HasMore is
 // true while any table still holds a row older than its retention. Repeating the call only finds
 // what is left, so it is idempotent.
@@ -54,6 +57,7 @@ func (p *PurgeOldRecords) Purge(ctx context.Context, command in.PurgeOldRecordsC
 		{"outbox events", p.outbox, now.Add(-p.retention.OutboxEvents)},
 		{"refresh tokens", p.refreshTokens, now.Add(-p.retention.RefreshTokens)},
 		{"idempotency keys", p.idempotencyKeys, now.Add(-p.retention.IdempotencyKeys)},
+		{"email verifications", p.emailVerifications, now.Add(-p.retention.EmailVerifications)},
 	}
 
 	remaining, processed := int(batch), 0
