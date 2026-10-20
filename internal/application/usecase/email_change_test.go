@@ -305,13 +305,34 @@ func TestVerifyChangeConfirmsTheEmailAndPublishesTheEventInOneTransaction(t *tes
 	if err != nil {
 		t.Fatalf("VerifyChange() error = %v", err)
 	}
-	wantSteps := []string{"begin", "find-pending", "confirm", "outbox", "commit"}
+	wantSteps := []string{"begin", "lock-requests", "find-pending", "confirm", "outbox", "commit"}
 	if !reflect.DeepEqual(f.journal.steps, wantSteps) {
 		t.Errorf("steps = %v, want %v", f.journal.steps, wantSteps)
 	}
 	want := model.UserEmailChanged{EventID: "event-1", OccurredAt: registeredAt, UserID: "user-1", Email: "new.address@example.com"}
 	if !reflect.DeepEqual(f.outbox.events, []model.UserEmailChanged{want}) {
 		t.Errorf("events = %+v, want [%+v]", f.outbox.events, want)
+	}
+}
+
+func TestVerifyChangeTakesTheAccountLockBeforeReadingThePendingRequest(t *testing.T) {
+	f := newVerifyFixture(pendingChange(t, registeredAt.Add(-time.Minute)))
+
+	_ = f.useCase.VerifyChange(context.Background(), verifyCommand("012345"))
+
+	if got := f.journal.steps[1:3]; !reflect.DeepEqual(got, []string{"lock-requests", "find-pending"}) {
+		t.Errorf("steps after begin = %v, want the account lock before the read of the request, as RequestEmailChange does", got)
+	}
+}
+
+func TestVerifyChangeRefusesUniformlyWhenTheAccountIsGone(t *testing.T) {
+	f := newVerifyFixture(pendingChange(t, registeredAt.Add(-time.Minute)))
+	f.requests.lockErr = model.ErrUserNotFound
+
+	err := f.useCase.VerifyChange(context.Background(), verifyCommand("012345"))
+
+	if !errors.Is(err, model.ErrVerificationRejected) || len(f.requests.confirmed) != 0 {
+		t.Errorf("error = %v, confirmed = %v, want ErrVerificationRejected and nothing confirmed", err, f.requests.confirmed)
 	}
 }
 

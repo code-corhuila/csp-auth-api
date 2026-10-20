@@ -122,6 +122,7 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 - The container image builds again: `deploy/Dockerfile` copies `go.sum` together with `go.mod` before `go mod download`;
   without it `go build` failed with `missing go.sum entry` (HU-AUTH-003, issue
   [#81](https://github.com/code-corhuila/csp-auth-api/issues/81)).
+- The email change no longer deadlocks when a request and a correct code race: the verification takes the account lock before the pending request, the order the request already used; an SMTP TLS mode other than `starttls` or `none` is rejected at startup instead of sending in clear (HU-AUTH-004, issue [#111](https://github.com/code-corhuila/csp-auth-api/issues/111)).
 
 ## Before the changelog
 

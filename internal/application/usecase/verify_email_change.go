@@ -30,7 +30,7 @@ func NewVerifyEmailChange(ports VerifyEmailChangePorts) *VerifyEmailChange {
 	return &VerifyEmailChange{ports: ports}
 }
 
-// VerifyChange locks the pending request and checks the code. The right code changes the email and
+// VerifyChange locks the account and its pending request and checks the code. The right code changes the email and
 // appends UserEmailChanged in the same transaction. A refusal that must be remembered, a wrong code
 // counted or a request invalidated because the address was taken, is returned after the
 // transaction commits, so what it wrote is kept.
@@ -55,6 +55,13 @@ func (c *VerifyEmailChange) VerifyChange(ctx context.Context, command in.VerifyE
 // that rolls the transaction back.
 func (c *VerifyEmailChange) verify(ctx context.Context, userID string, code model.VerificationCode) (refusal, failure error) {
 	now := c.ports.Clock.Now()
+	// The account first and the request second, the order of RequestEmailChange: the opposite would let
+	// a request and a correct code wait for each other's row.
+	if err := c.ports.Requests.LockRequestsOf(ctx, userID); errors.Is(err, model.ErrUserNotFound) {
+		return model.ErrVerificationRejected, nil
+	} else if err != nil {
+		return nil, err
+	}
 	request, err := c.ports.Requests.FindPendingForUpdate(ctx, userID)
 	if errors.Is(err, model.ErrEmailChangeNotFound) {
 		return model.ErrVerificationRejected, nil
