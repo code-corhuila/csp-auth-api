@@ -125,6 +125,9 @@ func TestPurgeEndToEndAgainstTheDatabase(t *testing.T) {
 			VALUES ($1, 'User', $2, 'UserRegistered', '{}', NOW() - INTERVAL '31 days')`, ids.NewID(), ids.NewID())
 	}
 	exec(`UPDATE auth.refresh_token SET expires_at = NOW() - INTERVAL '31 days' WHERE user_id = $1`, userID)
+	verificationID := ids.NewID()
+	exec(`INSERT INTO auth.email_verification (id, user_id, verification_code, expires_at, new_email)
+		VALUES ($1, $2, '123456', NOW() - INTERVAL '8 days', 'purge-target@example.com')`, verificationID, userID)
 	var requestHash string
 	if err := conn.QueryRow(ctx, `SELECT request_hash FROM auth.idempotency_key WHERE key = $1`, idempotencyKey).Scan(&requestHash); err != nil {
 		t.Fatalf("read the idempotency key: %v", err)
@@ -144,8 +147,12 @@ func TestPurgeEndToEndAgainstTheDatabase(t *testing.T) {
 		if status != http.StatusOK || second["hasMore"] != false {
 			t.Fatalf("second call: status = %d, body = %v, want 200 and hasMore false", status, second)
 		}
-		if got := second["processedCount"].(float64); got < 2 {
-			t.Errorf("second call processedCount = %v, want the refresh token and the key at least", got)
+		if got := second["processedCount"].(float64); got < 3 {
+			t.Errorf("second call processedCount = %v, want the refresh token, the key and the email verification at least", got)
+		}
+		var left bool
+		if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM auth.email_verification WHERE id = $1)`, verificationID).Scan(&left); err != nil || left {
+			t.Errorf("the email verification expired 8 days ago is still there (%v, error %v)", left, err)
 		}
 		if status, again := purgeCall(t, server.URL, workerToken, ``); status != http.StatusOK || again["processedCount"] != float64(0) || again["hasMore"] != false {
 			t.Errorf("third call without a body: status = %d, body = %v, want nothing to do", status, again)
