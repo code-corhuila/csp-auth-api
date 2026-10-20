@@ -186,7 +186,7 @@ func translateRequestEmailChangeError(w http.ResponseWriter, traceID string, err
 			Error: codeEmailRegistered, Message: "the email is already registered", TraceID: traceID,
 		})
 	case errors.Is(err, model.ErrTooManyEmailChangeRequests):
-		w.Header().Set("Retry-After", retryAfterEmailChange)
+		w.Header().Set("Retry-After", retryAfterSeconds(err))
 		writeJSON(w, http.StatusTooManyRequests, errorResponse{
 			Error: codeRateLimited, Message: "Too many requests", TraceID: traceID,
 		})

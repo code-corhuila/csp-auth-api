@@ -176,14 +176,14 @@ func TestANewRequestSupersedesThePreviousOneAndTheFourthInAnHourIsRejected(t *te
 	}
 }
 
-func TestCountRequestsSinceUsesARollingWindowAndCountsTheSupersededOnes(t *testing.T) {
+func TestRequestTimesSinceUsesARollingWindowAndListsTheSupersededOnesOldestFirst(t *testing.T) {
 	f, ctx := newFixture(t), context.Background()
 	user := f.registeredUser(t, ctx)
 	repository := f.emailRequests()
 	email, _ := model.NewEmail(uniqueEmail(t))
 	code, _ := model.NewVerificationCode("222222")
 	now := time.Now().UTC()
-	for _, age := range []time.Duration{90 * time.Minute, 59 * time.Minute, 10 * time.Minute} {
+	for _, age := range []time.Duration{10 * time.Minute, 90 * time.Minute, 59 * time.Minute} {
 		request := model.NewEmailChangeRequest(newUUID(t), user.ID(), email, code, now.Add(-age))
 		err := f.transactions.WithinTransaction(ctx, func(ctx context.Context) error {
 			if err := repository.SupersedePending(ctx, user.ID(), now); err != nil {
@@ -196,10 +196,42 @@ func TestCountRequestsSinceUsesARollingWindowAndCountsTheSupersededOnes(t *testi
 		}
 	}
 
-	count, err := repository.CountRequestsSince(ctx, user.ID(), now.Add(-time.Hour))
+	times, err := repository.RequestTimesSince(ctx, user.ID(), now.Add(-time.Hour))
 
-	if err != nil || count != 2 {
-		t.Errorf("CountRequestsSince() = %d, %v, want 2 (the request of 90 minutes ago is outside the hour)", count, err)
+	if err != nil || len(times) != 2 ||
+		times[0].Sub(now.Add(-59*time.Minute)).Abs() > time.Millisecond || times[1].Sub(now.Add(-10*time.Minute)).Abs() > time.Millisecond {
+		t.Errorf("RequestTimesSince() = %v, %v, want the requests of 59 and 10 minutes ago, oldest first (the one of 90 minutes ago is outside the hour)", times, err)
+	}
+}
+
+func TestTheFourthRequestTellsWhenTheOldestOneLeavesTheWindow(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	user := f.registeredUser(t, ctx)
+	repository := f.emailRequests()
+	email, _ := model.NewEmail(uniqueEmail(t))
+	code, _ := model.NewVerificationCode("444444")
+	now := time.Now().UTC()
+	for _, age := range []time.Duration{50 * time.Minute, 30 * time.Minute, 10 * time.Minute} {
+		request := model.NewEmailChangeRequest(newUUID(t), user.ID(), email, code, now.Add(-age))
+		err := f.transactions.WithinTransaction(ctx, func(ctx context.Context) error {
+			if err := repository.SupersedePending(ctx, user.ID(), now); err != nil {
+				return err
+			}
+			return repository.Add(ctx, request)
+		})
+		if err != nil {
+			t.Fatalf("store request of %v ago error = %v", age, err)
+		}
+	}
+
+	err := f.requestEmailChange(&recordingSender{}, "555555").RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: uniqueEmail(t)})
+
+	var limited *model.EmailChangeRateLimitedError
+	if !errors.As(err, &limited) {
+		t.Fatalf("error = %v, want an EmailChangeRateLimitedError", err)
+	}
+	if want := 10 * time.Minute; limited.RetryAfter < want-time.Minute || limited.RetryAfter > want {
+		t.Errorf("RetryAfter = %v, want about %v (the request of 50 minutes ago leaves the hour then)", limited.RetryAfter, want)
 	}
 }
 

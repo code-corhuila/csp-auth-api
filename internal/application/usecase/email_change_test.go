@@ -15,9 +15,9 @@ import (
 type fakeEmailRequests struct {
 	journal         *journal
 	pending         *model.EmailChangeRequest
-	made            int
+	requestTimes    []time.Time
 	added           []*model.EmailChangeRequest
-	countedSince    time.Time
+	requestedSince  time.Time
 	superseded      bool
 	wrongAttempts   []int
 	invalidated     []string
@@ -33,10 +33,10 @@ func (r *fakeEmailRequests) LockRequestsOf(context.Context, string) error {
 	return r.lockErr
 }
 
-func (r *fakeEmailRequests) CountRequestsSince(_ context.Context, _ string, since time.Time) (int, error) {
+func (r *fakeEmailRequests) RequestTimesSince(_ context.Context, _ string, since time.Time) ([]time.Time, error) {
 	r.journal.record("count")
-	r.countedSince = since
-	return r.made, r.countErr
+	r.requestedSince = since
+	return r.requestTimes, r.countErr
 }
 
 func (r *fakeEmailRequests) SupersedePending(context.Context, string, time.Time) error {
@@ -181,27 +181,59 @@ func TestRequestChangeStoresTheRequestAndSendsTheCodeInsideTheTransaction(t *tes
 
 func TestRequestChangeCountsTheRequestsOfTheLastRollingHour(t *testing.T) {
 	f := newRequestFixture()
-	f.requests.made = 2
+	f.requests.requestTimes = []time.Time{registeredAt.Add(-50 * time.Minute), registeredAt.Add(-10 * time.Minute)}
 
 	err := f.useCase.RequestChange(context.Background(), requestCommand())
 
-	if err != nil || !f.requests.countedSince.Equal(registeredAt.Add(-time.Hour)) {
-		t.Errorf("error = %v, counted since %v, want nil and %v", err, f.requests.countedSince, registeredAt.Add(-time.Hour))
+	if err != nil || !f.requests.requestedSince.Equal(registeredAt.Add(-time.Hour)) {
+		t.Errorf("error = %v, listed since %v, want nil and %v", err, f.requests.requestedSince, registeredAt.Add(-time.Hour))
 	}
 }
 
 func TestRequestChangeRejectsTheFourthRequestOfTheHourAndWritesNothing(t *testing.T) {
 	f := newRequestFixture()
-	f.requests.made = 3
+	f.requests.requestTimes = []time.Time{
+		registeredAt.Add(-40 * time.Minute), registeredAt.Add(-20 * time.Minute), registeredAt.Add(-5 * time.Minute),
+	}
 
 	err := f.useCase.RequestChange(context.Background(), requestCommand())
 
-	if !errors.Is(err, model.ErrTooManyEmailChangeRequests) {
+	var limited *model.EmailChangeRateLimitedError
+	if !errors.Is(err, model.ErrTooManyEmailChangeRequests) || !errors.As(err, &limited) {
 		t.Fatalf("error = %v, want ErrTooManyEmailChangeRequests", err)
+	}
+	if limited.RetryAfter != 20*time.Minute {
+		t.Errorf("RetryAfter = %v, want 20m0s (the oldest request is 40 minutes old, the window is an hour)", limited.RetryAfter)
 	}
 	if f.requests.superseded || len(f.requests.added) != 0 || len(f.sender.deliveries) != 0 || f.transactions.committed {
 		t.Errorf("superseded = %v, added = %d, sent = %d, committed = %v, want nothing written",
 			f.requests.superseded, len(f.requests.added), len(f.sender.deliveries), f.transactions.committed)
+	}
+}
+
+func TestRequestChangeTellsTheRemainingWaitFromTheClockOfThePort(t *testing.T) {
+	cases := map[string]struct {
+		oldestAge time.Duration
+		want      time.Duration
+	}{
+		"one second left":    {time.Hour - time.Second, time.Second},
+		"at the window edge": {time.Hour, 0},
+		"just requested":     {0, time.Hour},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newRequestFixture()
+			f.requests.requestTimes = []time.Time{
+				registeredAt.Add(-c.oldestAge), registeredAt.Add(-c.oldestAge / 2), registeredAt,
+			}
+
+			err := f.useCase.RequestChange(context.Background(), requestCommand())
+
+			var limited *model.EmailChangeRateLimitedError
+			if !errors.As(err, &limited) || limited.RetryAfter != c.want {
+				t.Errorf("error = %v, want a rate limit with RetryAfter %v", err, c.want)
+			}
+		})
 	}
 }
 
