@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/in"
 	"github.com/code-corhuila/csp-auth-api/internal/domain/model"
@@ -167,11 +168,36 @@ func TestRequestEmailChangeMapsTheErrorsOfTheUseCase(t *testing.T) {
 	}
 }
 
-func TestRequestEmailChangeAnswersRetryAfterWhenTheLimitIsReached(t *testing.T) {
+func TestRequestEmailChangeAnswersTheRemainingSecondsInRetryAfter(t *testing.T) {
+	cases := map[string]struct {
+		retryAfter time.Duration
+		want       string
+	}{
+		"whole seconds":          {20 * time.Minute, "1200"},
+		"rounded up":             {20*time.Minute + 100*time.Millisecond, "1201"},
+		"a fraction of a second": {time.Millisecond, "1"},
+		"one second":             {time.Second, "1"},
+		"nothing left":           {0, "1"},
+		"the whole window":       {time.Hour, "3600"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			useCase := &fakeRequestEmailChange{err: &model.EmailChangeRateLimitedError{RetryAfter: c.retryAfter}}
+
+			rec := sendEmailChange(&fakeUserAuthorizer{}, useCase, &fakeVerifyEmailChange{}, requestAttempt(emailBody))
+
+			if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != c.want {
+				t.Errorf("status = %d, Retry-After = %q, want 429 and %q", rec.Code, rec.Header().Get("Retry-After"), c.want)
+			}
+		})
+	}
+}
+
+func TestRequestEmailChangeAnswersTheWholeWindowWhenTheErrorCarriesNoWait(t *testing.T) {
 	rec := sendEmailChange(&fakeUserAuthorizer{}, &fakeRequestEmailChange{err: model.ErrTooManyEmailChangeRequests}, &fakeVerifyEmailChange{}, requestAttempt(emailBody))
 
 	if got := rec.Header().Get("Retry-After"); got != "3600" {
-		t.Errorf("Retry-After = %q, want 3600 (the rolling hour)", got)
+		t.Errorf("Retry-After = %q, want 3600 (the window, the safe upper bound)", got)
 	}
 }
 
