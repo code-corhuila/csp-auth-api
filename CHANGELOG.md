@@ -104,6 +104,9 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   and `ClientIP` in the login command. The login rejects a locked address before checking the password, counts only wrong credentials,
   clears the count on success and goes on with a `WARN` when the store fails. Not reachable yet: the composition root passes a no-op
   store until the Redis adapter and the `429` answer arrive.
+- HU-AUTH-005, Redis adapter of the login attempt limit (issue [#127](https://github.com/code-corhuila/csp-auth-api/issues/127)):
+  `LoginAttempts` over `attempts:{ip}` (`INCR`, `EXPIRE` for the window) and `locked:{ip}` (`SET` with the lock time, `TTL`), `DEL` of the
+  counter on success and when the lock is written; only commands of the `auth_app` ACL. Integration tests against Redis 7 with that ACL.
 
 ### Changed
 
