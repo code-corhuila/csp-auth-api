@@ -98,6 +98,11 @@ func translateLoginError(w http.ResponseWriter, traceID string, err error) {
 		writeJSON(w, http.StatusLocked, errorResponse{
 			Error: codeAccountLocked, Message: "Account temporarily locked after repeated failed attempts", TraceID: traceID,
 		})
+	case errors.Is(err, model.ErrTooManyLoginAttempts):
+		w.Header().Set("Retry-After", loginRetryAfterSeconds(err))
+		writeJSON(w, http.StatusTooManyRequests, errorResponse{
+			Error: codeRateLimited, Message: "Too many failed login attempts, try again later", TraceID: traceID,
+		})
 	default:
 		slog.Error("login user failed", "traceId", traceID, "error", err)
 		writeJSON(w, http.StatusInternalServerError, errorResponse{
