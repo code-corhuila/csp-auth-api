@@ -107,6 +107,11 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 - HU-AUTH-005, Redis adapter of the login attempt limit (issue [#127](https://github.com/code-corhuila/csp-auth-api/issues/127)):
   `LoginAttempts` over `attempts:{ip}` (`INCR`, `EXPIRE` for the window) and `locked:{ip}` (`SET` with the lock time, `TTL`), `DEL` of the
   counter on success and when the lock is written; only commands of the `auth_app` ACL. Integration tests against Redis 7 with that ACL.
+- HU-AUTH-005, `429 RATE_LIMITED` on `POST /api/v1/auth/login` (ADR-040, issue [#128](https://github.com/code-corhuila/csp-auth-api/issues/128)):
+  10 failed logins from one client address in 5 minutes reject the next attempt, with `Retry-After` set to the seconds left of the 5-minute
+  lock, even with the right credentials; the address is the last entry of `X-Forwarded-For`. New `APP_AUTH_LOGIN_MAX_ATTEMPTS`,
+  `APP_AUTH_LOGIN_WINDOW` and `APP_AUTH_LOGIN_LOCK`. Without Redis the login is not limited and with Redis down it goes on with a `WARN`.
+  Contract, end-to-end and wiring tests.
 
 ### Changed
 

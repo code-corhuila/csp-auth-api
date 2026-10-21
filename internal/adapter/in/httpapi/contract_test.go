@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
@@ -132,6 +133,7 @@ func TestLoginResponsesFulfillTheContract(t *testing.T) {
 		"400 missing fields":  {&fakeLogin{}, attempt{body: `{}`, headers: withTrace()}},
 		"401 bad credentials": {&fakeLogin{err: model.ErrInvalidCredentials}, attempt{body: loginBody(), headers: withTrace()}},
 		"423 locked":          {&fakeLogin{err: model.ErrUserLocked}, attempt{body: loginBody(), headers: withTrace()}},
+		"429 rate limited":    {&fakeLogin{err: &model.LoginRateLimitedError{RetryAfter: 90 * time.Second}}, attempt{body: loginBody(), headers: withTrace()}},
 		"500 unexpected":      {&fakeLogin{err: errors.New("driver failure")}, attempt{body: loginBody()}},
 	}
 	for name, c := range cases {
