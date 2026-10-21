@@ -290,13 +290,13 @@ func TestNewHandlerFailsFastOnAnInvalidRedisURLWithoutRevealingIt(t *testing.T) 
 func TestOpenRevokedTokensWorksWithoutCheckWhenRedisIsNotConfigured(t *testing.T) {
 	var logs strings.Builder
 
-	list, closeList, err := openRevokedTokens(slogTo(&logs), testConfig(t))
+	state, closeList, err := openRedisState(slogTo(&logs), testConfig(t))
 	defer closeList()
 
 	if err != nil {
-		t.Fatalf("openRevokedTokens() error = %v", err)
+		t.Fatalf("openRedisState() error = %v", err)
 	}
-	if revoked, err := list.IsRevoked(context.Background(), "any-jti"); revoked || err != nil {
+	if revoked, err := state.revoked.IsRevoked(context.Background(), "any-jti"); revoked || err != nil {
 		t.Errorf("IsRevoked() = %v, %v, want false and no error", revoked, err)
 	}
 	if !strings.Contains(logs.String(), "APP_AUTH_REDIS_URL is not set") {
@@ -345,5 +345,33 @@ func TestNewHandlerServesTheEmailChangeRoutesOnlyWithTheDatabaseAndAnSMTPHost(t 
 				t.Errorf("%s: log = %q, want exactly one email change line containing %q", name, logs.String(), c.logLine)
 			}
 		}
+	}
+}
+
+func TestOpenRedisStateLimitsTheLoginOnlyWhenRedisIsConfigured(t *testing.T) {
+	without := testConfig(t)
+	with := without
+	with.RedisURL = "redis://auth_app:secret@127.0.0.1:1/0"
+	with.LoginMaxAttempts, with.LoginWindow, with.LoginLock = 10, 5*time.Minute, 5*time.Minute
+
+	off, closeOff, err := openRedisState(discardLogger(), without)
+	defer closeOff()
+	if _, noop := off.attempts.(noLoginAttempts); err != nil || !noop {
+		t.Errorf("without Redis: attempts = %T, err = %v, want the no-op store", off.attempts, err)
+	}
+	on, closeOn, err := openRedisState(discardLogger(), with)
+	defer closeOn()
+	if _, noop := on.attempts.(noLoginAttempts); err != nil || noop {
+		t.Errorf("with Redis: attempts = %T, err = %v, want the Redis store", on.attempts, err)
+	}
+}
+
+func TestOpenRedisStateRejectsAnInvalidLoginAttemptLimit(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.RedisURL = "redis://auth_app:secret@127.0.0.1:1/0"
+	cfg.LoginMaxAttempts = 0
+
+	if _, _, err := openRedisState(discardLogger(), cfg); err == nil {
+		t.Error("openRedisState() error = nil, want the policy without attempts to be refused")
 	}
 }
