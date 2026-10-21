@@ -187,6 +187,32 @@ token is written to Redis (`blacklist:{jti}`, `SET` with a ttl of its remaining 
 If Redis cannot be written the answer is `500 INTERNAL_ERROR` although the refresh tokens are already revoked: the client repeats
 the call, which is idempotent. A missing or invalid access token is `401`. The list is read on the protected routes too (below).
 
+`PATCH /api/v1/auth/me/email` and `POST /api/v1/auth/me/email/verify` (HU-AUTH-004, ADR-034) change the email of the caller in two
+steps. Both need an access token that holds `profile:update:self` (any signed-in user) and an `Idempotency-Key` (accepted, not
+stored: repeating the request is harmless). The account is always the one in the token, and the routes are enabled by the same
+two settings as the other protected routes.
+
+```bash
+curl -i -X PATCH http://localhost:8081/api/v1/auth/me/email -H "Authorization: Bearer $ACCESS_TOKEN" -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" -d '{"email":"new.address@example.com"}'
+curl -i -X POST http://localhost:8081/api/v1/auth/me/email/verify -H "Authorization: Bearer $ACCESS_TOKEN" -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" -d '{"verificationCode":"012345"}'
+```
+
+The request normalizes the address to lower case and answers `202` with no body: the code is never in the response. An invalid address
+is `400`, an address used by any active account (the own one included) is `409 EMAIL_ALREADY_REGISTERED`, and the fourth request of a
+user in a rolling hour (superseded ones count) is `429 RATE_LIMITED` with `Retry-After: 3600`. A new request replaces the pending one.
+The code has six digits (`crypto/rand`, leading zeros kept), lasts 15 minutes and is handed to the `VerificationCodeSender` port
+inside the transaction of the request. **The only adapter is `LogVerificationCodeSender`, a deliberate temporary decision of
+ADR-034: it writes the code in the service log at INFO** (`email verification code issued`, with `userId`, `requestId` and `code`)
+so the team can verify the flow in development and QA; nothing sends emails yet, and the adapter must be replaced before the email
+change goes to `main`.
+
+The verification answers `204` when the code is right: in one transaction the email of the account changes, `email_verified` becomes
+true, the request is consumed and `UserEmailChanged` (user id and new email only) is written to the outbox. A malformed code, no pending
+request, an expired or exhausted request and a wrong code all answer the same `400 VALIDATION_ERROR`. Each wrong code is counted
+and the count is committed although the answer is `400`; the fifth one retires the request. The comparison is in constant time. If
+another account took the address meanwhile the answer is `409 EMAIL_ALREADY_REGISTERED`, the request is invalidated and no event is
+written. No session is revoked by the change. The tables are those of `csp-auth-db` V024 and V025.
+
 Internal operations (ADR-020) accept a **service credential**: an RS256 token signed with the key of this service,
 with `exp` and a `sub` and sent as `Authorization: Bearer`. A missing or invalid token gets `401 UNAUTHORIZED` and a
 valid token whose `sub` is not in `SERVICE_SUBJECTS` (comma-separated, empty by default so that no service is allowed)
@@ -240,10 +266,10 @@ When the variable is empty the features that need Redis are not enabled (`POST /
 
 ### Revoked access tokens
 
-`POST /logout`, `GET /users` and `PATCH /users/{userId}/role` (and the email change when it exists) look up the `jti` of the
+`POST /logout`, `GET /users`, `PATCH /users/{userId}/role` and the email change look up the `jti` of the
 access token after verifying its signature and expiration: a token on the list is `401`, before its permissions are judged.
 Only this service reads the list; the other services accept the token until it expires (ADR-028, ADR-033). If Redis cannot be
-consulted `GET /users` and `PATCH /users/{userId}/role` **fail closed**: `500 INTERNAL_ERROR` and a `WARN` that never contains
+consulted `GET /users`, `PATCH /users/{userId}/role` and the email change **fail closed**: `500 INTERNAL_ERROR` and a `WARN` that never contains
 the token or the `jti`. `POST /logout` does not stop at the lookup: it revokes the refresh tokens in PostgreSQL, commits, and
 then fails with `500` when it writes the list, so during a Redis outage a sign out answers `500` but the refresh tokens are
 already revoked, and the client repeats the call.
