@@ -79,7 +79,8 @@ go test -tags integration ./internal/adapter/out/persistence/
 The Redis adapter (`internal/adapter/out/redis`) has integration tests with the same tag. They need the Redis 7 of
 `csp-infra-redis` with its ACL (`auth_app`: `+get +set +exists +incr +expire +ttl +del +ping` on `~attempts:* ~locked:*
 ~blacklist:*`) and are skipped when `AUTH_TEST_REDIS_URL` is not set. They check that the list expires with the token, that
-the key is `blacklist:{jti}`, that the ACL allows exactly the commands the adapter uses, and that an unreachable Redis is an error:
+the key is `blacklist:{jti}`, that the login attempt store (`attempts:{ip}` for the window, `locked:{ip}` for the lock) counts, locks
+and expires as the policy says, that the ACL allows exactly the commands the adapters use, and that an unreachable Redis is an error:
 
 ```bash
 AUTH_TEST_REDIS_URL=redis://auth_app:<password>@localhost:6379/0 go test -tags integration ./internal/adapter/out/redis/
