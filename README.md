@@ -126,7 +126,9 @@ curl -i -X POST http://localhost:8081/api/v1/auth/login   -H 'Content-Type: appl
 It requires a JSON body of at most 1 MiB with `email` and `password`, and answers `200` with the tokens and the user
 (`Cache-Control: no-store`). A missing or empty field is `400`; an unknown or malformed email and a wrong password get
 the same `401` (`INVALID_CREDENTIALS`), and a locked account gets `423` (`ACCOUNT_LOCKED`) only when the password is
-right. The `429` of the contract belongs to the rate limit (HU-AUTH-005) and is not served yet.
+right. With Redis, 10 failed logins from the same client address in 5 minutes lock that address for 5 minutes (HU-AUTH-005, ADR-040):
+the next attempt is `429` (`RATE_LIMITED`) with `Retry-After` set to the seconds left, **whether or not the credentials are right**, and
+after the cooldown the right credentials authenticate normally. See "Login attempt limit".
 
 `POST /api/v1/auth/refresh` (HU-AUTH-002) is enabled by the same two settings and renews a session:
 
@@ -277,6 +279,24 @@ then fails with `500` when it writes the list, so during a Redis outage a sign o
 already revoked, and the client repeats the call.
 Without `APP_AUTH_REDIS_URL` the check is off (INFO line at start) and the routes work as before.
 
+### Login attempt limit
+
+With Redis, `POST /login` counts the failed logins of each client address (HU-AUTH-005, ADR-040). The address is the **last** entry of
+`X-Forwarded-For`, the one the gateway appends; the entries before it come from the client and are ignored. Without that header the
+address of the connection is used, and a request with no usable address is not limited. Only wrong credentials (unknown email or
+wrong password) count; a locked account, an invalid body and server errors do not. The state is two keys per address with a TTL:
+`attempts:{ip}` (the counter, which lives for the window) and `locked:{ip}` (the lock, which lives for the lock time). The failure that
+reaches the maximum writes the lock and drops the counter; a successful login drops the counter. The lock is checked before the
+password, so a locked address costs no bcrypt.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `APP_AUTH_LOGIN_MAX_ATTEMPTS` | `10` | Failures inside the window that lock the address (1 to 1000) |
+| `APP_AUTH_LOGIN_WINDOW` | `5m` | Window in which the failures are counted (Go duration) |
+| `APP_AUTH_LOGIN_LOCK` | `5m` | How long a locked address is rejected with `429` (Go duration) |
+
+If Redis cannot be consulted the login **goes on without the limit** and a `WARN` is logged; the per-IP limit of the gateway stays
+active. Without `APP_AUTH_REDIS_URL` the login is not limited (INFO line at start).
 ## Email delivery (SMTP)
 
 The code of the email change goes to the SMTP relay of the platform (`net/smtp`, ADR-034). All the settings are domain variables,
