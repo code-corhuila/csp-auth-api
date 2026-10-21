@@ -40,13 +40,24 @@ func (r *EmailVerificationRepository) LockRequestsOf(ctx context.Context, userID
 	return err
 }
 
-// CountRequestsSince counts every request of the user created at or after since: pending,
-// superseded, exhausted and verified ones.
-func (r *EmailVerificationRepository) CountRequestsSince(ctx context.Context, userID string, since time.Time) (int, error) {
-	var count int
-	err := executorFor(ctx, r.pool).QueryRow(ctx,
-		`SELECT count(*) FROM auth.email_verification WHERE user_id = $1 AND created_at >= $2`, userID, since).Scan(&count)
-	return count, err
+// RequestTimesSince lists the creation instants of the requests of the user at or after since,
+// oldest first: pending, superseded, exhausted and verified ones.
+func (r *EmailVerificationRepository) RequestTimesSince(ctx context.Context, userID string, since time.Time) ([]time.Time, error) {
+	rows, err := executorFor(ctx, r.pool).Query(ctx,
+		`SELECT created_at FROM auth.email_verification WHERE user_id = $1 AND created_at >= $2 ORDER BY created_at`, userID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var times []time.Time
+	for rows.Next() {
+		var requestedAt time.Time
+		if err := rows.Scan(&requestedAt); err != nil {
+			return nil, err
+		}
+		times = append(times, requestedAt)
+	}
+	return times, rows.Err()
 }
 
 // SupersedePending soft-deletes the pending request of the user, so only the last code is valid.
