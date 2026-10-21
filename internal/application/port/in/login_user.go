@@ -3,11 +3,13 @@ package in
 import "context"
 
 // LoginUserCommand is what a client presents to authenticate. UserAgent identifies the client
-// that asks for the session and may be empty.
+// that asks for the session and may be empty. ClientIP is the address the request came from, which
+// the login attempt limit counts (HU-AUTH-005); empty when it is unknown, and then nothing is limited.
 type LoginUserCommand struct {
 	Email     string
 	Password  string
 	UserAgent string
+	ClientIP  string
 }
 
 // UserSummary is the public projection of a user: no phone, no address, no password hash (ADR-024).

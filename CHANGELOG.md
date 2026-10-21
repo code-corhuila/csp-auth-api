@@ -99,6 +99,11 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   `APP_AUTH_SMTP_HOST` the two email change routes are not enabled (`404`, one INFO line at start). A failure of the relay is a `500` and a
   `WARN` with the user id and the class of the error; the code and the address are never logged. `deploy/compose.yml` offers an
   optional Mailpit under the profile `mail`.
+- HU-AUTH-005, domain and use case of the login attempt limit (issue [#126](https://github.com/code-corhuila/csp-auth-api/issues/126)):
+  `LoginAttemptPolicy` (10 failures in 5 minutes, 5-minute lock), `LoginRateLimitedError` with the time left, the `LoginAttempts` port
+  and `ClientIP` in the login command. The login rejects a locked address before checking the password, counts only wrong credentials,
+  clears the count on success and goes on with a `WARN` when the store fails. Not reachable yet: the composition root passes a no-op
+  store until the Redis adapter and the `429` answer arrive.
 
 ### Changed
 

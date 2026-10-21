@@ -95,7 +95,7 @@ type loginFixture struct {
 
 func newLoginFixture(user *model.User) *loginFixture {
 	f := &loginFixture{users: &loginUsers{user: user}, hasher: &loginHasher{}, sessions: &loginSessions{}}
-	f.useCase = NewLoginUser(f.users, f.hasher, loginTokens{}, f.sessions, fakeClock{})
+	f.useCase = NewLoginUser(f.users, f.hasher, loginTokens{}, f.sessions, fakeClock{}, newLoginAttempts())
 	return f
 }
 

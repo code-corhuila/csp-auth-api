@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/in"
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/out"
@@ -18,32 +19,78 @@ const maxUserAgentRunes = 255
 // long as for an existing account and the response time does not reveal which emails exist.
 const absentUserHash = "$2a$12$kWQob4IFYPEufI1r3647A.zx0gCb1jFQiI8uIA3XFVz5o88kV.JW6"
 
-// LoginUser implements in.LoginUser (HU-AUTH-002).
+// LoginUser implements in.LoginUser (HU-AUTH-002, HU-AUTH-005).
 type LoginUser struct {
-	users   out.UserRepository
-	hasher  out.PasswordHasher
-	session sessionIssuer
+	users    out.UserRepository
+	hasher   out.PasswordHasher
+	session  sessionIssuer
+	attempts out.LoginAttempts
 }
 
 var _ in.LoginUser = (*LoginUser)(nil)
 
 // NewLoginUser wires the use case with the ports it needs.
-func NewLoginUser(users out.UserRepository, hasher out.PasswordHasher, tokens out.TokenIssuer, sessions in.IssueRefreshToken, clock out.Clock) *LoginUser {
-	return &LoginUser{users: users, hasher: hasher, session: sessionIssuer{accessTokens: tokens, sessions: sessions, clock: clock}}
+func NewLoginUser(users out.UserRepository, hasher out.PasswordHasher, tokens out.TokenIssuer, sessions in.IssueRefreshToken, clock out.Clock, attempts out.LoginAttempts) *LoginUser {
+	return &LoginUser{users: users, hasher: hasher, session: sessionIssuer{accessTokens: tokens, sessions: sessions, clock: clock}, attempts: attempts}
 }
 
 // Login checks the credentials and issues an access token and a refresh token.
 //
-// An unknown or malformed email and a wrong password give the same model.ErrInvalidCredentials.
-// A locked account is reported (model.ErrUserLocked) only after the password is verified, so the
-// lock state is not revealed to someone who does not hold the right password. The presented
-// password is not checked against the password policy: login presents a password, it does not choose one.
+// A client address that is locked by repeated failures is rejected with *model.LoginRateLimitedError
+// before anything else, so a right password does not help and no password is hashed (HU-AUTH-005).
+// An unknown or malformed email and a wrong password give the same model.ErrInvalidCredentials and
+// count as a failure of the address. A locked account is reported (model.ErrUserLocked) only after
+// the password is verified, so the lock state is not revealed to someone who does not hold the right
+// password. The presented password is not checked against the password policy: login presents a
+// password, it does not choose one.
 func (l *LoginUser) Login(ctx context.Context, command in.LoginUserCommand) (in.LoginUserResult, error) {
-	user, err := l.authenticate(ctx, command)
-	if err != nil {
+	if err := l.ensureNotLimited(ctx, command.ClientIP); err != nil {
 		return in.LoginUserResult{}, err
 	}
+	user, err := l.authenticate(ctx, command)
+	if err != nil {
+		if errors.Is(err, model.ErrInvalidCredentials) {
+			l.recordFailure(ctx, command.ClientIP)
+		}
+		return in.LoginUserResult{}, err
+	}
+	l.forgetFailures(ctx, command.ClientIP)
 	return l.session.open(ctx, user, command.UserAgent)
+}
+
+// ensureNotLimited rejects a locked client. When the store cannot be reached the login goes on: the
+// limit is a protection, not a condition of authenticating, and the gateway still limits each address.
+func (l *LoginUser) ensureNotLimited(ctx context.Context, client string) error {
+	if client == "" {
+		return nil
+	}
+	remaining, err := l.attempts.LockedFor(ctx, client)
+	if err != nil {
+		slog.Warn("login attempt limit unavailable, the login goes on", "error", err)
+		return nil
+	}
+	if remaining > 0 {
+		return &model.LoginRateLimitedError{RetryAfter: remaining}
+	}
+	return nil
+}
+
+func (l *LoginUser) recordFailure(ctx context.Context, client string) {
+	if client == "" {
+		return
+	}
+	if err := l.attempts.RecordFailure(ctx, client); err != nil {
+		slog.Warn("failed login could not be counted", "error", err)
+	}
+}
+
+func (l *LoginUser) forgetFailures(ctx context.Context, client string) {
+	if client == "" {
+		return
+	}
+	if err := l.attempts.Clear(ctx, client); err != nil {
+		slog.Warn("failed logins could not be cleared", "error", err)
+	}
 }
 
 func (l *LoginUser) authenticate(ctx context.Context, command in.LoginUserCommand) (*model.User, error) {
