@@ -43,6 +43,13 @@ func NewIdempotencyKeyPurger(pool *pgxpool.Pool) out.PurgeableRecords {
 	return &agedRows{pool: pool, table: "auth.idempotency_key", key: "key", eligible: "created_at < $1", orderBy: "created_at, key"}
 }
 
+// NewEmailVerificationPurger purges auth.email_verification rows that expired before the cutoff,
+// whether they were verified or not (ADR-030). The code is stored in clear, so the rows are
+// not kept past the retention.
+func NewEmailVerificationPurger(pool *pgxpool.Pool) out.PurgeableRecords {
+	return &agedRows{pool: pool, table: "auth.email_verification", key: "id", eligible: "expires_at < $1", orderBy: "expires_at, id"}
+}
+
 func (r *agedRows) DeleteOlderThan(ctx context.Context, cutoff time.Time, limit int) (int, error) {
 	tag, err := r.pool.Exec(ctx,
 		"DELETE FROM "+r.table+" WHERE "+r.key+" = ANY(ARRAY(SELECT "+r.key+" FROM "+r.table+
