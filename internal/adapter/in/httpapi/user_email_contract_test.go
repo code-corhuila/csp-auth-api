@@ -26,6 +26,8 @@ func TestRequestEmailChangeResponsesFulfillTheContract(t *testing.T) {
 		"202 accepted":          {&fakeUserAuthorizer{}, &fakeRequestEmailChange{}, traced(requestAttempt(emailBody))},
 		"400 invalid fields":    {&fakeUserAuthorizer{}, &fakeRequestEmailChange{}, traced(emailAttempt{method: http.MethodPatch, path: emailPath, key: "short", body: `{"email":"nope"}`})},
 		"400 invalid email":     {&fakeUserAuthorizer{}, &fakeRequestEmailChange{err: model.ErrInvalidEmail}, traced(requestAttempt(emailBody))},
+		"400 email too long":    {&fakeUserAuthorizer{}, &fakeRequestEmailChange{}, traced(requestAttempt(`{"email":"` + addressOfLength(model.MaxEmailLength+1) + `"}`))},
+		"202 longest email":     {&fakeUserAuthorizer{}, &fakeRequestEmailChange{}, traced(requestAttempt(`{"email":"` + addressOfLength(model.MaxEmailLength) + `"}`))},
 		"401 no token":          {&fakeUserAuthorizer{err: model.ErrAccessTokenInvalid}, &fakeRequestEmailChange{}, traced(requestAttempt(emailBody))},
 		"401 revoked token":     {&fakeUserAuthorizer{err: model.ErrAccessTokenInvalid}, &fakeRequestEmailChange{}, traced(requestAttempt(emailBody))},
 		"401 account is gone":   {&fakeUserAuthorizer{}, &fakeRequestEmailChange{err: model.ErrUserNotFound}, traced(requestAttempt(emailBody))},

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -486,5 +487,16 @@ func TestRequestChangeReportsAnAccountThatIsGoneAndWritesNothing(t *testing.T) {
 	}
 	if want := []string{"begin", "lock-requests", "rollback"}; !reflect.DeepEqual(f.journal.steps, want) {
 		t.Errorf("steps = %v, want %v", f.journal.steps, want)
+	}
+}
+
+func TestRequestChangeRejectsAnEmailLongerThanTheDatabaseStoresBeforeOpeningATransaction(t *testing.T) {
+	f := newRequestFixture()
+	command := in.RequestEmailChangeCommand{UserID: "user-1", Email: strings.Repeat("a", model.MaxEmailLength) + "@example.com"}
+
+	err := f.useCase.RequestChange(context.Background(), command)
+
+	if !errors.Is(err, model.ErrInvalidEmail) || len(f.journal.steps) != 0 {
+		t.Errorf("error = %v, steps = %v, want ErrInvalidEmail and no transaction", err, f.journal.steps)
 	}
 }
