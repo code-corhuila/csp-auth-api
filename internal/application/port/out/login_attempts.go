@@ -2,8 +2,13 @@ package out
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrLoginAttemptsPaused is what a LoginAttempts answers while it is paused after a failure of its store (ADR-048):
+// it is not called, it answers at once, and the use case goes on without logging it again.
+var ErrLoginAttemptsPaused = errors.New("the login attempt limit is paused after a failure of its store")
 
 // LoginAttempts counts the failed logins of a client address and holds its temporary lock
 // (HU-AUTH-005). The client is the address the request came from; the store applies
