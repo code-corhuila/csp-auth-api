@@ -278,6 +278,19 @@ func TestVerifyEmailChangeRejectsAMissingKeyAndAnUnreadableBodyWithoutCallingThe
 	}
 }
 
+func TestRequestEmailChangeAnswers401WithoutAnErrorLogWhenTheAccountOfTheTokenIsGone(t *testing.T) {
+	logs := captureLog(t)
+
+	rec := sendEmailChange(&fakeUserAuthorizer{}, &fakeRequestEmailChange{err: model.ErrUserNotFound}, &fakeVerifyEmailChange{}, traced(requestAttempt(emailBody)))
+
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), `"error":"UNAUTHORIZED"`) || rec.Header().Get("WWW-Authenticate") != "Bearer" {
+		t.Errorf("status = %d, body = %s, want 401 UNAUTHORIZED", rec.Code, rec.Body)
+	}
+	if strings.Contains(logs.String(), "level=ERROR") {
+		t.Errorf("log = %s, want no ERROR line for an account that is gone", logs)
+	}
+}
+
 // addressOfLength builds a valid address of exactly n characters.
 func addressOfLength(n int) string {
 	const domain = "@example.com"
