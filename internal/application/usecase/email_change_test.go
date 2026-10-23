@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -472,5 +473,16 @@ func TestVerifyChangeRollsBackOnUnexpectedRepositoryFailures(t *testing.T) {
 				t.Errorf("error = %v, committed = %v, events = %v, want the failure and a rollback", err, f.transactions.committed, f.outbox.events)
 			}
 		})
+	}
+}
+
+func TestRequestChangeRejectsAnEmailLongerThanTheDatabaseStoresBeforeOpeningATransaction(t *testing.T) {
+	f := newRequestFixture()
+	command := in.RequestEmailChangeCommand{UserID: "user-1", Email: strings.Repeat("a", model.MaxEmailLength) + "@example.com"}
+
+	err := f.useCase.RequestChange(context.Background(), command)
+
+	if !errors.Is(err, model.ErrInvalidEmail) || len(f.journal.steps) != 0 {
+		t.Errorf("error = %v, steps = %v, want ErrInvalidEmail and no transaction", err, f.journal.steps)
 	}
 }

@@ -160,7 +160,7 @@ func TestLoginRejectsUnknownEmailAndWrongPasswordWithTheSameError(t *testing.T) 
 }
 
 func TestLoginComparesAgainstADummyHashWhenTheEmailHasNoAccount(t *testing.T) {
-	for _, email := range []string{"ghost@example.com", "not-an-email"} {
+	for _, email := range []string{"ghost@example.com", "not-an-email", strings.Repeat("a", model.MaxEmailLength) + "@example.com"} {
 		f := newLoginFixture(nil)
 
 		_, err := f.useCase.Login(context.Background(), in.LoginUserCommand{Email: email, Password: rightPass})
