@@ -304,3 +304,14 @@ func TestRegisterTranslatesUseCaseErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestRegisterRejectsAnEmailLongerThanTheDatabaseStoresWith400(t *testing.T) {
+	useCase := &fakeRegister{}
+	body := strings.Replace(validBody(), "Maria@Example.com", addressOfLength(model.MaxEmailLength+1), 1)
+
+	rec := send(useCase, attempt{body: body, key: validKey})
+
+	if rec.Code != http.StatusBadRequest || useCase.called != 0 || !strings.Contains(rec.Body.String(), `"field":"email"`) {
+		t.Errorf("status = %d, calls = %d, body = %s, want 400 on the field email and no call", rec.Code, useCase.called, rec.Body)
+	}
+}
