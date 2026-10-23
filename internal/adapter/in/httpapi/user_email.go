@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -15,15 +16,19 @@ const permissionUpdateProfile = "profile:update:self"
 
 // WithEmailChange publishes the two steps of the email change (HU-AUTH-004, ADR-034) at
 // PATCH /me/email and POST /me/email/verify, open to the callers whose token holds
-// profile:update:self. The account is always the one in the token.
-func WithEmailChange(authorizer in.AuthorizeUser, request in.RequestEmailChange, verify in.VerifyEmailChange) Option {
+// profile:update:self. The account is always the one in the token. The request step sends mail inside its
+// transaction, so gate caps how many of them run at once; the verification sends nothing and is not capped.
+func WithEmailChange(authorizer in.AuthorizeUser, request in.RequestEmailChange, verify in.VerifyEmailChange, gate *Bulkhead) Option {
 	return func(mux *http.ServeMux) {
 		mux.HandleFunc("PATCH "+BasePath+"/me/email",
-			requirePermission(authorizer, permissionUpdateProfile, requestEmailChange(request)))
+			requirePermission(authorizer, permissionUpdateProfile, requestEmailChange(request, gate)))
 		mux.HandleFunc("POST "+BasePath+"/me/email/verify",
 			requirePermission(authorizer, permissionUpdateProfile, verifyEmailChange(verify)))
 	}
 }
+
+// busyRetryAfterSeconds is the Retry-After of a request the bulkhead refuses: the slots free up in seconds.
+const busyRetryAfterSeconds = "1"
 
 // requestEmailChangeRequest and verifyEmailChangeRequest are the request bodies of requestEmailChange
 // and verifyEmailChange in the auth-service contract.
@@ -36,8 +41,9 @@ type verifyEmailChangeRequest struct {
 }
 
 // requestEmailChange answers 202 without a body: the code never travels in the response. The
-// Idempotency-Key is only validated, because a repeated request replaces the code (ADR-034).
-func requestEmailChange(useCase in.RequestEmailChange) callerHandler {
+// Idempotency-Key is only validated, because a repeated request replaces the code (ADR-034). A request that
+// finds no free slot of gate is refused with 429 before the use case opens a transaction.
+func requestEmailChange(useCase in.RequestEmailChange, gate *Bulkhead) callerHandler {
 	return func(w http.ResponseWriter, r *http.Request, callerID string) {
 		traceID := w.Header().Get(headerCorrelationID) // set by requirePermission, which wraps this handler
 		w.Header().Set("Cache-Control", "no-store")
@@ -51,6 +57,17 @@ func requestEmailChange(useCase in.RequestEmailChange) callerHandler {
 			writeValidation(w, traceID, problems)
 			return
 		}
+
+		release, admitted := gate.Acquire(r.Context())
+		if !admitted {
+			slog.Warn("email change request refused: no free slot", "traceId", traceID, "limit", gate.Limit(), "wait", gate.Wait().String())
+			w.Header().Set("Retry-After", busyRetryAfterSeconds)
+			writeJSON(w, http.StatusTooManyRequests, errorResponse{
+				Error: codeRateLimited, Message: "Too many requests", TraceID: traceID,
+			})
+			return
+		}
+		defer release()
 
 		if err := useCase.RequestChange(r.Context(), in.RequestEmailChangeCommand{UserID: callerID, Email: body.Email}); err != nil {
 			translateRequestEmailChangeError(w, traceID, err)

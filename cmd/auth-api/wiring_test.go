@@ -347,3 +347,19 @@ func TestNewHandlerServesTheEmailChangeRoutesOnlyWithTheDatabaseAndAnSMTPHost(t 
 		}
 	}
 }
+
+func TestNewHandlerRefusesAnEmailChangeWithoutABulkhead(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.JWTPrivateKey = generatedKeyPEM(t)
+	cfg.DatabaseURL = "postgres://user:secret@127.0.0.1:1/db"
+	cfg.SMTPHost, cfg.SMTPFrom = "mailpit", "no-reply@cinesync.local"
+	cfg.EmailChangeMaxConcurrency = 0
+	var settings persistence.PoolSettings
+	var opened int
+
+	_, _, err := newHandler(context.Background(), discardLogger(), cfg, lazyPool(&settings, &opened))
+
+	if err == nil {
+		t.Error("newHandler() error = nil, want the email change not to start without a limit")
+	}
+}

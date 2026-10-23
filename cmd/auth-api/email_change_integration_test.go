@@ -251,6 +251,19 @@ func TestEmailChangeEndToEndAgainstTheDatabase(t *testing.T) {
 			t.Errorf("the invalidated request: status = %d, want 400", status)
 		}
 	})
+
+	t.Run("a valid token of a deleted account is 401 and not a server error", func(t *testing.T) {
+		_, goneID, goneAccess, _ := signUpUser(t, server.URL, "e2e-gone")
+		if _, err := connect(t, ctx, databaseURL).Exec(ctx, `UPDATE auth.app_user SET deleted_at = now() WHERE id = $1`, goneID); err != nil {
+			t.Fatalf("soft delete error = %v", err)
+		}
+
+		status, _, body := requestChange(t, server.URL, goneAccess, "e2e-gone-"+goneID+"@example.com")
+
+		if status != http.StatusUnauthorized || !strings.Contains(body, "UNAUTHORIZED") {
+			t.Errorf("status = %d, body = %s, want 401 UNAUTHORIZED", status, body)
+		}
+	})
 }
 
 // The email change checks the list of revoked access tokens like the other protected routes (ADR-033):

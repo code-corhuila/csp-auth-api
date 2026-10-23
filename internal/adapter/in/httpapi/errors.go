@@ -181,6 +181,10 @@ func translateRequestEmailChangeError(w http.ResponseWriter, traceID string, err
 	switch {
 	case errors.Is(err, model.ErrInvalidEmail):
 		writeValidation(w, traceID, []fieldError{{Field: "email", Message: err.Error()}})
+	case errors.Is(err, model.ErrUserNotFound):
+		// A valid token whose account no longer exists or was deleted identifies nobody: not a server failure.
+		slog.Warn("email change refused: the account of the token is not active", "traceId", traceID)
+		writeUnauthorized(w, traceID)
 	case errors.Is(err, model.ErrEmailAlreadyRegistered):
 		writeJSON(w, http.StatusConflict, errorResponse{
 			Error: codeEmailRegistered, Message: "the email is already registered", TraceID: traceID,

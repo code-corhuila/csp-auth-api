@@ -69,6 +69,9 @@ type Config struct {
 	SMTPFrom               string
 	SMTPTLS                string
 	SMTPTimeout            time.Duration
+
+	EmailChangeMaxConcurrency int
+	EmailChangeQueueTimeout   time.Duration
 }
 
 // Lookup returns the value of an environment variable, as os.LookupEnv does.
@@ -103,6 +106,9 @@ func Load(lookup Lookup) (Config, error) {
 		return Config{}, err
 	}
 	if err := loadSMTP(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
+	if err := loadEmailChangeLimit(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
 
@@ -185,6 +191,32 @@ func loadSMTP(lookup Lookup, cfg *Config) error {
 	}
 	cfg.SMTPTimeout, err = durationValue(lookup, "APP_AUTH_SMTP_TIMEOUT", 5*time.Second)
 	return err
+}
+
+// maxEmailChangeQueueTimeout bounds APP_AUTH_EMAIL_CHANGE_QUEUE_TIMEOUT: a longer wait would approach the write timeout.
+const maxEmailChangeQueueTimeout = 5 * time.Second
+
+// loadEmailChangeLimit reads the bulkhead of PATCH /me/email (HU-AUTH-004, Norma 5.3.10): the request sends mail inside its
+// database transaction, so only that many run at once and the next ones wait at most the queue timeout before a 429.
+// With the email change enabled the concurrency has to stay below the pool, so the other routes always find a connection.
+func loadEmailChangeLimit(lookup Lookup, cfg *Config) error {
+	var err error
+	if cfg.EmailChangeMaxConcurrency, err = intValue(lookup, "APP_AUTH_EMAIL_CHANGE_MAX_CONCURRENCY", 4); err != nil {
+		return err
+	}
+	if cfg.EmailChangeMaxConcurrency < 1 {
+		return fmt.Errorf("APP_AUTH_EMAIL_CHANGE_MAX_CONCURRENCY %d must be at least 1", cfg.EmailChangeMaxConcurrency)
+	}
+	if cfg.EmailChangeQueueTimeout, err = durationValue(lookup, "APP_AUTH_EMAIL_CHANGE_QUEUE_TIMEOUT", time.Second); err != nil {
+		return err
+	}
+	if cfg.EmailChangeQueueTimeout > maxEmailChangeQueueTimeout {
+		return fmt.Errorf("APP_AUTH_EMAIL_CHANGE_QUEUE_TIMEOUT %s exceeds the maximum of %s", cfg.EmailChangeQueueTimeout, maxEmailChangeQueueTimeout)
+	}
+	if cfg.SMTPHost != "" && cfg.EmailChangeMaxConcurrency >= cfg.DatabaseMaxConnections {
+		return fmt.Errorf("APP_AUTH_EMAIL_CHANGE_MAX_CONCURRENCY %d must be below APP_AUTH_DATABASE_MAX_CONNECTIONS %d", cfg.EmailChangeMaxConcurrency, cfg.DatabaseMaxConnections)
+	}
+	return nil
 }
 
 // loadTokens reads where the signing key comes from (both sources empty means no key is configured)
