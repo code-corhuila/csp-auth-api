@@ -99,8 +99,14 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 			pool.Close()
 			return nil, noop, err
 		}
-		options = append(options, httpapi.WithEmailChange(authorizer, requestEmailChange, newVerifyEmailChange(pool)))
-		logger.Info("email change routes enabled")
+		gate, err := httpapi.NewBulkhead(cfg.EmailChangeMaxConcurrency, cfg.EmailChangeQueueTimeout)
+		if err != nil {
+			closeRedis()
+			pool.Close()
+			return nil, noop, fmt.Errorf("email change limit: %w", err)
+		}
+		options = append(options, httpapi.WithEmailChange(authorizer, requestEmailChange, newVerifyEmailChange(pool), gate))
+		logger.Info("email change routes enabled", "maxConcurrency", gate.Limit(), "queueTimeout", gate.Wait().String())
 	} else {
 		logger.Info("APP_AUTH_SMTP_HOST is not set: the email change is not enabled")
 	}

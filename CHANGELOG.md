@@ -142,6 +142,7 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   [#81](https://github.com/code-corhuila/csp-auth-api/issues/81)).
 - The email change no longer deadlocks when a request and a correct code race: the verification takes the account lock before the pending request, the order the request already used; an SMTP TLS mode other than `starttls` or `none` is rejected at startup instead of sending in clear (HU-AUTH-004, issue [#111](https://github.com/code-corhuila/csp-auth-api/issues/111)).
 - The `429` of `PATCH /api/v1/auth/me/email` answers `Retry-After` with the exact seconds until the oldest request of the rolling hour leaves the window, rounded up and never under 1, instead of a fixed 3600 (HU-AUTH-004, ADR-034).
+- `PATCH /api/v1/auth/me/email` has a bulkhead: at most `APP_AUTH_EMAIL_CHANGE_MAX_CONCURRENCY` requests (default 4) run at once and a request waits at most `APP_AUTH_EMAIL_CHANGE_QUEUE_TIMEOUT` (default 1s) for a slot; otherwise it answers `429 RATE_LIMITED` with `Retry-After: 1` before opening a transaction, so a slow SMTP relay no longer starves the pool and the other routes (HU-AUTH-004, ADR-034, norm 5.3.10, issue [#134](https://github.com/code-corhuila/csp-auth-api/issues/134)).
 
 ## Before the changelog
 

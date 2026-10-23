@@ -203,7 +203,8 @@ curl -i -X POST http://localhost:8081/api/v1/auth/me/email/verify -H "Authorizat
 
 The request normalizes the address to lower case and answers `202` with no body: the code is never in the response. An invalid address
 is `400`, an address used by any active account (the own one included) is `409 EMAIL_ALREADY_REGISTERED`, and the fourth request of a
-user in a rolling hour (superseded ones count) is `429 RATE_LIMITED` with `Retry-After: 3600`. A new request replaces the pending one.
+user in a rolling hour (superseded ones count) is `429 RATE_LIMITED` with `Retry-After: 3600`; `429` with `Retry-After: 1` also means
+that the service is busy sending other codes (bulkhead, see [Email delivery](#email-delivery-smtp)). A new request replaces the pending one.
 The code has six digits (`crypto/rand`, leading zeros kept), lasts 15 minutes and is handed to the `VerificationCodeSender` port
 inside the transaction of the request. The adapter is `SMTPVerificationCodeSender` (ADR-034): it sends one plain-text message in Spanish
 through the SMTP relay and nowhere else. If the relay fails the request is rolled back and the answer is `500`; the user asks again.
@@ -309,8 +310,10 @@ never versioned (Annex G):
 | `APP_AUTH_SMTP_FROM` | none | Sender address, required when the host is set. |
 | `APP_AUTH_SMTP_TLS` | `starttls` | `starttls` requires the relay to offer STARTTLS and fails otherwise; `none` is only for a local catcher. |
 | `APP_AUTH_SMTP_TIMEOUT` | `5s` | Go duration that bounds the whole exchange, connection included. |
+| `APP_AUTH_EMAIL_CHANGE_MAX_CONCURRENCY` | `4` | Bulkhead of `PATCH /me/email`: at most this many requests run at once. At least 1 and, with `APP_AUTH_SMTP_HOST` set, below `APP_AUTH_DATABASE_MAX_CONNECTIONS`, so the other routes always find a connection; otherwise the service does not start. |
+| `APP_AUTH_EMAIL_CHANGE_QUEUE_TIMEOUT` | `1s` | Go duration (maximum `5s`) a request waits for a free slot before it is refused. |
 
-Where the variables go: `deploy/compose.yml` passes the seven of them through from the platform environment (the `.env` of `csp-infra`;
+Where the variables go: `deploy/compose.yml` passes the seven of them and the two of the bulkhead through from the platform environment (the `.env` of `csp-infra`;
 in development its git-ignored `env/dev.env`, which may point at the local Mailpit below with `APP_AUTH_SMTP_TLS=none`), and `.env.example`
 lists them with no value for the host, user, password and sender. In qa and main the SMTP relay and its credentials are provided by Oscar and
 set per environment as secrets (`APP_AUTH_SMTP_HOST`, `_USER`, `_PASSWORD`, `_FROM`); they are never versioned. Without
@@ -319,7 +322,10 @@ set per environment as secrets (`APP_AUTH_SMTP_HOST`, `_USER`, `_PASSWORD`, `_FR
 A `404` on the two routes therefore means the service runs without `APP_AUTH_SMTP_HOST`, not that the route does not exist. A relay that
 fails is a `500` with a `WARN` that carries the user id and the class of the error (`connect`, `tls`, `auth`, `rejected`, `timeout`,
 `canceled`...); the code, the address and the credentials are never logged. The SMTP call runs inside the database transaction, so a slow
-relay holds a connection for up to the timeout.
+relay holds a connection for up to the timeout. That is why `PATCH /me/email` has a bulkhead (Norma 5.3.10): when
+`APP_AUTH_EMAIL_CHANGE_MAX_CONCURRENCY` requests are in flight, the next one waits at most `APP_AUTH_EMAIL_CHANGE_QUEUE_TIMEOUT` and is
+then answered `429 RATE_LIMITED` with `Retry-After: 1` **before a transaction is opened**, with a `WARN` (`email change request refused:
+no free slot`, the limit and the wait, never the address). `POST /me/email/verify` sends nothing and is not limited.
 
 To try it locally with Mailpit (a catcher that keeps the messages, never use it outside a developer machine):
 
