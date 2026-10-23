@@ -305,3 +305,16 @@ func TestRequestEmailChangeAcceptsTheLongestEmail(t *testing.T) {
 		t.Errorf("status = %d, calls = %d, want 202 and one call", rec.Code, useCase.called)
 	}
 }
+
+func TestRequestEmailChangeAnswers401WithoutAnErrorLogWhenTheAccountOfTheTokenIsGone(t *testing.T) {
+	logs := captureLog(t)
+
+	rec := sendEmailChange(&fakeUserAuthorizer{}, &fakeRequestEmailChange{err: model.ErrUserNotFound}, &fakeVerifyEmailChange{}, traced(requestAttempt(emailBody)))
+
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), `"error":"UNAUTHORIZED"`) || rec.Header().Get("WWW-Authenticate") != "Bearer" {
+		t.Errorf("status = %d, body = %s, want 401 UNAUTHORIZED", rec.Code, rec.Body)
+	}
+	if strings.Contains(logs.String(), "level=ERROR") {
+		t.Errorf("log = %s, want no ERROR line for an account that is gone", logs)
+	}
+}
