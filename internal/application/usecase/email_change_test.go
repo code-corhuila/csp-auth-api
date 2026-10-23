@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -472,5 +473,30 @@ func TestVerifyChangeRollsBackOnUnexpectedRepositoryFailures(t *testing.T) {
 				t.Errorf("error = %v, committed = %v, events = %v, want the failure and a rollback", err, f.transactions.committed, f.outbox.events)
 			}
 		})
+	}
+}
+
+func TestRequestChangeReportsAnAccountThatIsGoneAndWritesNothing(t *testing.T) {
+	f := newRequestFixture()
+	f.requests.lockErr = model.ErrUserNotFound
+
+	err := f.useCase.RequestChange(context.Background(), requestCommand())
+
+	if !errors.Is(err, model.ErrUserNotFound) || len(f.requests.added) != 0 || len(f.sender.deliveries) != 0 {
+		t.Errorf("error = %v, added = %v, deliveries = %v, want ErrUserNotFound and nothing stored or sent", err, f.requests.added, f.sender.deliveries)
+	}
+	if want := []string{"begin", "lock-requests", "rollback"}; !reflect.DeepEqual(f.journal.steps, want) {
+		t.Errorf("steps = %v, want %v", f.journal.steps, want)
+	}
+}
+
+func TestRequestChangeRejectsAnEmailLongerThanTheDatabaseStoresBeforeOpeningATransaction(t *testing.T) {
+	f := newRequestFixture()
+	command := in.RequestEmailChangeCommand{UserID: "user-1", Email: strings.Repeat("a", model.MaxEmailLength) + "@example.com"}
+
+	err := f.useCase.RequestChange(context.Background(), command)
+
+	if !errors.Is(err, model.ErrInvalidEmail) || len(f.journal.steps) != 0 {
+		t.Errorf("error = %v, steps = %v, want ErrInvalidEmail and no transaction", err, f.journal.steps)
 	}
 }

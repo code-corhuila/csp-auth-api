@@ -282,3 +282,44 @@ func TestVerifyEmailChangeRejectsAMissingKeyAndAnUnreadableBodyWithoutCallingThe
 		}
 	}
 }
+
+func TestRequestEmailChangeAnswers401WithoutAnErrorLogWhenTheAccountOfTheTokenIsGone(t *testing.T) {
+	logs := captureLog(t)
+
+	rec := sendEmailChange(&fakeUserAuthorizer{}, &fakeRequestEmailChange{err: model.ErrUserNotFound}, &fakeVerifyEmailChange{}, traced(requestAttempt(emailBody)))
+
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), `"error":"UNAUTHORIZED"`) || rec.Header().Get("WWW-Authenticate") != "Bearer" {
+		t.Errorf("status = %d, body = %s, want 401 UNAUTHORIZED", rec.Code, rec.Body)
+	}
+	if strings.Contains(logs.String(), "level=ERROR") {
+		t.Errorf("log = %s, want no ERROR line for an account that is gone", logs)
+	}
+}
+
+// addressOfLength builds a valid address of exactly n characters.
+func addressOfLength(n int) string {
+	const domain = "@example.com"
+	return strings.Repeat("a", n-len(domain)) + domain
+}
+
+func TestRequestEmailChangeRejectsAnEmailLongerThanTheDatabaseStoresWith400(t *testing.T) {
+	useCase := &fakeRequestEmailChange{}
+
+	rec := sendEmailChange(&fakeUserAuthorizer{}, useCase, &fakeVerifyEmailChange{},
+		traced(requestAttempt(`{"email":"`+addressOfLength(model.MaxEmailLength+1)+`"}`)))
+
+	if rec.Code != http.StatusBadRequest || useCase.called != 0 || !strings.Contains(rec.Body.String(), `"field":"email"`) {
+		t.Errorf("status = %d, calls = %d, body = %s, want 400 on the field email and no call", rec.Code, useCase.called, rec.Body)
+	}
+}
+
+func TestRequestEmailChangeAcceptsTheLongestEmail(t *testing.T) {
+	useCase := &fakeRequestEmailChange{}
+
+	rec := sendEmailChange(&fakeUserAuthorizer{}, useCase, &fakeVerifyEmailChange{},
+		traced(requestAttempt(`{"email":"`+addressOfLength(model.MaxEmailLength)+`"}`)))
+
+	if rec.Code != http.StatusAccepted || useCase.called != 1 {
+		t.Errorf("status = %d, calls = %d, want 202 and one call", rec.Code, useCase.called)
+	}
+}

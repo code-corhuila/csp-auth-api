@@ -111,6 +111,7 @@ func TestRegisterResponsesFulfillTheContract(t *testing.T) {
 		"200 replay":                 {&fakeRegister{result: replay}, attempt{body: validBody(), key: validKey, headers: withTrace()}},
 		"400 invalid fields":         {&fakeRegister{}, attempt{body: `{"email":"nope","password":"weakpw"}`, key: "short", headers: withTrace()}},
 		"400 unreadable body":        {&fakeRegister{}, attempt{body: `{"email":`, key: validKey}},
+		"400 email too long":         {&fakeRegister{}, attempt{body: strings.Replace(validBody(), "Maria@Example.com", addressOfLength(model.MaxEmailLength+1), 1), key: validKey, headers: withTrace()}},
 		"400 domain validation":      {&fakeRegister{err: model.ErrInvalidPhone}, attempt{body: validBody(), key: validKey, headers: withTrace()}},
 		"409 email registered":       {&fakeRegister{err: model.ErrEmailAlreadyRegistered}, attempt{body: validBody(), key: validKey, headers: withTrace()}},
 		"409 key reused":             {&fakeRegister{err: model.ErrIdempotencyKeyConflict}, attempt{body: validBody(), key: validKey, headers: withTrace()}},
