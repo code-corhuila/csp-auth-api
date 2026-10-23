@@ -294,9 +294,14 @@ password, so a locked address costs no bcrypt.
 | `APP_AUTH_LOGIN_MAX_ATTEMPTS` | `10` | Failures inside the window that lock the address (1 to 1000) |
 | `APP_AUTH_LOGIN_WINDOW` | `5m` | Window in which the failures are counted (Go duration) |
 | `APP_AUTH_LOGIN_LOCK` | `5m` | How long a locked address is rejected with `429` (Go duration) |
+| `APP_AUTH_LOGIN_LIMIT_TIMEOUT` | `300ms` | Most one call of the limiter waits for Redis (positive Go duration, at most `5s`); the revoked token list keeps `APP_AUTH_REDIS_TIMEOUT` |
+| `APP_AUTH_LOGIN_LIMIT_PAUSE` | `10s` | How long the limiter is not called after a failure (positive Go duration, at most `5m`) |
 
 If Redis cannot be consulted the login **goes on without the limit** and a `WARN` is logged; the per-IP limit of the gateway stays
-active. Without `APP_AUTH_REDIS_URL` the login is not limited (INFO line at start).
+active. The wait is bounded (ADR-048): each call of the limiter gives up after `APP_AUTH_LOGIN_LIMIT_TIMEOUT`, and after a failure the
+limiter is not called for `APP_AUTH_LOGIN_LIMIT_PAUSE`, so only the first login of an outage waits (one timeout at most) and the
+`WARN` is written once per pause. When the pause ends the next login tries Redis again. Without `APP_AUTH_REDIS_URL` the login is not
+limited (INFO line at start).
 ## Email delivery (SMTP)
 
 The code of the email change goes to the SMTP relay of the platform (`net/smtp`, ADR-034). All the settings are domain variables,

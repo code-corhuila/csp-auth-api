@@ -141,11 +141,15 @@ func openRedisState(logger *slog.Logger, cfg config.Config) (redisState, func(),
 	if err != nil {
 		return redisState{}, nil, fmt.Errorf("login attempt limit: %w", err)
 	}
+	if cfg.LoginLimitTimeout <= 0 || cfg.LoginLimitPause <= 0 {
+		return redisState{}, nil, errors.New("login attempt limit: the timeout and the pause must be positive")
+	}
 	client, err := redis.NewClient(redis.ClientSettings{URL: cfg.RedisURL, Timeout: cfg.RedisTimeout})
 	if err != nil {
 		return redisState{}, nil, err
 	}
-	state := redisState{revoked: redis.NewRevokedTokens(client), attempts: redis.NewLoginAttempts(client, policy)}
+	attempts := redis.NewBoundedLoginAttempts(redis.NewLoginAttempts(client, policy), cfg.LoginLimitTimeout, cfg.LoginLimitPause, system.Clock{})
+	state := redisState{revoked: redis.NewRevokedTokens(client), attempts: attempts}
 	return state, func() { _ = client.Close() }, nil
 }
 
