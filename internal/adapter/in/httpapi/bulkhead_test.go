@@ -114,13 +114,14 @@ func TestRequestEmailChangeIsRefusedWith429BeforeTheUseCaseWhenNoSlotIsFree(t *t
 
 	started := time.Now()
 	rec := sendEmailChangeGated(gate, &fakeUserAuthorizer{}, slow, &fakeVerifyEmailChange{}, traced(requestAttempt(emailBody)))
+	took := time.Since(started)
 
 	requireContract(t, http.MethodPatch, emailPath, rec)
 	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "1" || !strings.Contains(rec.Body.String(), `"error":"RATE_LIMITED"`) {
 		t.Errorf("status = %d, Retry-After = %q, body = %s, want 429 RATE_LIMITED with Retry-After 1", rec.Code, rec.Header().Get("Retry-After"), rec.Body)
 	}
-	if slow.calls != 1 || time.Since(started) > time.Second {
-		t.Errorf("use case calls = %d after %v, want the refused request to never reach it and to be answered at once", slow.calls, time.Since(started))
+	if slow.calls != 1 || took > time.Second {
+		t.Errorf("use case calls = %d after %v, want the refused request to never reach it and to be answered at once", slow.calls, took)
 	}
 	line := logs.String()
 	if !strings.Contains(line, "level=WARN") || !strings.Contains(line, "limit=1") || strings.Contains(line, "example.com") {
