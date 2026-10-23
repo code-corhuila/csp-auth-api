@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -10,6 +11,26 @@ import (
 
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/in"
 )
+
+// stuckGuard is far above anything these tests need, so a loaded machine or a loaded CI runner cannot trip it. It only
+// catches a call that waits for something that does not happen: the gates of the tests that use it wait longer than it.
+// The tests do not measure how fast a call is, because that depends on the machine and not on the bulkhead.
+const stuckGuard = 30 * time.Second
+
+// within runs f and fails the test when it has not returned after stuckGuard.
+func within(t *testing.T, what string, f func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f()
+	}()
+	select {
+	case <-done:
+	case <-time.After(stuckGuard):
+		t.Fatalf("%s: still waiting after %v", what, stuckGuard)
+	}
+}
 
 func TestNewBulkheadRejectsALimitUnderOneAndANonPositiveWait(t *testing.T) {
 	for name, c := range map[string]struct {
@@ -53,30 +74,37 @@ func TestBulkheadReleaseFreesTheSlotAndIsHarmlessWhenRepeated(t *testing.T) {
 	second()
 }
 
+// The wait of the gate is longer than stuckGuard: a waiter that is only admitted when its wait ends would be refused or
+// would trip the guard, so admitting it proves that the release woke it.
 func TestBulkheadAdmitsAWaiterAsSoonAsASlotIsFree(t *testing.T) {
-	gate, _ := NewBulkhead(1, 2*time.Second)
+	gate, _ := NewBulkhead(1, 2*stuckGuard)
 	release, _ := gate.Acquire(context.Background())
 	go func() { time.Sleep(20 * time.Millisecond); release() }()
 
-	started := time.Now()
-	_, ok := gate.Acquire(context.Background())
+	var ok bool
+	within(t, "a waiter must be admitted when the slot is released, not when its wait ends", func() {
+		_, ok = gate.Acquire(context.Background())
+	})
 
-	if !ok || time.Since(started) > time.Second {
-		t.Errorf("Acquire() ok = %v after %v, want admitted as soon as the slot is released", ok, time.Since(started))
+	if !ok {
+		t.Error("Acquire() refused, want admitted as soon as the slot is released")
 	}
 }
 
+// Same idea: with a wait longer than stuckGuard, a gate that ignored the cancelled request would still be waiting.
 func TestBulkheadStopsWaitingWhenTheCallerIsGone(t *testing.T) {
-	gate, _ := NewBulkhead(1, 5*time.Second)
+	gate, _ := NewBulkhead(1, 2*stuckGuard)
 	gate.Acquire(context.Background())
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	started := time.Now()
-	_, ok := gate.Acquire(ctx)
+	var ok bool
+	within(t, "a cancelled request must stop waiting for a slot", func() {
+		_, ok = gate.Acquire(ctx)
+	})
 
-	if ok || time.Since(started) > time.Second {
-		t.Errorf("Acquire() ok = %v after %v, want refused at once for a cancelled request", ok, time.Since(started))
+	if ok {
+		t.Error("Acquire() admitted a cancelled request, want it refused")
 	}
 }
 
@@ -101,6 +129,8 @@ func (b *blockingRequestEmailChange) RequestChange(context.Context, in.RequestEm
 	return nil
 }
 
+// The slow call never ends until the test releases it, so a refused request that came back at all was answered
+// without waiting for it. The test does not time that answer: it only fails when the request is stuck.
 func TestRequestEmailChangeIsRefusedWith429BeforeTheUseCaseWhenNoSlotIsFree(t *testing.T) {
 	logs := captureLog(t)
 	gate, _ := NewBulkhead(1, 20*time.Millisecond)
@@ -111,24 +141,28 @@ func TestRequestEmailChangeIsRefusedWith429BeforeTheUseCaseWhenNoSlotIsFree(t *t
 		close(done)
 	}()
 	<-slow.entered
+	t.Cleanup(func() { close(slow.proceed); <-done })
 
-	started := time.Now()
-	rec := sendEmailChangeGated(gate, &fakeUserAuthorizer{}, slow, &fakeVerifyEmailChange{}, traced(requestAttempt(emailBody)))
-	took := time.Since(started)
+	var rec *httptest.ResponseRecorder
+	within(t, "a request without a free slot must be refused, not held behind the slow one", func() {
+		rec = sendEmailChangeGated(gate, &fakeUserAuthorizer{}, slow, &fakeVerifyEmailChange{}, traced(requestAttempt(emailBody)))
+	})
 
-	requireContract(t, http.MethodPatch, emailPath, rec)
 	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "1" || !strings.Contains(rec.Body.String(), `"error":"RATE_LIMITED"`) {
 		t.Errorf("status = %d, Retry-After = %q, body = %s, want 429 RATE_LIMITED with Retry-After 1", rec.Code, rec.Header().Get("Retry-After"), rec.Body)
 	}
-	if slow.calls != 1 || took > time.Second {
-		t.Errorf("use case calls = %d after %v, want the refused request to never reach it and to be answered at once", slow.calls, took)
+	slow.mu.Lock()
+	calls := slow.calls
+	slow.mu.Unlock()
+	if calls != 1 {
+		t.Errorf("use case calls = %d, want the refused request to never reach it", calls)
 	}
 	line := logs.String()
 	if !strings.Contains(line, "level=WARN") || !strings.Contains(line, "limit=1") || strings.Contains(line, "example.com") {
 		t.Errorf("log = %s, want a WARN with the limit and no address", line)
 	}
-	close(slow.proceed)
-	<-done
+	// Last, because without the contract file it skips the test: the checks above must already have run.
+	requireContract(t, http.MethodPatch, emailPath, rec)
 }
 
 func TestRequestEmailChangeReleasesItsSlotWhenTheUseCaseFailsOrPanics(t *testing.T) {
