@@ -53,6 +53,11 @@ type emailAttempt struct {
 }
 
 func sendEmailChange(authorizer *fakeUserAuthorizer, request in.RequestEmailChange, verify in.VerifyEmailChange, a emailAttempt) *httptest.ResponseRecorder {
+	gate, _ := NewBulkhead(1000, time.Second)
+	return sendEmailChangeGated(gate, authorizer, request, verify, a)
+}
+
+func sendEmailChangeGated(gate *Bulkhead, authorizer *fakeUserAuthorizer, request in.RequestEmailChange, verify in.VerifyEmailChange, a emailAttempt) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(a.method, a.path, strings.NewReader(a.body))
 	req.Header.Set("Content-Type", "application/json")
 	if a.contentType != "" {
@@ -66,7 +71,7 @@ func sendEmailChange(authorizer *fakeUserAuthorizer, request in.RequestEmailChan
 		req.Header.Set(name, value)
 	}
 	rec := httptest.NewRecorder()
-	NewHandler(WithEmailChange(authorizer, request, verify)).ServeHTTP(rec, req)
+	NewHandler(WithEmailChange(authorizer, request, verify, gate)).ServeHTTP(rec, req)
 	return rec
 }
 
