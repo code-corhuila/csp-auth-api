@@ -19,6 +19,9 @@ func TestNewClientAppliesTheTimeoutToEveryPhase(t *testing.T) {
 	if options.Username != "auth_app" || options.Addr != "redis:6379" {
 		t.Errorf("user = %q, addr = %q", options.Username, options.Addr)
 	}
+	if !options.ContextTimeoutEnabled {
+		t.Error("ContextTimeoutEnabled = false, want the deadline of a call to cut the wait (ADR-048)")
+	}
 }
 
 func TestNewClientRejectsAnInvalidURLWithoutRevealingIt(t *testing.T) {

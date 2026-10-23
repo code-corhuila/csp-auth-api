@@ -66,7 +66,7 @@ func (l *LoginUser) ensureNotLimited(ctx context.Context, client string) error {
 	}
 	remaining, err := l.attempts.LockedFor(ctx, client)
 	if err != nil {
-		slog.Warn("login attempt limit unavailable, the login goes on", "error", err)
+		warnUnlessPaused("login attempt limit unavailable, the login goes on", err)
 		return nil
 	}
 	if remaining > 0 {
@@ -80,7 +80,7 @@ func (l *LoginUser) recordFailure(ctx context.Context, client string) {
 		return
 	}
 	if err := l.attempts.RecordFailure(ctx, client); err != nil {
-		slog.Warn("failed login could not be counted", "error", err)
+		warnUnlessPaused("failed login could not be counted", err)
 	}
 }
 
@@ -89,8 +89,17 @@ func (l *LoginUser) forgetFailures(ctx context.Context, client string) {
 		return
 	}
 	if err := l.attempts.Clear(ctx, client); err != nil {
-		slog.Warn("failed logins could not be cleared", "error", err)
+		warnUnlessPaused("failed logins could not be cleared", err)
 	}
+}
+
+// warnUnlessPaused logs a failure of the limit store. A store that is paused (ADR-048) already wrote the WARN of the pause
+// when it opened, so its answers are not logged again, or an outage would write two lines per login.
+func warnUnlessPaused(message string, err error) {
+	if errors.Is(err, out.ErrLoginAttemptsPaused) {
+		return
+	}
+	slog.Warn(message, "error", err)
 }
 
 func (l *LoginUser) authenticate(ctx context.Context, command in.LoginUserCommand) (*model.User, error) {

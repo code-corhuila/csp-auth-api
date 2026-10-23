@@ -65,6 +65,8 @@ type Config struct {
 	LoginMaxAttempts       int
 	LoginWindow            time.Duration
 	LoginLock              time.Duration
+	LoginLimitTimeout      time.Duration
+	LoginLimitPause        time.Duration
 	SMTPHost               string
 	SMTPPort               int
 	SMTPUser               string
@@ -184,7 +186,33 @@ func loadLoginLimit(lookup Lookup, cfg *Config) error {
 		return err
 	}
 	cfg.LoginLock, err = durationValue(lookup, "APP_AUTH_LOGIN_LOCK", 5*time.Minute)
-	return err
+	if err != nil {
+		return err
+	}
+	return loadLoginLimiterBounds(lookup, cfg)
+}
+
+// Bounds of the login limiter against Redis (ADR-048): the longest one call may wait and the longest pause after a failure.
+const (
+	maxLoginLimitTimeout = 5 * time.Second
+	maxLoginLimitPause   = 5 * time.Minute
+)
+
+func loadLoginLimiterBounds(lookup Lookup, cfg *Config) error {
+	var err error
+	if cfg.LoginLimitTimeout, err = durationValue(lookup, "APP_AUTH_LOGIN_LIMIT_TIMEOUT", 300*time.Millisecond); err != nil {
+		return err
+	}
+	if cfg.LoginLimitTimeout > maxLoginLimitTimeout {
+		return fmt.Errorf("APP_AUTH_LOGIN_LIMIT_TIMEOUT %v is above the maximum %v", cfg.LoginLimitTimeout, maxLoginLimitTimeout)
+	}
+	if cfg.LoginLimitPause, err = durationValue(lookup, "APP_AUTH_LOGIN_LIMIT_PAUSE", 10*time.Second); err != nil {
+		return err
+	}
+	if cfg.LoginLimitPause > maxLoginLimitPause {
+		return fmt.Errorf("APP_AUTH_LOGIN_LIMIT_PAUSE %v is above the maximum %v", cfg.LoginLimitPause, maxLoginLimitPause)
+	}
+	return nil
 }
 
 // loadSMTP reads the SMTP relay that delivers the email verification code (ADR-034). An empty host means the
