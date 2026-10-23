@@ -140,6 +140,7 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Fixed
 
+- The bulkhead unit tests no longer depend on the speed of the machine (HU-AUTH-004, issue [#134](https://github.com/code-corhuila/csp-auth-api/issues/134)): `TestRequestEmailChangeIsRefusedWith429BeforeTheUseCaseWhenNoSlotIsFree` failed under load because it asserted an answer in under 1 second, and the other two upper bounds of 1 second of the file had the same flaw. They now use a guard of 30 seconds that only catches a call that is stuck, and the contract check runs last so the other checks also run when the contract file is not set.
 - The container restarts when the database is not ready at start: `restart: on-failure` in `deploy/compose.yml`; on the first `up` of the platform the service started before PostgreSQL answered and stayed stopped (HU-AUTH-003, issue [#84](https://github.com/code-corhuila/csp-auth-api/issues/84)).
 - The container image builds again: `deploy/Dockerfile` copies `go.sum` together with `go.mod` before `go mod download`;
   without it `go build` failed with `missing go.sum entry` (HU-AUTH-003, issue
