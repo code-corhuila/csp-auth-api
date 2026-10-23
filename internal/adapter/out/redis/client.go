@@ -26,6 +26,8 @@ func NewClient(settings ClientSettings) (*goredis.Client, error) {
 	options.ReadTimeout = settings.Timeout
 	options.WriteTimeout = settings.Timeout
 	options.MaxRetries = 0
+	// A call made with a context that has a deadline stops at that deadline: the login limiter bounds its own waits (ADR-048).
+	options.ContextTimeoutEnabled = true
 	options.DisableIndentity = true
 	return goredis.NewClient(options), nil
 }

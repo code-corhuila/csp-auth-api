@@ -114,6 +114,10 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   lock, even with the right credentials; the address is the last entry of `X-Forwarded-For`. New `APP_AUTH_LOGIN_MAX_ATTEMPTS`,
   `APP_AUTH_LOGIN_WINDOW` and `APP_AUTH_LOGIN_LOCK`. Without Redis the login is not limited and with Redis down it goes on with a `WARN`.
   Contract, end-to-end and wiring tests.
+- HU-AUTH-005, bounded latency of the login limiter when Redis fails (ADR-048, issue [#139](https://github.com/code-corhuila/csp-auth-api/issues/139)):
+  each call of the limiter waits at most `APP_AUTH_LOGIN_LIMIT_TIMEOUT` (300ms, at most 5s) and, after a failure, the limiter is not called
+  for `APP_AUTH_LOGIN_LIMIT_PAUSE` (10s, at most 5m), so a login no longer takes 4 to 6 seconds while Redis is down. One `WARN` per pause;
+  the Redis client now honours the deadline of a call (`ContextTimeoutEnabled`). Unit tests with a blocking store and a Redis that hangs.
 
 ### Changed
 
