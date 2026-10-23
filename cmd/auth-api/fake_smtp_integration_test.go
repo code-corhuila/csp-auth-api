@@ -26,6 +26,7 @@ type fakeSMTP struct {
 	listener net.Listener
 	mu       sync.Mutex
 	messages map[string]string
+	delay    time.Duration // how long the relay takes to accept a message: a slow relay
 }
 
 func startFakeSMTP(t *testing.T) *fakeSMTP {
@@ -97,6 +98,7 @@ func (f *fakeSMTP) serve(conn net.Conn) {
 			f.mu.Lock()
 			f.messages[recipient] = data.String()
 			f.mu.Unlock()
+			time.Sleep(f.delay)
 			reply("250 queued")
 		case "QUIT":
 			reply("221 bye")
