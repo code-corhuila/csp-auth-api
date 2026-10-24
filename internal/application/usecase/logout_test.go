@@ -12,9 +12,29 @@ import (
 
 // fakeRevokedTokens records the entries of the revoked list and when they were written.
 type fakeRevokedTokens struct {
-	journal *journal
-	ttls    map[string]time.Duration
-	err     error
+	journal   *journal
+	ttls      map[string]time.Duration
+	err       error
+	markers   map[string]time.Time
+	markerErr error
+}
+
+func (f *fakeRevokedTokens) RevokeUserSessions(_ context.Context, userID string, at time.Time) error {
+	f.journal.record("mark user")
+	if f.markerErr != nil {
+		return f.markerErr
+	}
+	f.markers[userID] = at
+	return nil
+}
+
+func (f *fakeRevokedTokens) UserSessionsRevokedAt(_ context.Context, userID string) (time.Time, bool, error) {
+	f.journal.record("check user")
+	if f.markerErr != nil {
+		return time.Time{}, false, f.markerErr
+	}
+	at, found := f.markers[userID]
+	return at, found, nil
 }
 
 func (f *fakeRevokedTokens) Revoke(_ context.Context, jti string, ttl time.Duration) error {
@@ -36,7 +56,7 @@ func (f *fakeRevokedTokens) IsRevoked(_ context.Context, jti string) (bool, erro
 }
 
 func newRevokedList() *fakeRevokedTokens {
-	return &fakeRevokedTokens{journal: &journal{}, ttls: map[string]time.Duration{}}
+	return &fakeRevokedTokens{journal: &journal{}, ttls: map[string]time.Duration{}, markers: map[string]time.Time{}}
 }
 
 type logoutFixture struct {
@@ -59,7 +79,7 @@ func newLogoutFixture(t *testing.T) *logoutFixture {
 		}
 		tokens.rows[stored.Hash()] = stored
 	}
-	revoked := &fakeRevokedTokens{journal: journal, ttls: map[string]time.Duration{}}
+	revoked := &fakeRevokedTokens{journal: journal, ttls: map[string]time.Duration{}, markers: map[string]time.Time{}}
 	transactions := &fakeTransactions{journal: journal}
 	return &logoutFixture{useCase: NewLogout(tokens, revoked, transactions, fakeClock{}), tokens: tokens, revoked: revoked, journal: journal}
 }

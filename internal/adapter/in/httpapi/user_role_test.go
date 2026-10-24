@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -146,5 +147,24 @@ func TestChangeUserRoleTranslatesTheErrorsOfTheUseCase(t *testing.T) {
 		if rec.Code != c.status || !strings.Contains(body, `"error":"`+c.code+`"`) || strings.Contains(body, "driver failure") {
 			t.Errorf("%s: status = %d, body = %s, want %d %s without the cause", name, rec.Code, body, c.status, c.code)
 		}
+	}
+}
+
+// The role and the refresh tokens are already committed when the marker of the access tokens cannot
+// be written; the call answers 500 and logs an ERROR that names neither the token nor a jti
+// (ADR-031, amendment 2026-10-24).
+var errSessionsNotMarked = fmt.Errorf("the role was changed but the sessions of the user could not be marked as ended: %w", errors.New("dial tcp 10.0.0.5:6379: connection refused"))
+
+func TestChangeUserRoleAnswers500AndLogsAnErrorWhenTheSessionsCannotBeMarked(t *testing.T) {
+	logs := captureLog(t)
+
+	rec := sendRoleChange(&fakeUserAuthorizer{}, &fakeChangeRole{err: errSessionsNotMarked}, roleAttempt{key: roleKey, body: `{"role":"ADMIN","enabled":false}`})
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(body, `"error":"INTERNAL_ERROR"`) || strings.Contains(body, "refused") {
+		t.Errorf("status = %d, body = %s, want a neutral 500 INTERNAL_ERROR", rec.Code, body)
+	}
+	if !strings.Contains(logs.String(), "level=ERROR") || strings.Contains(logs.String(), userSecret) || strings.Contains(logs.String(), "jti") {
+		t.Errorf("log = %s, want an ERROR without the token or the jti", logs)
 	}
 }
