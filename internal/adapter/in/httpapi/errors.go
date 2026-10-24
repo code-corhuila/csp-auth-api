@@ -23,6 +23,7 @@ const (
 	codeLastAdmin        = "LAST_ADMIN"
 	codeNoRoles          = "USER_WITHOUT_ROLES"
 	codeRateLimited      = "RATE_LIMITED"
+	codeInvalidToken     = "INVALID_TOKEN"
 )
 
 // fieldError names one invalid input: a body property or a header.
@@ -218,6 +219,37 @@ func translateVerifyEmailChangeError(w http.ResponseWriter, traceID string, err 
 		})
 	default:
 		slog.Error("verify email change failed", "traceId", traceID, "error", err)
+		writeInternal(w, traceID)
+	}
+}
+
+// translateRequestPasswordResetError is the only place that maps the errors of the password reset request to HTTP.
+// An unknown or inactive account is not an error of the use case, so nothing here can tell them apart. The
+// cause of an unexpected error goes only to the log, which never sees the address or the token.
+func translateRequestPasswordResetError(w http.ResponseWriter, traceID string, err error) {
+	if errors.Is(err, model.ErrInvalidEmail) {
+		writeValidation(w, traceID, []fieldError{{Field: "email", Message: err.Error()}})
+		return
+	}
+	slog.Error("request password reset failed", "traceId", traceID, "error", err)
+	writeInternal(w, traceID)
+}
+
+// translateResetPasswordError is the only place that maps the errors of the password reset to HTTP. A token that is
+// unknown, expired, used or superseded, and one of an inactive account, gets one fixed answer, so the client
+// cannot tell which. The cause of an unexpected error goes only to the log, which never sees the token or the password.
+func translateResetPasswordError(w http.ResponseWriter, traceID string, err error) {
+	switch {
+	case errors.Is(err, model.ErrInvalidResetToken):
+		writeValidation(w, traceID, []fieldError{{Field: "token", Message: err.Error()}})
+	case errors.Is(err, model.ErrWeakPassword):
+		writeValidation(w, traceID, []fieldError{{Field: "password", Message: err.Error()}})
+	case errors.Is(err, model.ErrPasswordResetRejected):
+		writeJSON(w, http.StatusUnauthorized, errorResponse{
+			Error: codeInvalidToken, Message: "Reset token is invalid or expired", TraceID: traceID,
+		})
+	default:
+		slog.Error("reset password failed", "traceId", traceID, "error", err)
 		writeInternal(w, traceID)
 	}
 }

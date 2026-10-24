@@ -36,7 +36,9 @@ type poolOpener func(ctx context.Context, settings persistence.PoolSettings) (*p
 //     GET /users and PATCH /users/{userId}/role, open to the access tokens that hold user:role:update, and
 //     PATCH /me/email and POST /me/email/verify when APP_AUTH_SMTP_HOST is set (the verification code goes
 //     to that SMTP relay, ADR-034; without it the two routes are not enabled), open to the access tokens that
-//     hold profile:update:self, and
+//     hold profile:update:self,
+//     POST /forgot-password and POST /reset-password, public, when APP_AUTH_SMTP_HOST and APP_AUTH_PASSWORD_RESET_URL are
+//     set (ADR-050; without them the two routes answer the 404 of the contract), and
 //     POST /internal/maintenance/purge, open only to the service tokens whose subject is in SERVICE_SUBJECTS.
 //   - Also an APP_AUTH_REDIS_URL: POST /logout, which lists the revoked access tokens in Redis, and the check of
 //     that list on POST /logout, GET /users, PATCH /users/{userId}/role and the email change. Without it the route is not enabled and
@@ -110,6 +112,13 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 	} else {
 		logger.Info("APP_AUTH_SMTP_HOST is not set: the email change is not enabled")
 	}
+	passwordReset, closePasswordReset, err := passwordResetRoutes(cfg, logger, pool)
+	if err != nil {
+		closeRedis()
+		pool.Close()
+		return nil, noop, err
+	}
+	options = append(options, passwordReset)
 	options = append(options, httpapi.WithPurgeOldRecords(newAuthorizeService(cfg, issuer), newPurgeOldRecords(pool)))
 	logger.Info("purge route enabled")
 	if cfg.RedisURL != "" {
@@ -117,6 +126,7 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 		logger.Info("logout route enabled")
 	}
 	return httpapi.NewHandler(options...), func() {
+		closePasswordReset()
 		closeRedis()
 		pool.Close()
 	}, nil
