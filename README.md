@@ -287,7 +287,10 @@ over 4 KiB, is `400 VALIDATION_ERROR`; the only `429` is the bulkhead below.
 `reset-password` answers `204` and, in one transaction, consumes the token, replaces the password hash (bcrypt, the cost of registration)
 and revokes every active refresh token of the user. An unknown, expired, used or superseded token, and the token of an account that is no
 longer active, are the same `401 INVALID_TOKEN`; a malformed token or a password that breaks the rules of registration (8 to 72 bytes, one
-uppercase letter, one digit) is `400` and does not consume the token. Access tokens already issued last until they expire (at most one hour).
+uppercase letter, one digit) is `400` and does not consume the token. So is a password equal to the current one of the account (`400
+VALIDATION_ERROR`, `details[0].field` `password`, message `The new password must differ from the current one`): it is compared, with the
+same bcrypt check as the login, only after the token proved valid, so the `401` cases never depend on it; nothing changes and the token still
+works with another password. Previous passwords are not remembered: only the current one is refused. Access tokens already issued last until they expire (at most one hour).
 
 Each route has a bulkhead (Norma 5.3.10): at most `APP_AUTH_PASSWORD_RESET_MAX_CONCURRENCY` requests run at once and the next one waits at most
 `APP_AUTH_PASSWORD_RESET_QUEUE_TIMEOUT` before it is answered `429 RATE_LIMITED` with `Retry-After: 1`, after the body is read and before any
