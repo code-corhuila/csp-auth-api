@@ -45,7 +45,10 @@ func TestAccessVerifierReturnsTheClaimsOfATokenOfTheIssuer(t *testing.T) {
 	if !claims.ExpiresAt.Equal(want.ExpiresAt) {
 		t.Errorf("ExpiresAt = %v, want %v", claims.ExpiresAt, want.ExpiresAt)
 	}
-	claims.ExpiresAt = want.ExpiresAt
+	if !claims.IssuedAt.Equal(verifiedAt) {
+		t.Errorf("IssuedAt = %v, want %v: the iat of the token, which the user revocation rule compares", claims.IssuedAt, verifiedAt)
+	}
+	claims.ExpiresAt, claims.IssuedAt = want.ExpiresAt, want.IssuedAt
 	if !reflect.DeepEqual(claims, want) {
 		t.Errorf("claims = %+v, want %+v", claims, want)
 	}
@@ -72,6 +75,7 @@ func TestAccessVerifierRejectsEveryTokenThatTheIssuerWouldNotHaveSigned(t *testi
 		"unknown kid":             serviceToken(t, key, jwt.SigningMethodRS256, accessTokenClaims(), "unknown"),
 		"expired":                 serviceToken(t, key, jwt.SigningMethodRS256, with("exp", verifiedAt.Add(-time.Second).Unix()), ""),
 		"without exp":             serviceToken(t, key, jwt.SigningMethodRS256, with("exp", nil), ""),
+		"without iat":             serviceToken(t, key, jwt.SigningMethodRS256, with("iat", nil), ""),
 		"without jti":             serviceToken(t, key, jwt.SigningMethodRS256, with("jti", nil), ""),
 		"without sub":             serviceToken(t, key, jwt.SigningMethodRS256, with("sub", nil), ""),
 		"another issuer":          serviceToken(t, key, jwt.SigningMethodRS256, with("iss", "someone-else"), ""),
