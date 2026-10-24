@@ -166,3 +166,44 @@ func TestRequireAuthenticationAnswers500WhenTheTokenCannotBeChecked(t *testing.T
 		t.Errorf("status = %d, called = %d, body = %s, want 500 INTERNAL_ERROR and no logout", rec.Code, useCase.called, rec.Body)
 	}
 }
+
+// cancellingLogout stands for the use case while the browser leaves the page: the client connection
+// goes away (the request context is cancelled) in the middle of the call, and the work only
+// completes if the context it received is still alive and bounded.
+type cancellingLogout struct {
+	cancelRequest context.CancelFunc
+	revoked       bool
+	hasDeadline   bool
+	traceID       any
+}
+
+func (f *cancellingLogout) Logout(ctx context.Context, _ in.LogoutCommand) error {
+	f.cancelRequest()
+	_, f.hasDeadline = ctx.Deadline()
+	f.traceID = ctx.Value(traceKey{})
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.revoked = true
+	return nil
+}
+
+type traceKey struct{}
+
+func TestLogoutCompletesWhenTheClientDisconnectsInTheMiddleOfTheCall(t *testing.T) {
+	requestCtx, cancel := context.WithCancel(context.WithValue(context.Background(), traceKey{}, "trace-1"))
+	defer cancel()
+	useCase := &cancellingLogout{cancelRequest: cancel}
+	request := httptest.NewRequest(http.MethodPost, logoutPath, nil).WithContext(requestCtx)
+	request.Header.Set("Authorization", "Bearer "+userSecret)
+	rec := httptest.NewRecorder()
+
+	NewHandler(WithLogout(&fakeAuthenticator{}, useCase)).ServeHTTP(rec, request)
+
+	if rec.Code != http.StatusNoContent || !useCase.revoked {
+		t.Errorf("status = %d, revoked = %t, want 204 and the session ended although the client left", rec.Code, useCase.revoked)
+	}
+	if !useCase.hasDeadline || useCase.traceID != "trace-1" {
+		t.Errorf("deadline = %t, trace = %v, want a bounded context that keeps the values of the request", useCase.hasDeadline, useCase.traceID)
+	}
+}
