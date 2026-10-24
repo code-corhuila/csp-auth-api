@@ -2,13 +2,31 @@ package persistence
 
 import (
 	"context"
+	"errors"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/out"
 	"github.com/code-corhuila/csp-auth-api/internal/domain/model"
 )
 
-var _ out.PasswordUpdater = (*UserRepository)(nil)
+var (
+	_ out.PasswordUpdater       = (*UserRepository)(nil)
+	_ out.CurrentPasswordReader = (*UserRepository)(nil)
+)
+
+// PasswordHashOf returns the bcrypt hash of the active account userID. An account that does not exist or was
+// deleted is model.ErrUserNotFound.
+func (r *UserRepository) PasswordHashOf(ctx context.Context, userID string) (string, error) {
+	var hash string
+	err := executorFor(ctx, r.pool).QueryRow(ctx,
+		`SELECT password_hash FROM auth.app_user WHERE id = $1 AND deleted_at IS NULL`, userID).Scan(&hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", model.ErrUserNotFound
+	}
+	return hash, err
+}
 
 // UpdatePasswordHash replaces the bcrypt hash of the active account userID. An account that does not exist or
 // was deleted is model.ErrUserNotFound.

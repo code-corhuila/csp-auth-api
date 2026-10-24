@@ -47,6 +47,12 @@ type PasswordResetSender interface {
 	Send(ctx context.Context, delivery PasswordResetDelivery) error
 }
 
+// CurrentPasswordReader reads the stored hash of an account, in the transaction carried by the context.
+type CurrentPasswordReader interface {
+	// PasswordHashOf returns the bcrypt hash of the active account userID, or model.ErrUserNotFound.
+	PasswordHashOf(ctx context.Context, userID string) (string, error)
+}
+
 // PasswordUpdater replaces the password hash of an account, in the transaction carried by the context.
 type PasswordUpdater interface {
 	// UpdatePasswordHash stores hash for the active account userID, or returns model.ErrUserNotFound.

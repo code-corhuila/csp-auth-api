@@ -159,8 +159,18 @@ It answers `200` with the user after the change; a missing or invalid token is `
 invalid `userId`, `Idempotency-Key` or body `400`, an unknown user `404` and the revoke of the last active administrator `409`
 (`LAST_ADMIN`), as is revoking the only role of a user (`USER_WITHOUT_ROLES`; `LAST_ADMIN` wins when both apply). Asking for the state the user already has is a `200` that writes nothing and publishes no event, so the operation
 is idempotent by itself; the `Idempotency-Key` is validated but not stored. A real change writes the `UserRoleChanged` outbox row in the
-same transaction. The roles are read again from the database at login and at refresh, so the change reaches the user at their next
+same transaction. The roles are read again from the database at login and at refresh, so a grant reaches the user at their next
 token; a token already issued keeps its roles until it expires.
+
+**Removing `ADMIN` ends the sessions of the user** (ADR-031, amendment 2026-10-24). When a revoke changes something (not a grant, not a
+no-op, not a `LAST_ADMIN` or `USER_WITHOUT_ROLES` refusal) every active refresh token of the target is revoked in the same transaction
+as the role and the outbox row, and after the commit the service writes `blacklist:user:{userId}` in Redis (see
+[Revoked access tokens](#revoked-access-tokens)). From then the access tokens of the user issued at or before that second are `401` on
+every route that reads the revoked list, and their refresh tokens are `401 INVALID_REFRESH_TOKEN`; a new login gives a session with
+only `CLIENT`. An administrator who revokes their own `ADMIN` (while others exist) gets `200` and the next call is `401`. If the
+marker cannot be written the answer is `500 INTERNAL_ERROR` and an `ERROR` is logged, although the role and the refresh tokens are
+already changed; repeating the call is a no-op `200` that does not write the marker. Without `APP_AUTH_REDIS_URL` only the refresh
+tokens are revoked. No new event is published.
 
 `GET /api/v1/auth/users` (HU-AUTH-003, ADR-031) is enabled by the same settings and has the same guard: the permission `user:role:update`.
 It lists the accounts so an administrator can find the one to change:
@@ -287,7 +297,10 @@ over 4 KiB, is `400 VALIDATION_ERROR`; the only `429` is the bulkhead below.
 `reset-password` answers `204` and, in one transaction, consumes the token, replaces the password hash (bcrypt, the cost of registration)
 and revokes every active refresh token of the user. An unknown, expired, used or superseded token, and the token of an account that is no
 longer active, are the same `401 INVALID_TOKEN`; a malformed token or a password that breaks the rules of registration (8 to 72 bytes, one
-uppercase letter, one digit) is `400` and does not consume the token. Access tokens already issued last until they expire (at most one hour).
+uppercase letter, one digit) is `400` and does not consume the token. So is a password equal to the current one of the account (`400
+VALIDATION_ERROR`, `details[0].field` `password`, message `The new password must differ from the current one`): it is compared, with the
+same bcrypt check as the login, only after the token proved valid, so the `401` cases never depend on it; nothing changes and the token still
+works with another password. Previous passwords are not remembered: only the current one is refused. Access tokens already issued last until they expire (at most one hour).
 
 Each route has a bulkhead (Norma 5.3.10): at most `APP_AUTH_PASSWORD_RESET_MAX_CONCURRENCY` requests run at once and the next one waits at most
 `APP_AUTH_PASSWORD_RESET_QUEUE_TIMEOUT` before it is answered `429 RATE_LIMITED` with `Retry-After: 1`, after the body is read and before any
@@ -307,7 +320,14 @@ When the variable is empty the features that need Redis are not enabled (`POST /
 access token after verifying its signature and expiration: a token on the list is `401`, before its permissions are judged.
 Only this service reads the list; the other services accept the token until it expires (ADR-028, ADR-033). If Redis cannot be
 consulted `GET /users`, `PATCH /users/{userId}/role` and the email change **fail closed**: `500 INTERNAL_ERROR` and a `WARN` that never contains
-the token or the `jti`. `POST /logout` does not stop at the lookup: it revokes the refresh tokens in PostgreSQL, commits, and
+the token or the `jti`. The same lookup also reads `blacklist:user:{sub}`, the marker that the removal of `ADMIN` writes
+(`SET blacklist:user:{userId} <R> EX 3600`, `R` being the epoch second of the revocation, read from the server clock after the commit): a token
+whose `iat` is less than or equal to `R` is `401`, one with a later `iat` is accepted, so a user who signs in after the revocation is not
+rejected, and a token issued in the second of `R` is rejected. The marker lives one hour, the longest life of an access token, and uses
+only `get` and `set` on `~blacklist:*`, which `auth_app` already holds. A Redis restart empties the markers: the access tokens of that
+moment are accepted again until they expire, while the refresh tokens stay revoked. The other services verify signature and expiry
+only, so an `ADMIN` token revoked this way is still accepted outside this service for up to one hour (ADR-031, accepted limit).
+`POST /logout` does not stop at the lookup: it revokes the refresh tokens in PostgreSQL, commits, and
 then fails with `500` when it writes the list, so during a Redis outage a sign out answers `500` but the refresh tokens are
 already revoked, and the client repeats the call.
 Without `APP_AUTH_REDIS_URL` the check is off (INFO line at start) and the routes work as before.

@@ -299,6 +299,12 @@ func TestOpenRevokedTokensWorksWithoutCheckWhenRedisIsNotConfigured(t *testing.T
 	if revoked, err := state.revoked.IsRevoked(context.Background(), "any-jti"); revoked || err != nil {
 		t.Errorf("IsRevoked() = %v, %v, want false and no error", revoked, err)
 	}
+	if err := state.revoked.RevokeUserSessions(context.Background(), "user-1", time.Now()); err != nil {
+		t.Errorf("RevokeUserSessions() error = %v, want none", err)
+	}
+	if _, found, err := state.revoked.UserSessionsRevokedAt(context.Background(), "user-1"); found || err != nil {
+		t.Errorf("UserSessionsRevokedAt() found = %v, error = %v, want no marker and no error", found, err)
+	}
 	if !strings.Contains(logs.String(), "APP_AUTH_REDIS_URL is not set") {
 		t.Errorf("log = %q, want a line that says the check is off", logs.String())
 	}
