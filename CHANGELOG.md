@@ -11,6 +11,10 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- `GET /api/v1/auth/jwks` answers `Cache-Control: public, max-age=300` (contract 1.11.0, ADR-053): the key changes only in a coordinated
+  rotation, so a copy kept by a browser, a proxy or a tool is stale for at most five minutes. Handler test and contract test (the contract
+  declares the header and the test checks that the response carries it).
+
 - HU-AUTH-007, change of the own password (ADR-051), the endpoint: `POST /api/v1/auth/me/password` (`profile:update:self`, no
   `Idempotency-Key`, body at most 4 KiB with no unknown property) answers `200` with the `AuthResponse` of a fresh session. A wrong current
   password is `400 VALIDATION_ERROR` on `currentPassword` (`The current password is incorrect`), never `401`; a new password equal to the current
