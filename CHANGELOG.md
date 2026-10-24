@@ -9,6 +9,18 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- HU-AUTH-007, change of the own password (ADR-051), domain and use case: `CheckPresentedPassword` (a current password is 1 to 72 bytes
+  and is not judged by the password policy), `ErrWrongCurrentPassword`, the lock error `PasswordChangeRateLimitedError` and the policy of
+  5 wrong passwords in 15 minutes, the `ChangePassword` use case and the output ports `PasswordChangeAttempts` and `PasswordHashLocker`. In one
+  transaction it locks the account, verifies the current password, refuses a new password equal to it, replaces the hash, revokes every
+  refresh token of the user and opens a new session; only a wrong current password counts against the limit, and the limit fails open when
+  its store cannot be reached.
+- HU-AUTH-007, own profile (ADR-051), the endpoints: `GET /api/v1/auth/me` (`profile:read:self`) returns `id`, `email`, `name`, `phone`,
+  `address` and `roles` read from the database (`phone` and `address` are `null` for an account created before they existed) and
+  `PATCH /api/v1/auth/me` (`profile:update:self`) edits `name`, `phone` and `address`: all optional, at least one, a `null` field, an empty body
+  and an unknown field are `400 VALIDATION_ERROR` naming the field, and the accepted fields are written in one `UPDATE`. A token of an
+  account that is gone or locked is `401`; the body is at most 4 KiB; no `Idempotency-Key`, no event. The user repository implements
+  `ProfileUpdater` and the routes are wired in the composition root.
 - HU-AUTH-007, own profile (ADR-051), domain and use cases: the `ProfileChange` value object, which applies the rules of
   registration to the fields that were sent (a field that was not sent keeps its value, an empty edit is refused and every invalid
   field is reported together), the inbound ports `GetProfile` and `UpdateProfile` with their use cases, and the output port
