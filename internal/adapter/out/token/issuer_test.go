@@ -232,3 +232,42 @@ func TestLoadPrivateKeyAcceptsExactlyOneSource(t *testing.T) {
 		}
 	}
 }
+
+func TestIssueServiceTokenCarriesTheClaimsOfADRFiftyTwoAndVerifies(t *testing.T) {
+	key := generateKey(t, 2048)
+	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	issuer, err := NewIssuer(key, time.Minute, fixedClock{now}, &sequenceIDs{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := model.NewServiceTokenRequest("csp-worker", 90*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	issued, err := issuer.IssueServiceToken(request)
+	if err != nil {
+		t.Fatalf("IssueServiceToken() error = %v", err)
+	}
+	if issued.TokenID != "jti-1" || !issued.ExpiresAt.Equal(now.Add(90*24*time.Hour)) {
+		t.Errorf("issued = %+v, want jti-1 and expiry in 90 days", issued)
+	}
+	claims := jwt.MapClaims{}
+	parsed, err := jwt.NewParser(jwt.WithValidMethods([]string{"RS256"}), jwt.WithTimeFunc(fixedClock{now}.Now)).
+		ParseWithClaims(issued.Value, claims, func(*jwt.Token) (any, error) { return &key.PublicKey, nil })
+	if err != nil {
+		t.Fatalf("the token does not verify with the public key: %v", err)
+	}
+	if parsed.Header["kid"] != issuer.PublicKeys()[0].KeyID {
+		t.Errorf("kid = %v, want the kid of the signing key", parsed.Header["kid"])
+	}
+	want := map[string]any{"sub": "csp-worker", "iss": "csp-auth", "aud": "csp-internal", "jti": "jti-1",
+		"iat": float64(now.Unix()), "exp": float64(now.Add(90 * 24 * time.Hour).Unix())}
+	if !reflect.DeepEqual(map[string]any(claims), want) {
+		t.Errorf("claims = %v, want %v", claims, want)
+	}
+	subject, err := NewServiceTokenVerifier(issuer.PublicKeys(), fixedClock{now}).VerifyServiceToken(issued.Value)
+	if err != nil || subject != "csp-worker" {
+		t.Errorf("the service verifier = %q, %v; want csp-worker", subject, err)
+	}
+}
