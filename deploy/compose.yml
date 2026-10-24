@@ -23,6 +23,11 @@
 #   APP_AUTH_SMTP_PORT (587), APP_AUTH_SMTP_TLS (starttls, or none for a local catcher only), APP_AUTH_SMTP_TIMEOUT (5s),
 #   APP_AUTH_EMAIL_CHANGE_MAX_CONCURRENCY (4, below APP_AUTH_DATABASE_MAX_CONNECTIONS) and APP_AUTH_EMAIL_CHANGE_QUEUE_TIMEOUT (1s):
 #   bulkhead of PATCH /me/email, the extra requests are refused with 429.
+#   APP_AUTH_PASSWORD_RESET_URL      Page of the portal that the password reset link opens (ADR-050), an absolute http(s) URL without a
+#                                    fragment; the message carries <URL>#token=<token>. Optional: with the SMTP host above it enables
+#                                    POST /forgot-password and POST /reset-password, otherwise both answer 404.
+#   APP_AUTH_PASSWORD_RESET_MAX_CONCURRENCY (4, below APP_AUTH_DATABASE_MAX_CONNECTIONS) and APP_AUTH_PASSWORD_RESET_QUEUE_TIMEOUT (1s):
+#   bulkhead of each of the two routes, the extra requests are refused with 429.
 #   Local: `--profile mail up mailpit` with APP_AUTH_SMTP_HOST=mailpit APP_AUTH_SMTP_PORT=1025 APP_AUTH_SMTP_TLS=none
 #   APP_AUTH_SMTP_FROM=no-reply@cinesync.local; the messages are read at http://localhost:8025.
 # Optional, the service default applies when empty:
@@ -77,6 +82,10 @@ services:
       APP_AUTH_SMTP_TIMEOUT: ${APP_AUTH_SMTP_TIMEOUT:-}
       APP_AUTH_EMAIL_CHANGE_MAX_CONCURRENCY: ${APP_AUTH_EMAIL_CHANGE_MAX_CONCURRENCY:-}
       APP_AUTH_EMAIL_CHANGE_QUEUE_TIMEOUT: ${APP_AUTH_EMAIL_CHANGE_QUEUE_TIMEOUT:-}
+      # Password reset (ADR-050): the page of the portal behind the link of the message, and the bulkhead of its two routes.
+      APP_AUTH_PASSWORD_RESET_URL: ${APP_AUTH_PASSWORD_RESET_URL:-}
+      APP_AUTH_PASSWORD_RESET_MAX_CONCURRENCY: ${APP_AUTH_PASSWORD_RESET_MAX_CONCURRENCY:-}
+      APP_AUTH_PASSWORD_RESET_QUEUE_TIMEOUT: ${APP_AUTH_PASSWORD_RESET_QUEUE_TIMEOUT:-}
       # Password hashing cost.
       APP_AUTH_BCRYPT_ROUNDS: ${APP_AUTH_BCRYPT_ROUNDS:-}
       # Signing key of the tokens (Norma 5.3.7); csp-infra mounts the PEM file when the file form is used.

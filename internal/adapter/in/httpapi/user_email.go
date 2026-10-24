@@ -30,6 +30,20 @@ func WithEmailChange(authorizer in.AuthorizeUser, request in.RequestEmailChange,
 // busyRetryAfterSeconds is the Retry-After of a request the bulkhead refuses: the slots free up in seconds.
 const busyRetryAfterSeconds = "1"
 
+// admit takes a slot of gate for the request. When there is none it answers 429 with Retry-After, logs the refusal
+// without any data of the request, and tells the caller to stop: the use case is never reached (Bulkhead).
+func admit(w http.ResponseWriter, r *http.Request, gate *Bulkhead, traceID, route string) (release func(), admitted bool) {
+	release, admitted = gate.Acquire(r.Context())
+	if !admitted {
+		slog.Warn(route+" refused: no free slot", "traceId", traceID, "limit", gate.Limit(), "wait", gate.Wait().String())
+		w.Header().Set("Retry-After", busyRetryAfterSeconds)
+		writeJSON(w, http.StatusTooManyRequests, errorResponse{
+			Error: codeRateLimited, Message: "Too many requests", TraceID: traceID,
+		})
+	}
+	return release, admitted
+}
+
 // requestEmailChangeRequest and verifyEmailChangeRequest are the request bodies of requestEmailChange
 // and verifyEmailChange in the auth-service contract.
 type requestEmailChangeRequest struct {
@@ -58,13 +72,8 @@ func requestEmailChange(useCase in.RequestEmailChange, gate *Bulkhead) callerHan
 			return
 		}
 
-		release, admitted := gate.Acquire(r.Context())
+		release, admitted := admit(w, r, gate, traceID, "email change request")
 		if !admitted {
-			slog.Warn("email change request refused: no free slot", "traceId", traceID, "limit", gate.Limit(), "wait", gate.Wait().String())
-			w.Header().Set("Retry-After", busyRetryAfterSeconds)
-			writeJSON(w, http.StatusTooManyRequests, errorResponse{
-				Error: codeRateLimited, Message: "Too many requests", TraceID: traceID,
-			})
 			return
 		}
 		defer release()
