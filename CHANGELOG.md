@@ -15,6 +15,10 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- `cmd/auth-token` (ADR-052), the offline command that issues the credential of a service: subject from the closed list `csp-worker`,
+  `booking-service`, `csp-workflow`; lifetime at most 90 days; key from `APP_AUTH_JWT_PRIVATE_KEY(_FILE)` kept in memory; token written only to a
+  file of mode `0600` (not replaced without `-force`), never printed; one audit line on stderr (subject, `jti`, expiry, file). Claims `sub`, `iss`,
+  `aud` `csp-internal`, `iat`, `exp`, `jti` and the `kid` header. It ships in the image as `auth-token`. Domain, issuer and command tests.
 - The `ADMIN` role holds `concessions:inventory:read`, the permission that `GET /stock/movements` of `concessions-service.yaml` requires (HU-CONCESSIONS-007);
   the token of an `ADMIN` carries it in `permissions` after the next login or refresh. Test of the permissions of each role.
 - `GET /api/v1/auth/jwks` answers `Cache-Control: public, max-age=300` (contract 1.11.0, ADR-053): the key changes only in a coordinated
