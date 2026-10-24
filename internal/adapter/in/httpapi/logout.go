@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/in"
 	"github.com/code-corhuila/csp-auth-api/internal/domain/model"
@@ -14,6 +16,9 @@ func WithLogout(authenticator in.AuthenticateUser, useCase in.Logout) Option {
 		mux.HandleFunc("POST "+BasePath+"/logout", requireAuthenticationEvenIfListIsDown(authenticator, logout(useCase)))
 	}
 }
+
+// logoutDeadline bounds the work of a sign out once it is detached from the client connection (norm 5.3.10).
+const logoutDeadline = 10 * time.Second
 
 // logoutRequest is the optional request body of logout in the auth-service contract.
 type logoutRequest struct {
@@ -35,7 +40,12 @@ func logout(useCase in.Logout) claimsHandler {
 			body = decoded
 		}
 
-		err := useCase.Logout(r.Context(), in.LogoutCommand{
+		// A sign out always ends the refresh capability of the session (ADR-033): the browser leaves the page right
+		// after the click and cancels the request, which must not leave the tokens alive. The revocation keeps the
+		// values of the request but not its cancellation, and is bounded by its own deadline.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), logoutDeadline)
+		defer cancel()
+		err := useCase.Logout(ctx, in.LogoutCommand{
 			UserID:       claims.Subject,
 			TokenID:      claims.TokenID,
 			ExpiresAt:    claims.ExpiresAt,
