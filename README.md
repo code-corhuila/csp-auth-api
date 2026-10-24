@@ -291,6 +291,47 @@ the change. The body is at most 4 KiB. A revoked access token is `401` and, as o
 list is `500`; so is `401` the token of an account that no longer exists or is locked. No event is published and phone and address stay
 out of tokens, `UserSummary` and events (ADR-024); the log never carries them.
 
+## Change of the own password
+
+`POST /api/v1/auth/me/password` (HU-AUTH-007, ADR-051) changes the password of the caller after checking the current one. It needs an access
+token that holds `profile:update:self`, takes no `Idempotency-Key` and is enabled by the same two settings as the other protected routes.
+The body is `{ "currentPassword", "newPassword" }` (at most 4 KiB, no other property).
+
+```bash
+curl -i -X POST http://localhost:8081/api/v1/auth/me/password -H "Authorization: Bearer $ACCESS_TOKEN" -H 'Content-Type: application/json' -d '{"currentPassword":"Secret123","newPassword":"NewSecret123"}'
+```
+
+Success is `200` with the `AuthResponse` of a fresh session. In **one transaction** the account row is locked (`FOR NO KEY UPDATE`), the
+current password is verified, the hash is replaced (bcrypt, the cost of registration), every active refresh token of the user is revoked and a
+new one is created; so the device that made the change stays signed in and every other device loses its refresh token. Access tokens already
+issued live until they expire (at most one hour). No event is published.
+
+A **wrong current password is `400 VALIDATION_ERROR`, never `401`** (the shell treats every `401` as an expired session): `details[0].field` is
+`currentPassword` and the message `The current password is incorrect`. A new password equal to the current one is `400` on `newPassword` with
+`The new password must differ from the current one` (compared only after the current password was verified), and one that breaks the rules of
+registration is `400` on `newPassword`. A `currentPassword` of 0 or more than 72 bytes is a plain `400` that does not count as a failure. The token
+of an account that is gone or locked is `401`.
+
+Guessing the current password with a stolen token is bounded per **user** (the id in the token): with Redis, `APP_AUTH_PASSWORD_CHANGE_MAX_ATTEMPTS`
+wrong current passwords inside `APP_AUTH_PASSWORD_CHANGE_WINDOW` write the lock (`APP_AUTH_PASSWORD_CHANGE_LOCK`) and the next attempt is
+`429 RATE_LIMITED` with `Retry-After` set to the remaining seconds (rounded up, at least 1), **before** the password is verified, so even the
+correct one is refused and no bcrypt work is done. Only wrong current passwords count; validation errors, the equal-password error and `500` do
+not, and a success drops the counter. The keys are `attempts:pwd:{userId}` and `locked:pwd:{userId}`, inside the prefixes the ACL of the auth
+Redis already grants. If the limit store cannot be consulted the limit **fails open** with a `WARN` that carries neither the password nor the
+user id, and the wait is bounded by `APP_AUTH_LOGIN_LIMIT_TIMEOUT` and `APP_AUTH_LOGIN_LIMIT_PAUSE`, as for the login (ADR-048); the check of
+the revoked token list still fails closed (`500`) when Redis is down. Without `APP_AUTH_REDIS_URL` the change is not limited. The route has a
+bulkhead (Norma 5.3.10): at most `APP_AUTH_PASSWORD_CHANGE_MAX_CONCURRENCY` requests run at once, the next one waits at most
+`APP_AUTH_PASSWORD_CHANGE_QUEUE_TIMEOUT` and is then answered `429` with `Retry-After: 1`, after the token and the body are validated and before
+any transaction.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `APP_AUTH_PASSWORD_CHANGE_MAX_ATTEMPTS` | `5` | Wrong current passwords inside the window that lock the change of a user (1 to 100) |
+| `APP_AUTH_PASSWORD_CHANGE_WINDOW` | `15m` | Window in which they are counted (positive Go duration) |
+| `APP_AUTH_PASSWORD_CHANGE_LOCK` | `15m` | How long a locked user is refused with `429` (positive Go duration) |
+| `APP_AUTH_PASSWORD_CHANGE_MAX_CONCURRENCY` | `4` | Bulkhead of the route. At least 1 and, with a database, below `APP_AUTH_DATABASE_MAX_CONNECTIONS`; otherwise the service does not start. |
+| `APP_AUTH_PASSWORD_CHANGE_QUEUE_TIMEOUT` | `1s` | Go duration (maximum `5s`) a request waits for a free slot before it is refused. |
+
 ## Password reset
 
 `POST /api/v1/auth/forgot-password` and `POST /api/v1/auth/reset-password` (HU-AUTH-006, ADR-050) let a user who forgot the password
