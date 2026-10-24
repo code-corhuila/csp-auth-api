@@ -142,6 +142,15 @@ func (noRevokedTokens) Revoke(context.Context, string, time.Duration) error { re
 
 func (noRevokedTokens) IsRevoked(context.Context, string) (bool, error) { return false, nil }
 
+// noLoginAttempts is the login limit of a service without Redis: nothing is counted and nobody is locked.
+type noLoginAttempts struct{}
+
+func (noLoginAttempts) LockedFor(context.Context, string) (time.Duration, error) { return 0, nil }
+
+func (noLoginAttempts) RecordFailure(context.Context, string) error { return nil }
+
+func (noLoginAttempts) Clear(context.Context, string) error { return nil }
+
 func newRegisterUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer) *usecase.RegisterUser {
 	clock, ids := system.Clock{}, system.UUIDGenerator{}
 	return usecase.NewRegisterUser(usecase.RegisterUserPorts{
@@ -165,6 +174,7 @@ func newLoginUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer) *
 		issuer,
 		usecase.NewIssueRefreshToken(persistence.NewRefreshTokenRepository(pool), ids, clock, cfg.RefreshTokenTTL),
 		clock,
+		noLoginAttempts{},
 	)
 }
 
