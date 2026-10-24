@@ -14,7 +14,8 @@ import (
 // key of this service.
 //
 // Unlike the service credential, the token must carry the issuer and the audience the issuer sets,
-// an expiration, a subject, an id (the jti a logout revokes) and known roles.
+// an expiration, an issue time (the iat the revocation of a user is compared with), a subject, an id
+// (the jti a logout revokes) and known roles.
 type AccessTokenVerifier struct {
 	keys   []model.PublicKey
 	parser *jwt.Parser
@@ -46,6 +47,9 @@ func (v *AccessTokenVerifier) VerifyAccessToken(raw string) (model.AccessClaims,
 	if claims.Subject == "" {
 		return model.AccessClaims{}, fmt.Errorf("%w: the token has no subject", model.ErrAccessTokenInvalid)
 	}
+	if claims.IssuedAt == nil {
+		return model.AccessClaims{}, fmt.Errorf("%w: the token has no issue time", model.ErrAccessTokenInvalid)
+	}
 	if claims.ID == "" {
 		return model.AccessClaims{}, fmt.Errorf("%w: the token has no id", model.ErrAccessTokenInvalid)
 	}
@@ -63,5 +67,6 @@ func (v *AccessTokenVerifier) VerifyAccessToken(raw string) (model.AccessClaims,
 		Permissions: claims.Permissions,
 		TokenID:     claims.ID,
 		ExpiresAt:   claims.ExpiresAt.Time,
+		IssuedAt:    claims.IssuedAt.Time,
 	}, nil
 }

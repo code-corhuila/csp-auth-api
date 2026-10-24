@@ -28,7 +28,10 @@ func NewAuthorizeUser(tokens out.AccessTokenVerifier, revoked out.RevokedTokens)
 }
 
 // AuthenticateUser verifies the token and then looks for its jti in the list of revoked tokens
-// (ADR-033). A revoked token is model.ErrAccessTokenInvalid, like any token that is not valid. When
+// (ADR-033) and for the marker of its user (ADR-031, amendment 2026-10-24): a token issued at or
+// before the instant of the marker, in whole seconds, belongs to a session that the removal of the
+// ADMIN role ended, while one issued later belongs to a session opened afterwards. A revoked token is
+// model.ErrAccessTokenInvalid, like any token that is not valid. When
 // the list cannot be consulted the use case fails closed with model.ErrRevokedTokensUnavailable:
 // it cannot prove that the token was not revoked. The token is only looked up once it is valid, so
 // a forged one never reaches Redis. In that one case the claims of the verified token are returned
@@ -46,6 +49,13 @@ func (a *AuthorizeUser) AuthenticateUser(ctx context.Context, bearerToken string
 		return claims, fmt.Errorf("%w: %v", model.ErrRevokedTokensUnavailable, err)
 	}
 	if revoked {
+		return model.AccessClaims{}, model.ErrAccessTokenInvalid
+	}
+	revokedAt, found, err := a.revoked.UserSessionsRevokedAt(ctx, claims.Subject)
+	if err != nil {
+		return claims, fmt.Errorf("%w: %v", model.ErrRevokedTokensUnavailable, err)
+	}
+	if found && claims.IssuedAt.Unix() <= revokedAt.Unix() {
 		return model.AccessClaims{}, model.ErrAccessTokenInvalid
 	}
 	return claims, nil

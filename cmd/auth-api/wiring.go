@@ -41,8 +41,9 @@ type poolOpener func(ctx context.Context, settings persistence.PoolSettings) (*p
 //     set (ADR-050; without them the two routes answer the 404 of the contract), and
 //     POST /internal/maintenance/purge, open only to the service tokens whose subject is in SERVICE_SUBJECTS.
 //   - Also an APP_AUTH_REDIS_URL: POST /logout, which lists the revoked access tokens in Redis, and the check of
-//     that list on POST /logout, GET /users, PATCH /users/{userId}/role and the email change. Without it the route is not enabled and
-//     the other two work without the check. It also holds the
+//     that list, and of the marker that ends the sessions of a user who lost ADMIN, on POST /logout, GET /users,
+//     PATCH /users/{userId}/role and the email change. Without it the route is not enabled and
+//     the other two work without the check; removing ADMIN still revokes the refresh tokens of the user. It also holds the
 //     login attempt limit of POST /login (HU-AUTH-005), which is off without it.
 //
 // A configured key or database that cannot be used stops the service instead of degrading it.
@@ -90,7 +91,7 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 	options = append(options, httpapi.WithRefreshSession(newRefreshSession(cfg, pool, issuer)))
 	logger.Info("refresh route enabled")
 	authorizer := newAuthorizeUser(issuer, redisState.revoked)
-	options = append(options, httpapi.WithChangeUserRole(authorizer, newChangeUserRole(pool)))
+	options = append(options, httpapi.WithChangeUserRole(authorizer, newChangeUserRole(pool, redisState.revoked)))
 	logger.Info("user role route enabled")
 	options = append(options, httpapi.WithListUsers(authorizer, usecase.NewListUsers(persistence.NewUserReader(pool))))
 	logger.Info("user list route enabled")
@@ -170,6 +171,12 @@ func (noRevokedTokens) Revoke(context.Context, string, time.Duration) error { re
 
 func (noRevokedTokens) IsRevoked(context.Context, string) (bool, error) { return false, nil }
 
+func (noRevokedTokens) RevokeUserSessions(context.Context, string, time.Time) error { return nil }
+
+func (noRevokedTokens) UserSessionsRevokedAt(context.Context, string) (time.Time, bool, error) {
+	return time.Time{}, false, nil
+}
+
 // noLoginAttempts is the login limit of a service without Redis: nothing is counted and nobody is locked.
 type noLoginAttempts struct{}
 
@@ -233,15 +240,17 @@ func newAuthorizeUser(issuer *token.Issuer, revoked out.RevokedTokens) *usecase.
 	return usecase.NewAuthorizeUser(token.NewAccessTokenVerifier(issuer.PublicKeys(), system.Clock{}), revoked)
 }
 
-func newChangeUserRole(pool *pgxpool.Pool) *usecase.ChangeUserRole {
+func newChangeUserRole(pool *pgxpool.Pool, sessions out.UserSessionRevocations) *usecase.ChangeUserRole {
 	users := persistence.NewUserRepository(pool)
 	return usecase.NewChangeUserRole(usecase.ChangeUserRolePorts{
-		Users:        users,
-		Roles:        users,
-		Outbox:       persistence.NewOutboxWriter(pool),
-		IDs:          system.UUIDGenerator{},
-		Clock:        system.Clock{},
-		Transactions: persistence.NewTransactionManager(pool),
+		Users:         users,
+		Roles:         users,
+		Outbox:        persistence.NewOutboxWriter(pool),
+		IDs:           system.UUIDGenerator{},
+		Clock:         system.Clock{},
+		Transactions:  persistence.NewTransactionManager(pool),
+		RefreshTokens: persistence.NewRefreshTokenRepository(pool),
+		Sessions:      sessions,
 	})
 }
 
