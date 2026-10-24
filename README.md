@@ -109,7 +109,7 @@ To run it with the database:
    The service connects as `auth_app`, never as the executor user.
 2. Export the variables (names only here, see `.env.example`; never commit values):
    `APP_AUTH_DATABASE_URL` (login `auth_app`, `search_path=auth`), `APP_AUTH_JWT_PRIVATE_KEY_FILE` (RSA key, PEM)
-   and, optionally, `APP_AUTH_BCRYPT_ROUNDS`, `APP_AUTH_JWT_EXPIRY`, `APP_AUTH_REFRESH_TOKEN_EXPIRY`, `APP_AUTH_REFRESH_REUSE_GRACE` and the
+   and, optionally, `APP_AUTH_BCRYPT_ROUNDS`, `APP_AUTH_JWT_EXPIRY` (default 900 seconds, 15 minutes, ADR-054), `APP_AUTH_REFRESH_TOKEN_EXPIRY`, `APP_AUTH_REFRESH_REUSE_GRACE` and the
    `APP_AUTH_DATABASE_*` pool limits.
 3. `go run ./cmd/auth-api` and register:
 

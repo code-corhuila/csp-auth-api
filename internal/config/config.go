@@ -24,6 +24,9 @@ const (
 // maxAccessTokenTTL is the longest lifetime of an access token (security-rules.md).
 const maxAccessTokenTTL = time.Hour
 
+// defaultAccessTokenTTL is the lifetime of an access token when APP_AUTH_JWT_EXPIRY is not set (ADR-054: 15 minutes).
+const defaultAccessTokenTTL = 15 * time.Minute
+
 // defaultRefreshTokenTTL is the lifetime of a refresh token (security-rules.md: 7 days).
 const defaultRefreshTokenTTL = 7 * 24 * time.Hour
 
@@ -328,7 +331,7 @@ func loadPasswordReset(lookup Lookup, cfg *Config) error {
 func loadTokens(lookup Lookup, cfg *Config) error {
 	cfg.JWTPrivateKey, _ = lookup("APP_AUTH_JWT_PRIVATE_KEY")
 	cfg.JWTPrivateKeyFile, _ = lookup("APP_AUTH_JWT_PRIVATE_KEY_FILE")
-	ttl, err := secondsValue(lookup, "APP_AUTH_JWT_EXPIRY", maxAccessTokenTTL)
+	ttl, err := secondsValue(lookup, "APP_AUTH_JWT_EXPIRY", defaultAccessTokenTTL)
 	if err != nil {
 		return err
 	}
