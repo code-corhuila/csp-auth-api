@@ -50,6 +50,13 @@ func NewEmailVerificationPurger(pool *pgxpool.Pool) out.PurgeableRecords {
 	return &agedRows{pool: pool, table: "auth.email_verification", key: "id", eligible: "expires_at < $1", orderBy: "expires_at, id"}
 }
 
+// NewPasswordResetPurger purges auth.password_reset rows that expired before the cutoff, whether
+// they were used or not (ADR-050). Only the digest of the token is stored, but the rows are
+// not kept past the retention.
+func NewPasswordResetPurger(pool *pgxpool.Pool) out.PurgeableRecords {
+	return &agedRows{pool: pool, table: "auth.password_reset", key: "id", eligible: "expires_at < $1", orderBy: "expires_at, id"}
+}
+
 func (r *agedRows) DeleteOlderThan(ctx context.Context, cutoff time.Time, limit int) (int, error) {
 	tag, err := r.pool.Exec(ctx,
 		"DELETE FROM "+r.table+" WHERE "+r.key+" = ANY(ARRAY(SELECT "+r.key+" FROM "+r.table+
