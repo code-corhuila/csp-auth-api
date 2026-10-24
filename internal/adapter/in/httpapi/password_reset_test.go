@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -229,6 +230,22 @@ func TestResetPasswordReportsEveryInvalidFieldBeforeTheUseCaseAndTheGate(t *test
 				t.Error("an invalid request took a slot of the gate")
 			}
 		})
+	}
+}
+
+func TestResetPasswordAnswersTheValidationErrorOfTheCurrentPasswordWithItsStableMessage(t *testing.T) {
+	rec := sendPasswordReset(openGates(), &fakeRequestPasswordReset{}, &fakeResetPassword{err: model.ErrPasswordUnchanged}, tracedReset(resetPasswordAttempt(resetBody)))
+
+	var got struct {
+		Error   string `json:"error"`
+		Details []struct{ Field, Message string }
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body = %s, error = %v", rec.Body, err)
+	}
+	if rec.Code != http.StatusBadRequest || got.Error != "VALIDATION_ERROR" || len(got.Details) != 1 ||
+		got.Details[0].Field != "password" || got.Details[0].Message != "The new password must differ from the current one" {
+		t.Errorf("status = %d, body = %s, want 400 VALIDATION_ERROR with the field password and the stable message", rec.Code, rec.Body)
 	}
 }
 

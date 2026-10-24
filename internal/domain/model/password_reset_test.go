@@ -26,6 +26,30 @@ func TestNewPasswordResetLastsOneHourAndKeepsOnlyTheDigest(t *testing.T) {
 	}
 }
 
+func TestEnsureRedeemableJudgesTheResetWithoutConsumingIt(t *testing.T) {
+	usedAt := requestedAt.Add(time.Minute)
+	cases := map[string]struct {
+		reset *PasswordReset
+		at    time.Time
+		want  error
+	}{
+		"before the expiry": {NewPasswordReset("reset-1", "user-1", resetToken(t), requestedAt), requestedAt.Add(59 * time.Minute), nil},
+		"at the expiry":     {NewPasswordReset("reset-1", "user-1", resetToken(t), requestedAt), requestedAt.Add(time.Hour), ErrPasswordResetRejected},
+		"already used":      {RestorePasswordReset("reset-1", "user-1", resetToken(t).Hash(), requestedAt.Add(time.Hour), &usedAt), requestedAt.Add(2 * time.Minute), ErrPasswordResetRejected},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			wasUsed := c.reset.UsedAt()
+
+			err := c.reset.EnsureRedeemable(c.at)
+
+			if !errors.Is(err, c.want) || c.reset.UsedAt() != wasUsed {
+				t.Errorf("EnsureRedeemable() error = %v, UsedAt = %v, want %v and UsedAt unchanged", err, c.reset.UsedAt(), c.want)
+			}
+		})
+	}
+}
+
 func TestRedeemConsumesTheResetBeforeItExpires(t *testing.T) {
 	reset := NewPasswordReset("reset-1", "user-1", resetToken(t), requestedAt)
 	at := requestedAt.Add(59 * time.Minute)

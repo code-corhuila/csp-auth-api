@@ -244,6 +244,8 @@ func translateResetPasswordError(w http.ResponseWriter, traceID string, err erro
 		writeValidation(w, traceID, []fieldError{{Field: "token", Message: err.Error()}})
 	case errors.Is(err, model.ErrWeakPassword):
 		writeValidation(w, traceID, []fieldError{{Field: "password", Message: err.Error()}})
+	case errors.Is(err, model.ErrPasswordUnchanged):
+		writeValidation(w, traceID, []fieldError{{Field: "password", Message: err.Error()}})
 	case errors.Is(err, model.ErrPasswordResetRejected):
 		writeJSON(w, http.StatusUnauthorized, errorResponse{
 			Error: codeInvalidToken, Message: "Reset token is invalid or expired", TraceID: traceID,
