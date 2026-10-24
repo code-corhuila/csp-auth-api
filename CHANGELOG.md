@@ -11,6 +11,10 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- HU-AUTH-007, own profile (ADR-051), domain and use cases: the `ProfileChange` value object, which applies the rules of
+  registration to the fields that were sent (a field that was not sent keeps its value, an empty edit is refused and every invalid
+  field is reported together), the inbound ports `GetProfile` and `UpdateProfile` with their use cases, and the output port
+  `ProfileUpdater`. A locked account or one that is gone is refused with `ErrUserLocked` or `ErrUserNotFound`.
 - HU-AUTH-003, scenario 4 (ADR-031, amendment 2026-10-24): removing the `ADMIN` role of a user ends their sessions. In the transaction of
   the role change `ChangeUserRole` revokes every active refresh token of the target; after the commit it writes
   `blacklist:user:{userId}` (epoch second of the revocation, `EX 3600`) through the new `UserSessionRevocations` port, implemented by the
