@@ -11,6 +11,12 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- HU-AUTH-007, change of the own password (ADR-051), the endpoint: `POST /api/v1/auth/me/password` (`profile:update:self`, no
+  `Idempotency-Key`, body at most 4 KiB with no unknown property) answers `200` with the `AuthResponse` of a fresh session. A wrong current
+  password is `400 VALIDATION_ERROR` on `currentPassword` (`The current password is incorrect`), never `401`; a new password equal to the current
+  one is `400` on `newPassword` (`The new password must differ from the current one`); the 5th wrong password of a user in 15 minutes locks the
+  change for 15 minutes (`429` with `Retry-After`, before the password is verified); a request without a free slot of the bulkhead is `429` with
+  `Retry-After: 1`. No event is published. The bodies of the routes of the own account share one reader of their properties.
 - HU-AUTH-007, change of the own password (ADR-051), adapters and settings: `PasswordChangeAttempts` over Redis under
   `attempts:pwd:{userId}` and `locked:pwd:{userId}`, bounded by the circuit breaker of ADR-048, which is now shared with the login limiter;
   `LockPasswordHashOf` on the user repository (`FOR NO KEY UPDATE`); and the settings `APP_AUTH_PASSWORD_CHANGE_MAX_ATTEMPTS`, `_WINDOW`,
