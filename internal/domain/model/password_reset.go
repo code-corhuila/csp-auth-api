@@ -18,6 +18,10 @@ const (
 // and for an account that is no longer active, so the answer does not tell which one it is.
 var ErrPasswordResetRejected = errors.New("the reset token is invalid or expired")
 
+// ErrPasswordUnchanged is a reset to the password the account already has (ADR-050, amendment 2026-10-24). Its text
+// is the message of the validation error, which clients may rely on.
+var ErrPasswordUnchanged = errors.New("The new password must differ from the current one")
+
 // PasswordReset is a request to choose a new password: the digest of the token sent to the user, its
 // expiry and its use (ADR-050). Its methods keep the invariants: a token works once and only before it
 // expires.
@@ -53,11 +57,20 @@ func (r *PasswordReset) RequestedAt() time.Time { return r.expiresAt.Add(-Passwo
 // UsedAt returns the instant the token was consumed, or nil while it is unused.
 func (r *PasswordReset) UsedAt() *time.Time { return r.usedAt }
 
+// EnsureRedeemable tells, without consuming it, whether the token can be used at now. An expired or already
+// used token is ErrPasswordResetRejected.
+func (r *PasswordReset) EnsureRedeemable(now time.Time) error {
+	if r.usedAt != nil || !now.Before(r.expiresAt) {
+		return ErrPasswordResetRejected
+	}
+	return nil
+}
+
 // Redeem consumes the token at now. An expired or already used token is ErrPasswordResetRejected
 // and stays as it was.
 func (r *PasswordReset) Redeem(now time.Time) error {
-	if r.usedAt != nil || !now.Before(r.expiresAt) {
-		return ErrPasswordResetRejected
+	if err := r.EnsureRedeemable(now); err != nil {
+		return err
 	}
 	r.usedAt = &now
 	return nil

@@ -51,7 +51,7 @@ func passwordResetRoutes(cfg config.Config, logger *slog.Logger, pool *pgxpool.P
 		IDs: system.UUIDGenerator{}, Clock: clock, Transactions: transactions,
 	})
 	reset := usecase.NewResetPassword(usecase.ResetPasswordPorts{
-		Resets: resets, Hasher: security.NewBcryptHasher(cfg.BcryptRounds), Passwords: users,
+		Resets: resets, Hasher: security.NewBcryptHasher(cfg.BcryptRounds), Current: users, Passwords: users,
 		Sessions: persistence.NewRefreshTokenRepository(pool), Clock: clock, Transactions: transactions,
 	})
 	logger.Info("password reset routes enabled", "maxConcurrency", forgotGate.Limit(), "queueTimeout", forgotGate.Wait().String())
