@@ -270,6 +270,27 @@ which exposes the port on the `platform` network without publishing it: only the
 Copy `.env.example` to `.env` for local values and never commit `.env`. The file lists first the variables the
 service reads (HTTP, database, bcrypt, tokens and Redis).
 
+## Own profile
+
+`GET /api/v1/auth/me` and `PATCH /api/v1/auth/me` (HU-AUTH-007, ADR-051) read and edit the personal data of the caller. They need an
+access token that holds `profile:read:self` and `profile:update:self` respectively (granted to `CLIENT` and `ADMIN`), take no
+`Idempotency-Key` and are enabled by the same two settings as the other protected routes (a signing key and a database). The account is
+always the one in the token: no id travels in the path or in the body.
+
+```bash
+curl -i http://localhost:8081/api/v1/auth/me -H "Authorization: Bearer $ACCESS_TOKEN"
+curl -i -X PATCH http://localhost:8081/api/v1/auth/me -H "Authorization: Bearer $ACCESS_TOKEN" -H 'Content-Type: application/json' -d '{"name":"Maria Garcia","address":"Calle 1 # 2-3"}'
+```
+
+`GET` answers `200` with `id`, `email`, `name`, `phone`, `address` and `roles`, read from the database, not from the token; `phone`
+and `address` are `null` for an account created before they existed. `PATCH` takes `name`, `phone` and `address`, all optional and at
+least one, with the rules of registration; a field that is not sent keeps its value and a phone or an address cannot be cleared. A
+`null` field, an empty body and an unknown field (`email`, `roles`, `id` included) are `400 VALIDATION_ERROR` with `details[].field`
+naming the field, and nothing is changed. The accepted fields are written in one `UPDATE` and the answer is `200` with the profile after
+the change. The body is at most 4 KiB. A revoked access token is `401` and, as on the other protected routes, a failure of the revoked
+list is `500`; so is `401` the token of an account that no longer exists or is locked. No event is published and phone and address stay
+out of tokens, `UserSummary` and events (ADR-024); the log never carries them.
+
 ## Password reset
 
 `POST /api/v1/auth/forgot-password` and `POST /api/v1/auth/reset-password` (HU-AUTH-006, ADR-050) let a user who forgot the password
