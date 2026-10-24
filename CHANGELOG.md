@@ -9,6 +9,11 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- HU-AUTH-006, password reset (ADR-050, amendment 2026-10-24): `POST /api/v1/auth/reset-password` refuses a new password equal to the
+  current one with `400 VALIDATION_ERROR` (`details[0].field` `password`, message `The new password must differ from the current one`).
+  The comparison runs inside the transaction through `PasswordHasher.Verify`, only after the token proved valid, so the `401 INVALID_TOKEN`
+  cases do not depend on the password; the token is not consumed, no hash is written and no session is revoked. The new
+  `CurrentPasswordReader` port reads the stored hash. Only the current password is checked: there is no password history.
 - HU-AUTH-006, password reset (ADR-050), the endpoints: `POST /api/v1/auth/forgot-password` (always `202` without body, the same for an
   active, unknown, inactive or over-limit account) and `POST /api/v1/auth/reset-password` (`204`, or `401 INVALID_TOKEN`; it consumes the token,
   replaces the hash and revokes every refresh token in one transaction). Each route has its own bulkhead and a 4 KiB body limit, and without
