@@ -9,6 +9,13 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- HU-AUTH-003, scenario 4 (ADR-031, amendment 2026-10-24): removing the `ADMIN` role of a user ends their sessions. In the transaction of
+  the role change `ChangeUserRole` revokes every active refresh token of the target; after the commit it writes
+  `blacklist:user:{userId}` (epoch second of the revocation, `EX 3600`) through the new `UserSessionRevocations` port, implemented by the
+  Redis revoked list. `AuthorizeUser` reads that marker on every protected route and answers `401` when the `iat` of the token is less
+  than or equal to it; a failed read fails closed with `500`, a failed write answers `500` with an `ERROR` after the commit. The access token
+  verifier now returns `iat` (`AccessClaims.IssuedAt`) and rejects a token without it; the issuer already wrote it. Granting, a no-op revoke and the
+  `LAST_ADMIN` and `USER_WITHOUT_ROLES` refusals end nothing. No new event, no schema change, no change in the ACL of `auth_app`.
 - HU-AUTH-006, password reset (ADR-050, amendment 2026-10-24): `POST /api/v1/auth/reset-password` refuses a new password equal to the
   current one with `400 VALIDATION_ERROR` (`details[0].field` `password`, message `The new password must differ from the current one`).
   The comparison runs inside the transaction through `PasswordHasher.Verify`, only after the token proved valid, so the `401 INVALID_TOKEN`

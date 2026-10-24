@@ -159,8 +159,18 @@ It answers `200` with the user after the change; a missing or invalid token is `
 invalid `userId`, `Idempotency-Key` or body `400`, an unknown user `404` and the revoke of the last active administrator `409`
 (`LAST_ADMIN`), as is revoking the only role of a user (`USER_WITHOUT_ROLES`; `LAST_ADMIN` wins when both apply). Asking for the state the user already has is a `200` that writes nothing and publishes no event, so the operation
 is idempotent by itself; the `Idempotency-Key` is validated but not stored. A real change writes the `UserRoleChanged` outbox row in the
-same transaction. The roles are read again from the database at login and at refresh, so the change reaches the user at their next
+same transaction. The roles are read again from the database at login and at refresh, so a grant reaches the user at their next
 token; a token already issued keeps its roles until it expires.
+
+**Removing `ADMIN` ends the sessions of the user** (ADR-031, amendment 2026-10-24). When a revoke changes something (not a grant, not a
+no-op, not a `LAST_ADMIN` or `USER_WITHOUT_ROLES` refusal) every active refresh token of the target is revoked in the same transaction
+as the role and the outbox row, and after the commit the service writes `blacklist:user:{userId}` in Redis (see
+[Revoked access tokens](#revoked-access-tokens)). From then the access tokens of the user issued at or before that second are `401` on
+every route that reads the revoked list, and their refresh tokens are `401 INVALID_REFRESH_TOKEN`; a new login gives a session with
+only `CLIENT`. An administrator who revokes their own `ADMIN` (while others exist) gets `200` and the next call is `401`. If the
+marker cannot be written the answer is `500 INTERNAL_ERROR` and an `ERROR` is logged, although the role and the refresh tokens are
+already changed; repeating the call is a no-op `200` that does not write the marker. Without `APP_AUTH_REDIS_URL` only the refresh
+tokens are revoked. No new event is published.
 
 `GET /api/v1/auth/users` (HU-AUTH-003, ADR-031) is enabled by the same settings and has the same guard: the permission `user:role:update`.
 It lists the accounts so an administrator can find the one to change:
@@ -310,7 +320,14 @@ When the variable is empty the features that need Redis are not enabled (`POST /
 access token after verifying its signature and expiration: a token on the list is `401`, before its permissions are judged.
 Only this service reads the list; the other services accept the token until it expires (ADR-028, ADR-033). If Redis cannot be
 consulted `GET /users`, `PATCH /users/{userId}/role` and the email change **fail closed**: `500 INTERNAL_ERROR` and a `WARN` that never contains
-the token or the `jti`. `POST /logout` does not stop at the lookup: it revokes the refresh tokens in PostgreSQL, commits, and
+the token or the `jti`. The same lookup also reads `blacklist:user:{sub}`, the marker that the removal of `ADMIN` writes
+(`SET blacklist:user:{userId} <R> EX 3600`, `R` being the epoch second of the revocation, read from the server clock after the commit): a token
+whose `iat` is less than or equal to `R` is `401`, one with a later `iat` is accepted, so a user who signs in after the revocation is not
+rejected, and a token issued in the second of `R` is rejected. The marker lives one hour, the longest life of an access token, and uses
+only `get` and `set` on `~blacklist:*`, which `auth_app` already holds. A Redis restart empties the markers: the access tokens of that
+moment are accepted again until they expire, while the refresh tokens stay revoked. The other services verify signature and expiry
+only, so an `ADMIN` token revoked this way is still accepted outside this service for up to one hour (ADR-031, accepted limit).
+`POST /logout` does not stop at the lookup: it revokes the refresh tokens in PostgreSQL, commits, and
 then fails with `500` when it writes the list, so during a Redis outage a sign out answers `500` but the refresh tokens are
 already revoked, and the client repeats the call.
 Without `APP_AUTH_REDIS_URL` the check is off (INFO line at start) and the routes work as before.
