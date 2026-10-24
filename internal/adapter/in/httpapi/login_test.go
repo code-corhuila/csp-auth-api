@@ -90,7 +90,7 @@ func TestLoginPassesTheCredentialsAndTheUserAgentToTheUseCase(t *testing.T) {
 
 	sendLogin(useCase, attempt{body: loginBody(), headers: map[string]string{"User-Agent": "cinesync-portal/1.0"}})
 
-	want := in.LoginUserCommand{Email: "Maria@Example.com", Password: secret, UserAgent: "cinesync-portal/1.0"}
+	want := in.LoginUserCommand{Email: "Maria@Example.com", Password: secret, UserAgent: "cinesync-portal/1.0", ClientIP: "192.0.2.1"}
 	if useCase.command != want {
 		t.Errorf("command = %+v, want %+v", useCase.command, want)
 	}

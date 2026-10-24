@@ -15,7 +15,7 @@
 #                                    through APP_AUTH_JWT_PRIVATE_KEY_FILE (Norma 5.9.2).
 #                                    Registration needs the database URL and one of the two.
 #   APP_AUTH_REDIS_URL               Redis URL, redis://auth_app:<password>@redis:6379/0 (csp-infra-redis, ADR-028). Optional:
-#                                    without it the logout route is not enabled.
+#                                    without it the logout route is not enabled and the login is not limited (HU-AUTH-005).
 #   APP_AUTH_SMTP_HOST               SMTP relay that delivers the email verification code (ADR-034). Optional: without it
 #                                    PATCH /me/email and POST /me/email/verify are not enabled (404).
 #   APP_AUTH_SMTP_FROM               Sender address, required when the host is set. APP_AUTH_SMTP_USER and
@@ -30,6 +30,8 @@
 #   APP_AUTH_DATABASE_CONNECT_TIMEOUT, APP_AUTH_DATABASE_QUERY_TIMEOUT,
 #   APP_AUTH_BCRYPT_ROUNDS, APP_AUTH_JWT_EXPIRY (seconds), APP_AUTH_REFRESH_TOKEN_EXPIRY (seconds),
 #   APP_AUTH_REFRESH_REUSE_GRACE (seconds), APP_AUTH_REDIS_TIMEOUT, SERVICE_SUBJECTS,
+#   APP_AUTH_LOGIN_MAX_ATTEMPTS (10), APP_AUTH_LOGIN_WINDOW (5m), APP_AUTH_LOGIN_LOCK (5m),
+#   APP_AUTH_LOGIN_LIMIT_TIMEOUT (300ms), APP_AUTH_LOGIN_LIMIT_PAUSE (10s),
 #   APP_AUTH_HTTP_READ_HEADER_TIMEOUT, APP_AUTH_HTTP_READ_TIMEOUT, APP_AUTH_HTTP_WRITE_TIMEOUT,
 #   APP_AUTH_HTTP_IDLE_TIMEOUT, APP_AUTH_HTTP_SHUTDOWN_TIMEOUT.
 # The migration executor of csp-auth-db is a tooling service started by hand before the API.
@@ -58,6 +60,13 @@ services:
       # Without it the logout route is off. The timeout is a Go duration that bounds connect, read and write.
       APP_AUTH_REDIS_URL: ${APP_AUTH_REDIS_URL:-}
       APP_AUTH_REDIS_TIMEOUT: ${APP_AUTH_REDIS_TIMEOUT:-}
+      # Login attempt limit (HU-AUTH-005, ADR-040), only with Redis: failures inside the window that lock a client address, and the lock time.
+      APP_AUTH_LOGIN_MAX_ATTEMPTS: ${APP_AUTH_LOGIN_MAX_ATTEMPTS:-}
+      APP_AUTH_LOGIN_WINDOW: ${APP_AUTH_LOGIN_WINDOW:-}
+      APP_AUTH_LOGIN_LOCK: ${APP_AUTH_LOGIN_LOCK:-}
+      # Bound of the limiter against Redis (ADR-048): the most one call waits, and the pause after a failure.
+      APP_AUTH_LOGIN_LIMIT_TIMEOUT: ${APP_AUTH_LOGIN_LIMIT_TIMEOUT:-}
+      APP_AUTH_LOGIN_LIMIT_PAUSE: ${APP_AUTH_LOGIN_LIMIT_PAUSE:-}
       # SMTP relay of the email verification code (ADR-034). Without a host the email change routes are off.
       APP_AUTH_SMTP_HOST: ${APP_AUTH_SMTP_HOST:-}
       APP_AUTH_SMTP_PORT: ${APP_AUTH_SMTP_PORT:-}

@@ -107,6 +107,15 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 - HU-AUTH-005, Redis adapter of the login attempt limit (issue [#127](https://github.com/code-corhuila/csp-auth-api/issues/127)):
   `LoginAttempts` over `attempts:{ip}` (`INCR`, `EXPIRE` for the window) and `locked:{ip}` (`SET` with the lock time, `TTL`), `DEL` of the
   counter on success and when the lock is written; only commands of the `auth_app` ACL. Integration tests against Redis 7 with that ACL.
+- HU-AUTH-005, `429 RATE_LIMITED` on `POST /api/v1/auth/login` (ADR-040, issue [#128](https://github.com/code-corhuila/csp-auth-api/issues/128)):
+  10 failed logins from one client address in 5 minutes reject the next attempt, with `Retry-After` set to the seconds left of the 5-minute
+  lock, even with the right credentials; the address is the last entry of `X-Forwarded-For`. New `APP_AUTH_LOGIN_MAX_ATTEMPTS`,
+  `APP_AUTH_LOGIN_WINDOW` and `APP_AUTH_LOGIN_LOCK`. Without Redis the login is not limited and with Redis down it goes on with a `WARN`.
+  Contract, end-to-end and wiring tests.
+- HU-AUTH-005, bounded latency of the login limiter when Redis fails (ADR-048, issue [#139](https://github.com/code-corhuila/csp-auth-api/issues/139)):
+  each call of the limiter waits at most `APP_AUTH_LOGIN_LIMIT_TIMEOUT` (300ms, at most 5s) and, after a failure, the limiter is not called
+  for `APP_AUTH_LOGIN_LIMIT_PAUSE` (10s, at most 5m), so a login no longer takes 4 to 6 seconds while Redis is down. One `WARN` per pause;
+  the Redis client now honours the deadline of a call (`ContextTimeoutEnabled`). Unit tests with a blocking store and a Redis that hangs.
 
 ### Changed
 
@@ -131,6 +140,7 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Fixed
 
+- The bulkhead unit tests no longer depend on the speed of the machine (HU-AUTH-004, issue [#134](https://github.com/code-corhuila/csp-auth-api/issues/134)): `TestRequestEmailChangeIsRefusedWith429BeforeTheUseCaseWhenNoSlotIsFree` failed under load because it asserted an answer in under 1 second, and the other two upper bounds of 1 second of the file had the same flaw. They now use a guard of 30 seconds that only catches a call that is stuck, and the contract check runs last so the other checks also run when the contract file is not set.
 - The container restarts when the database is not ready at start: `restart: on-failure` in `deploy/compose.yml`; on the first `up` of the platform the service started before PostgreSQL answered and stayed stopped (HU-AUTH-003, issue [#84](https://github.com/code-corhuila/csp-auth-api/issues/84)).
 - The container image builds again: `deploy/Dockerfile` copies `go.sum` together with `go.mod` before `go mod download`;
   without it `go build` failed with `missing go.sum entry` (HU-AUTH-003, issue

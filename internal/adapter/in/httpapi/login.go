@@ -37,6 +37,7 @@ func login(useCase in.LoginUser) http.HandlerFunc {
 			Email:     body.Email,
 			Password:  body.Password,
 			UserAgent: r.UserAgent(),
+			ClientIP:  clientAddress(r),
 		})
 		if err != nil {
 			translateLoginError(w, traceID, err)

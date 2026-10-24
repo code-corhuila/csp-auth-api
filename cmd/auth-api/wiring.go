@@ -20,6 +20,7 @@ import (
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/out"
 	"github.com/code-corhuila/csp-auth-api/internal/application/usecase"
 	"github.com/code-corhuila/csp-auth-api/internal/config"
+	"github.com/code-corhuila/csp-auth-api/internal/domain/model"
 )
 
 // poolOpener opens the database pool. The tests replace it so the wiring decisions do not need a
@@ -39,7 +40,8 @@ type poolOpener func(ctx context.Context, settings persistence.PoolSettings) (*p
 //     POST /internal/maintenance/purge, open only to the service tokens whose subject is in SERVICE_SUBJECTS.
 //   - Also an APP_AUTH_REDIS_URL: POST /logout, which lists the revoked access tokens in Redis, and the check of
 //     that list on POST /logout, GET /users, PATCH /users/{userId}/role and the email change. Without it the route is not enabled and
-//     the other two work without the check.
+//     the other two work without the check. It also holds the
+//     login attempt limit of POST /login (HU-AUTH-005), which is off without it.
 //
 // A configured key or database that cannot be used stops the service instead of degrading it.
 func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, open poolOpener) (http.Handler, func(), error) {
@@ -76,16 +78,16 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 	}
 	options = append(options, httpapi.WithRegisterUser(newRegisterUser(cfg, pool, issuer)))
 	logger.Info("register route enabled")
-	options = append(options, httpapi.WithLoginUser(newLoginUser(cfg, pool, issuer)))
-	logger.Info("login route enabled")
-	options = append(options, httpapi.WithRefreshSession(newRefreshSession(cfg, pool, issuer)))
-	logger.Info("refresh route enabled")
-	revoked, closeRedis, err := openRevokedTokens(logger, cfg)
+	redisState, closeRedis, err := openRedisState(logger, cfg)
 	if err != nil {
 		pool.Close()
 		return nil, noop, err
 	}
-	authorizer := newAuthorizeUser(issuer, revoked)
+	options = append(options, httpapi.WithLoginUser(newLoginUser(cfg, pool, issuer, redisState.attempts)))
+	logger.Info("login route enabled")
+	options = append(options, httpapi.WithRefreshSession(newRefreshSession(cfg, pool, issuer)))
+	logger.Info("refresh route enabled")
+	authorizer := newAuthorizeUser(issuer, redisState.revoked)
 	options = append(options, httpapi.WithChangeUserRole(authorizer, newChangeUserRole(pool)))
 	logger.Info("user role route enabled")
 	options = append(options, httpapi.WithListUsers(authorizer, usecase.NewListUsers(persistence.NewUserReader(pool))))
@@ -111,7 +113,7 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 	options = append(options, httpapi.WithPurgeOldRecords(newAuthorizeService(cfg, issuer), newPurgeOldRecords(pool)))
 	logger.Info("purge route enabled")
 	if cfg.RedisURL != "" {
-		options = append(options, httpapi.WithLogout(authorizer, newLogout(pool, revoked)))
+		options = append(options, httpapi.WithLogout(authorizer, newLogout(pool, redisState.revoked)))
 		logger.Info("logout route enabled")
 	}
 	return httpapi.NewHandler(options...), func() {
@@ -120,19 +122,35 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 	}, nil
 }
 
-// openRevokedTokens connects the list of revoked access tokens when APP_AUTH_REDIS_URL is set (the client
-// does not connect until it is used). Without it there is no list: the routes that consult it work without
-// the check and logout is not enabled, which the log says once.
-func openRevokedTokens(logger *slog.Logger, cfg config.Config) (out.RevokedTokens, func(), error) {
+// redisState is what the service keeps in the Redis of the auth state (ADR-028): the list of revoked
+// access tokens (logout) and the counters and locks of the login attempt limit (HU-AUTH-005).
+type redisState struct {
+	revoked  out.RevokedTokens
+	attempts out.LoginAttempts
+}
+
+// openRedisState connects the Redis of the auth state when APP_AUTH_REDIS_URL is set (the client does not
+// connect until it is used). Without it there is no state: the routes that consult the revoked list work
+// without the check, logout is not enabled and the login is not limited, which the log says once.
+func openRedisState(logger *slog.Logger, cfg config.Config) (redisState, func(), error) {
 	if cfg.RedisURL == "" {
-		logger.Info("APP_AUTH_REDIS_URL is not set: logout is not enabled and revoked access tokens are not checked")
-		return noRevokedTokens{}, func() {}, nil
+		logger.Info("APP_AUTH_REDIS_URL is not set: logout is not enabled, revoked access tokens are not checked and the login is not limited")
+		return redisState{revoked: noRevokedTokens{}, attempts: noLoginAttempts{}}, func() {}, nil
+	}
+	policy, err := model.NewLoginAttemptPolicy(cfg.LoginMaxAttempts, cfg.LoginWindow, cfg.LoginLock)
+	if err != nil {
+		return redisState{}, nil, fmt.Errorf("login attempt limit: %w", err)
+	}
+	if cfg.LoginLimitTimeout <= 0 || cfg.LoginLimitPause <= 0 {
+		return redisState{}, nil, errors.New("login attempt limit: the timeout and the pause must be positive")
 	}
 	client, err := redis.NewClient(redis.ClientSettings{URL: cfg.RedisURL, Timeout: cfg.RedisTimeout})
 	if err != nil {
-		return nil, nil, err
+		return redisState{}, nil, err
 	}
-	return redis.NewRevokedTokens(client), func() { _ = client.Close() }, nil
+	attempts := redis.NewBoundedLoginAttempts(redis.NewLoginAttempts(client, policy), cfg.LoginLimitTimeout, cfg.LoginLimitPause, system.Clock{})
+	state := redisState{revoked: redis.NewRevokedTokens(client), attempts: attempts}
+	return state, func() { _ = client.Close() }, nil
 }
 
 // noRevokedTokens is the list of a service without Redis: nothing is ever revoked.
@@ -166,7 +184,7 @@ func newRegisterUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer
 	})
 }
 
-func newLoginUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer) *usecase.LoginUser {
+func newLoginUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer, attempts out.LoginAttempts) *usecase.LoginUser {
 	clock, ids := system.Clock{}, system.UUIDGenerator{}
 	return usecase.NewLoginUser(
 		persistence.NewUserRepository(pool),
@@ -174,7 +192,7 @@ func newLoginUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer) *
 		issuer,
 		usecase.NewIssueRefreshToken(persistence.NewRefreshTokenRepository(pool), ids, clock, cfg.RefreshTokenTTL),
 		clock,
-		noLoginAttempts{},
+		attempts,
 	)
 }
 

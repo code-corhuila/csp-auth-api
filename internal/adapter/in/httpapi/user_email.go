@@ -121,6 +121,22 @@ func retryAfterSeconds(err error) string {
 	if errors.As(err, &limited) {
 		wait = limited.RetryAfter
 	}
+	return wholeSeconds(wait)
+}
+
+// loginRetryAfterSeconds is the Retry-After of a login rejected by the attempt limit: the time left of
+// the lock. An error that carries no wait gets the default lock time, the upper bound.
+func loginRetryAfterSeconds(err error) string {
+	wait := model.DefaultLoginLock
+	var limited *model.LoginRateLimitedError
+	if errors.As(err, &limited) {
+		wait = limited.RetryAfter
+	}
+	return wholeSeconds(wait)
+}
+
+// wholeSeconds rounds a wait up to whole seconds, never under one: Retry-After is an integer.
+func wholeSeconds(wait time.Duration) string {
 	seconds := int((wait + time.Second - 1) / time.Second)
 	return strconv.Itoa(max(seconds, 1))
 }
