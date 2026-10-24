@@ -33,7 +33,9 @@ type poolOpener func(ctx context.Context, settings persistence.PoolSettings) (*p
 //     because registration issues tokens.
 //   - A signing key: health and /jwks.
 //   - A signing key and a database URL: also POST /register, POST /login and POST /refresh, served by the real use cases,
-//     GET /users and PATCH /users/{userId}/role, open to the access tokens that hold user:role:update, and
+//     GET /users and PATCH /users/{userId}/role, open to the access tokens that hold user:role:update,
+//     GET /me and PATCH /me (HU-AUTH-007, ADR-051), open to the access tokens that hold profile:read:self and
+//     profile:update:self, and
 //     PATCH /me/email and POST /me/email/verify when APP_AUTH_SMTP_HOST is set (the verification code goes
 //     to that SMTP relay, ADR-034; without it the two routes are not enabled), open to the access tokens that
 //     hold profile:update:self,
@@ -95,6 +97,8 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 	logger.Info("user role route enabled")
 	options = append(options, httpapi.WithListUsers(authorizer, usecase.NewListUsers(persistence.NewUserReader(pool))))
 	logger.Info("user list route enabled")
+	options = append(options, newOwnProfile(authorizer, pool))
+	logger.Info("own profile routes enabled")
 	if cfg.SMTPHost != "" {
 		requestEmailChange, err := newRequestEmailChange(cfg, logger, pool)
 		if err != nil {
@@ -252,6 +256,12 @@ func newChangeUserRole(pool *pgxpool.Pool, sessions out.UserSessionRevocations) 
 		RefreshTokens: persistence.NewRefreshTokenRepository(pool),
 		Sessions:      sessions,
 	})
+}
+
+func newOwnProfile(authorizer *usecase.AuthorizeUser, pool *pgxpool.Pool) httpapi.Option {
+	users := persistence.NewUserRepository(pool)
+	return httpapi.WithOwnProfile(authorizer, usecase.NewGetProfile(users),
+		usecase.NewUpdateProfile(users, users, system.Clock{}, persistence.NewTransactionManager(pool)))
 }
 
 func newAuthorizeService(cfg config.Config, issuer *token.Issuer) *usecase.AuthorizeService {
