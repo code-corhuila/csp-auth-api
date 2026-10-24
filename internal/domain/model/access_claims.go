@@ -25,6 +25,7 @@ var adminOnlyPermissions = []string{
 	"showtime:write",
 	"concessions:product:write",
 	"concessions:combo:write",
+	"concessions:inventory:read",
 	"concessions:inventory:write",
 	"user:role:update",
 }

@@ -14,7 +14,8 @@ func TestNewAccessClaimsResolvesPermissionsFromRoles(t *testing.T) {
 	}
 	admin := append(append([]string{}, client...),
 		"booking:read:all", "catalog:write", "room:write", "showtime:write",
-		"concessions:product:write", "concessions:combo:write", "concessions:inventory:write", "user:role:update")
+		"concessions:product:write", "concessions:combo:write", "concessions:inventory:read", "concessions:inventory:write",
+		"user:role:update")
 
 	tests := []struct {
 		name  string
