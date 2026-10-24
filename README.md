@@ -98,6 +98,10 @@ and a signing key (`APP_AUTH_JWT_PRIVATE_KEY` or `APP_AUTH_JWT_PRIVATE_KEY_FILE`
 service starts as before (health, and `/jwks` when a key is set). A database URL without a signing key, an invalid pool
 setting or a database that does not answer stops the service at startup. The pool is closed on shutdown.
 
+`GET /api/v1/auth/jwks` publishes the public key that verifies the tokens, with the `kid` of their header. The services do not read it: they
+receive the key as configuration (`JWT_PUBLIC_KEY`, norm 5.3.7). The response carries `Cache-Control: public, max-age=300`, so whoever caches
+it holds a stale key for at most five minutes after a rotation (runbook of the auth service, section 4; ADR-053).
+
 To run it with the database:
 
 1. Start the PostgreSQL instance of `csp-infra-postgres` and apply the migrations with the executor of `csp-auth-db`

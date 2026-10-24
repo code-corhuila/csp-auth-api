@@ -22,8 +22,13 @@ type jsonWebKeySet struct {
 	Keys []jsonWebKey `json:"keys"`
 }
 
+// jwksCacheControl lets a client keep the set for five minutes: the key changes only in a coordinated
+// rotation (runbook of the auth service, section 4; ADR-053).
+const jwksCacheControl = "public, max-age=300"
+
 func jwks(source in.PublicKeys) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Cache-Control", jwksCacheControl)
 		keys := source.PublicKeys()
 		set := jsonWebKeySet{Keys: make([]jsonWebKey, 0, len(keys))}
 		for _, key := range keys {
