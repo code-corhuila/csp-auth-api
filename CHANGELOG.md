@@ -11,6 +11,10 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- HU-AUTH-006, password reset (ADR-050), domain and use cases: the `ResetToken` value object (a UUID of which only the SHA-256
+  digest is stored), the `PasswordReset` entity (one hour, single use, three requests per user in a rolling hour), the inbound
+  ports `RequestPasswordReset` and `ResetPassword` and their use cases. A request does the same work for any email and sends the
+  link after the commit; a reset consumes the token, replaces the hash and revokes every refresh token of the user in one transaction.
 - HU-AUTH-001, registration (`POST /api/v1/auth/register`):
   domain and use case ([#31](https://github.com/code-corhuila/csp-auth-api/pull/31)),
   PostgreSQL and bcrypt adapters ([#33](https://github.com/code-corhuila/csp-auth-api/pull/33)),
