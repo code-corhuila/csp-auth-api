@@ -172,6 +172,9 @@ marker cannot be written the answer is `500 INTERNAL_ERROR` and an `ERROR` is lo
 already changed; repeating the call is a no-op `200` that does not write the marker. Without `APP_AUTH_REDIS_URL` only the refresh
 tokens are revoked. No new event is published.
 
+The change does not depend on the client either: it runs on the same detached context as the sign out (bounded by `detachedDeadline`),
+so a client that leaves between the commit and the write of the marker cannot leave the old access tokens of the user alive.
+
 `GET /api/v1/auth/users` (HU-AUTH-003, ADR-031) is enabled by the same settings and has the same guard: the permission `user:role:update`.
 It lists the accounts so an administrator can find the one to change:
 
@@ -202,7 +205,7 @@ the call, which is idempotent. A missing or invalid access token is `401`. The l
 
 The revocation survives the client: a browser that navigates away right after the click cancels its request, and the refresh tokens must
 not stay alive for that. The use case runs on a context that keeps the values of the request (trace id) but not its cancellation, bounded by
-a fixed deadline of 10 seconds (`logoutDeadline`, norm 5.3.10); the bearer token and the body are still read on the request context.
+a fixed deadline of 10 seconds (`detachedDeadline`, norm 5.3.10); the bearer token and the body are still read on the request context.
 
 `PATCH /api/v1/auth/me/email` and `POST /api/v1/auth/me/email/verify` (HU-AUTH-004, ADR-034) change the email of the caller in two
 steps. Both need an access token that holds `profile:update:self` (any signed-in user) and an `Idempotency-Key` (accepted, not

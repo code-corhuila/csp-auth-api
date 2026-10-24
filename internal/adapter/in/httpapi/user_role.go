@@ -42,7 +42,10 @@ func changeUserRole(useCase in.ChangeUserRole) callerHandler {
 			return
 		}
 
-		summary, err := useCase.ChangeRole(r.Context(), in.ChangeUserRoleCommand{
+		// The commit and the marker that ends the sessions of a removed ADMIN (ADR-031) are not interrupted by the client.
+		ctx, cancel := detachedFromClient(r)
+		defer cancel()
+		summary, err := useCase.ChangeRole(ctx, in.ChangeUserRoleCommand{
 			ActingAdminID: callerID,
 			UserID:        userID,
 			Role:          *body.Role,

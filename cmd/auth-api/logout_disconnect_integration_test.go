@@ -18,6 +18,7 @@ import (
 
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/persistence"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/redis"
+	"github.com/code-corhuila/csp-auth-api/internal/config"
 )
 
 // cancelOnRevocation makes the browser leave the page at the worst moment: when the sign out reaches the
@@ -69,20 +70,7 @@ func TestLogoutEndsTheSessionWhenTheClientCancelsTheRequest(t *testing.T) {
 	clientCtx, cancelClient := context.WithCancel(context.Background())
 	defer cancelClient()
 	tracer := &cancelOnRevocation{cancelClient: cancelClient}
-	handler, closeAll, err := newHandler(context.Background(), discardLogger(), cfg, func(ctx context.Context, settings persistence.PoolSettings) (*pgxpool.Pool, error) {
-		poolCfg, err := pgxpool.ParseConfig(settings.URL)
-		if err != nil {
-			return nil, err
-		}
-		poolCfg.ConnConfig.Tracer = tracer
-		return pgxpool.NewWithConfig(ctx, poolCfg)
-	})
-	if err != nil {
-		t.Fatalf("newHandler() error = %v", err)
-	}
-	t.Cleanup(closeAll)
-	cancelling := httptest.NewServer(handler)
-	t.Cleanup(cancelling.Close)
+	cancelling := startTracedServer(t, cfg, tracer)
 
 	body := fmt.Sprintf(`{"refreshToken":%q}`, refreshToken)
 	request, err := http.NewRequestWithContext(clientCtx, http.MethodPost, cancelling.URL+logoutPath, strings.NewReader(body))
@@ -106,4 +94,24 @@ func TestLogoutEndsTheSessionWhenTheClientCancelsTheRequest(t *testing.T) {
 	if status, _, payload := refresh(t, server.URL, refreshToken); status != http.StatusUnauthorized || payload["error"] != "INVALID_REFRESH_TOKEN" {
 		t.Errorf("the refresh token after the cancelled sign out: status = %d, body = %v, want 401 INVALID_REFRESH_TOKEN", status, payload)
 	}
+}
+
+// startTracedServer starts the service with a pgx tracer on its pool, to act at a precise statement.
+func startTracedServer(t *testing.T, cfg config.Config, tracer pgx.QueryTracer) *httptest.Server {
+	t.Helper()
+	handler, closeAll, err := newHandler(context.Background(), discardLogger(), cfg, func(ctx context.Context, settings persistence.PoolSettings) (*pgxpool.Pool, error) {
+		poolCfg, err := pgxpool.ParseConfig(settings.URL)
+		if err != nil {
+			return nil, err
+		}
+		poolCfg.ConnConfig.Tracer = tracer
+		return pgxpool.NewWithConfig(ctx, poolCfg)
+	})
+	if err != nil {
+		t.Fatalf("newHandler() error = %v", err)
+	}
+	t.Cleanup(closeAll)
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	return server
 }
