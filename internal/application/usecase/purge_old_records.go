@@ -16,20 +16,22 @@ type PurgeOldRecords struct {
 	refreshTokens      out.PurgeableRecords
 	idempotencyKeys    out.PurgeableRecords
 	emailVerifications out.PurgeableRecords
+	passwordResets     out.PurgeableRecords
 	retention          model.RetentionPolicy
 	clock              out.Clock
 }
 
 var _ in.PurgeOldRecords = (*PurgeOldRecords)(nil)
 
-// NewPurgeOldRecords wires the use case with the four tables it purges and the retention of
+// NewPurgeOldRecords wires the use case with the five tables it purges and the retention of
 // ADR-030.
-func NewPurgeOldRecords(outbox, refreshTokens, idempotencyKeys, emailVerifications out.PurgeableRecords, clock out.Clock) *PurgeOldRecords {
+func NewPurgeOldRecords(outbox, refreshTokens, idempotencyKeys, emailVerifications, passwordResets out.PurgeableRecords, clock out.Clock) *PurgeOldRecords {
 	return &PurgeOldRecords{
 		outbox:             outbox,
 		refreshTokens:      refreshTokens,
 		idempotencyKeys:    idempotencyKeys,
 		emailVerifications: emailVerifications,
+		passwordResets:     passwordResets,
 		retention:          model.DefaultRetentionPolicy(),
 		clock:              clock,
 	}
@@ -43,7 +45,7 @@ type purgeStep struct {
 }
 
 // Purge deletes old rows in the order outbox events, refresh tokens, idempotency keys, email
-// verification requests, at most
+// verification requests, password resets, at most
 // the batch size in total: each table gets what the previous ones left of the batch. HasMore is
 // true while any table still holds a row older than its retention. Repeating the call only finds
 // what is left, so it is idempotent.
@@ -58,6 +60,7 @@ func (p *PurgeOldRecords) Purge(ctx context.Context, command in.PurgeOldRecordsC
 		{"refresh tokens", p.refreshTokens, now.Add(-p.retention.RefreshTokens)},
 		{"idempotency keys", p.idempotencyKeys, now.Add(-p.retention.IdempotencyKeys)},
 		{"email verifications", p.emailVerifications, now.Add(-p.retention.EmailVerifications)},
+		{"password resets", p.passwordResets, now.Add(-p.retention.PasswordResets)},
 	}
 
 	remaining, processed := int(batch), 0
