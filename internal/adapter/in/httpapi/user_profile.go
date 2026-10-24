@@ -1,11 +1,9 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
-	"slices"
 
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/in"
 	"github.com/code-corhuila/csp-auth-api/internal/domain/model"
@@ -14,8 +12,8 @@ import (
 const (
 	// permissionReadProfile is the permission of reading the own profile (x-required-permissions).
 	permissionReadProfile = "profile:read:self"
-	// maxProfileBodyBytes is the limit of the body of the routes of the own account (ADR-051, Norma 5.3.10).
-	maxProfileBodyBytes = 4 << 10
+	// maxOwnAccountBodyBytes is the limit of the body of the routes of the own account (ADR-051, Norma 5.3.10).
+	maxOwnAccountBodyBytes = 4 << 10
 )
 
 // WithOwnProfile publishes the reading and the edition of the own profile (HU-AUTH-007, ADR-051) at GET /me and
@@ -60,47 +58,10 @@ func getProfile(useCase in.GetProfile) callerHandler {
 	}
 }
 
-// updateProfileRequest is the UpdateProfileRequest schema of the auth-service contract. It keeps the properties of the
-// body as they came, so that a null, a property of another type and an unknown one can be told from a property that
-// was not sent.
-type updateProfileRequest struct {
-	properties map[string]any
-}
-
-func (r *updateProfileRequest) UnmarshalJSON(data []byte) error {
-	return json.Unmarshal(data, &r.properties)
-}
-
-func (r updateProfileRequest) sortedProperties() []string {
-	names := make([]string, 0, len(r.properties))
-	for name := range r.properties {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	return names
-}
-
-// command turns the properties into the command of the use case. Its problems name each property that is unknown, null
-// or not a string; the content of a text is judged by the domain.
-func (r updateProfileRequest) command(callerID string) (in.UpdateProfileCommand, []fieldError) {
-	command := in.UpdateProfileCommand{UserID: callerID}
-	fields := map[string]**string{"name": &command.Name, "phone": &command.Phone, "address": &command.Address}
-	var problems []fieldError
-	for _, property := range r.sortedProperties() {
-		target, known := fields[property]
-		text, isText := r.properties[property].(string)
-		switch {
-		case !known:
-			problems = append(problems, fieldError{Field: property, Message: "is not a field of the profile"})
-		case r.properties[property] == nil:
-			problems = append(problems, fieldError{Field: property, Message: "must not be null"})
-		case !isText:
-			problems = append(problems, fieldError{Field: property, Message: "must be a string"})
-		default:
-			*target = &text
-		}
-	}
-	return command, problems
+// command turns the texts of the body into the command of the use case; a property that was not sent stays nil.
+func (r propertiesBody) command(callerID string) (in.UpdateProfileCommand, []fieldError) {
+	texts, problems := r.texts("name", "phone", "address")
+	return in.UpdateProfileCommand{UserID: callerID, Name: sent(texts, "name"), Phone: sent(texts, "phone"), Address: sent(texts, "address")}, problems
 }
 
 func patchProfile(useCase in.UpdateProfile) callerHandler {
@@ -108,7 +69,7 @@ func patchProfile(useCase in.UpdateProfile) callerHandler {
 		traceID := w.Header().Get(headerCorrelationID)
 		w.Header().Set("Cache-Control", "no-store")
 
-		body, unreadable := decodeBodyWithin[updateProfileRequest](w, r, maxProfileBodyBytes)
+		body, unreadable := decodeBodyWithin[propertiesBody](w, r, maxOwnAccountBodyBytes)
 		command, problems := body.command(callerID)
 		if problems = append(problems, unreadable...); len(problems) > 0 {
 			writeValidation(w, traceID, problems)
