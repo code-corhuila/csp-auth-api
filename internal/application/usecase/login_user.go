@@ -93,10 +93,11 @@ func (l *LoginUser) forgetFailures(ctx context.Context, client string) {
 	}
 }
 
-// warnUnlessPaused logs a failure of the limit store. A store that is paused (ADR-048) already wrote the WARN of the pause
-// when it opened, so its answers are not logged again, or an outage would write two lines per login.
+// warnUnlessPaused logs a failure of a limit store, the login one or the password change one. A store that is paused
+// (ADR-048) already wrote the WARN of the pause when it opened, so its answers are not logged again, or an outage would write
+// two lines per request.
 func warnUnlessPaused(message string, err error) {
-	if errors.Is(err, out.ErrLoginAttemptsPaused) {
+	if errors.Is(err, out.ErrLoginAttemptsPaused) || errors.Is(err, out.ErrPasswordChangeAttemptsPaused) {
 		return
 	}
 	slog.Warn(message, "error", err)
