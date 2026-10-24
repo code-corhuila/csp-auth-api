@@ -15,6 +15,8 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- The `ADMIN` role holds `concessions:inventory:read`, the permission that `GET /stock/movements` of `concessions-service.yaml` requires (HU-CONCESSIONS-007);
+  the token of an `ADMIN` carries it in `permissions` after the next login or refresh. Test of the permissions of each role.
 - `GET /api/v1/auth/jwks` answers `Cache-Control: public, max-age=300` (contract 1.11.0, ADR-053): the key changes only in a coordinated
   rotation, so a copy kept by a browser, a proxy or a tool is stale for at most five minutes. Handler test and contract test (the contract
   declares the header and the test checks that the response carries it).
