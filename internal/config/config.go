@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/mail"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -77,6 +78,10 @@ type Config struct {
 
 	EmailChangeMaxConcurrency int
 	EmailChangeQueueTimeout   time.Duration
+
+	PasswordResetURL            string
+	PasswordResetMaxConcurrency int
+	PasswordResetQueueTimeout   time.Duration
 }
 
 // Lookup returns the value of an environment variable, as os.LookupEnv does.
@@ -117,6 +122,9 @@ func Load(lookup Lookup) (Config, error) {
 		return Config{}, err
 	}
 	if err := loadEmailChangeLimit(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
+	if err := loadPasswordReset(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
 
@@ -269,6 +277,39 @@ func loadEmailChangeLimit(lookup Lookup, cfg *Config) error {
 	}
 	if cfg.SMTPHost != "" && cfg.EmailChangeMaxConcurrency >= cfg.DatabaseMaxConnections {
 		return fmt.Errorf("APP_AUTH_EMAIL_CHANGE_MAX_CONCURRENCY %d must be below APP_AUTH_DATABASE_MAX_CONNECTIONS %d", cfg.EmailChangeMaxConcurrency, cfg.DatabaseMaxConnections)
+	}
+	return nil
+}
+
+// maxPasswordResetQueueTimeout bounds APP_AUTH_PASSWORD_RESET_QUEUE_TIMEOUT: a longer wait would approach the write timeout.
+const maxPasswordResetQueueTimeout = 5 * time.Second
+
+// loadPasswordReset reads the settings of the password reset (HU-AUTH-006, ADR-050): the page of the portal that the link of
+// the message opens, and the bulkhead of each of the two routes (Norma 5.3.10). The routes need the SMTP relay and the URL,
+// so the URL is only validated when it is set. With the relay configured the concurrency has to stay below the pool, so the
+// other routes always find a connection.
+func loadPasswordReset(lookup Lookup, cfg *Config) error {
+	cfg.PasswordResetURL, _ = lookup("APP_AUTH_PASSWORD_RESET_URL")
+	if cfg.PasswordResetURL != "" {
+		if link, err := url.Parse(cfg.PasswordResetURL); err != nil || (link.Scheme != "http" && link.Scheme != "https") || link.Host == "" || link.Fragment != "" {
+			return errors.New("APP_AUTH_PASSWORD_RESET_URL must be an absolute http or https URL without a fragment")
+		}
+	}
+	var err error
+	if cfg.PasswordResetMaxConcurrency, err = intValue(lookup, "APP_AUTH_PASSWORD_RESET_MAX_CONCURRENCY", 4); err != nil {
+		return err
+	}
+	if cfg.PasswordResetMaxConcurrency < 1 {
+		return fmt.Errorf("APP_AUTH_PASSWORD_RESET_MAX_CONCURRENCY %d must be at least 1", cfg.PasswordResetMaxConcurrency)
+	}
+	if cfg.PasswordResetQueueTimeout, err = durationValue(lookup, "APP_AUTH_PASSWORD_RESET_QUEUE_TIMEOUT", time.Second); err != nil {
+		return err
+	}
+	if cfg.PasswordResetQueueTimeout > maxPasswordResetQueueTimeout {
+		return fmt.Errorf("APP_AUTH_PASSWORD_RESET_QUEUE_TIMEOUT %s exceeds the maximum of %s", cfg.PasswordResetQueueTimeout, maxPasswordResetQueueTimeout)
+	}
+	if cfg.SMTPHost != "" && cfg.PasswordResetMaxConcurrency >= cfg.DatabaseMaxConnections {
+		return fmt.Errorf("APP_AUTH_PASSWORD_RESET_MAX_CONCURRENCY %d must be below APP_AUTH_DATABASE_MAX_CONNECTIONS %d", cfg.PasswordResetMaxConcurrency, cfg.DatabaseMaxConnections)
 	}
 	return nil
 }

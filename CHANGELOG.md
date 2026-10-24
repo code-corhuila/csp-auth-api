@@ -11,6 +11,11 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- HU-AUTH-006, password reset (ADR-050), delivery and settings: `SMTPPasswordResetSender`, the adapter of the new `PasswordResetSender` port, which
+  only queues the message (a bounded in-memory queue, two workers) so the latency or the failure of the relay cannot change the answer of
+  the request, and sends the link `<APP_AUTH_PASSWORD_RESET_URL>#token=<token>` in a plain-text message in Spanish. The SMTP exchange and the
+  message layout are now shared with the email verification code. New settings `APP_AUTH_PASSWORD_RESET_URL`,
+  `APP_AUTH_PASSWORD_RESET_MAX_CONCURRENCY` and `APP_AUTH_PASSWORD_RESET_QUEUE_TIMEOUT`, validated at start-up.
 - HU-AUTH-006, password reset (ADR-050), adapters: `PasswordResetRepository` over `auth.password_reset` (requests locked per user, a new
   request supersedes the pending one by soft delete, the token locked by its digest after the account), `UpdatePasswordHash` on the user
   repository, the `ResetTokenGenerator` and the purge of password resets that expired more than 7 days ago (ADR-030 extended).
