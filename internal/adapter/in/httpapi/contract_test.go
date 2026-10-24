@@ -201,6 +201,7 @@ func TestUpdateUserRoleResponsesFulfillTheContract(t *testing.T) {
 		"500 authorizer unexpected": {&fakeUserAuthorizer{err: errors.New("key store down")}, &fakeChangeRole{}, roleAttempt{key: roleKey, body: grantBody, headers: withTrace()}},
 		"401 revoked token":         {&fakeUserAuthorizer{err: model.ErrAccessTokenInvalid}, &fakeChangeRole{}, roleAttempt{key: roleKey, body: grantBody, headers: withTrace()}},
 		"500 revoked list down":     {&fakeUserAuthorizer{err: errRevokedListDown}, &fakeChangeRole{}, roleAttempt{key: roleKey, body: grantBody, headers: withTrace()}},
+		"500 sessions not marked":   {&fakeUserAuthorizer{}, &fakeChangeRole{err: errSessionsNotMarked}, roleAttempt{key: roleKey, body: `{"role":"ADMIN","enabled":false}`, headers: withTrace()}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

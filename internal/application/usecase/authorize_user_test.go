@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -38,6 +39,7 @@ func newUserAuthorizerWith(t *testing.T, revoked *fakeRevokedTokens) (*Authorize
 		t.Fatal(err)
 	}
 	admin.TokenID, client.TokenID = "jti-admin", "jti-client"
+	admin.IssuedAt, client.IssuedAt = registeredAt, registeredAt
 	tokens := &fakeAccessTokens{claims: map[string]model.AccessClaims{"admin-token": admin, "client-token": client}}
 	return NewAuthorizeUser(tokens, revoked), tokens
 }
@@ -181,5 +183,88 @@ func TestAuthenticateUserOnlyConsultsTheListForAValidToken(t *testing.T) {
 
 	if len(revoked.journal.steps) != 0 {
 		t.Errorf("the list was consulted %v for tokens that are not valid, want never", revoked.journal.steps)
+	}
+}
+
+// The tokens of newUserAuthorizer were issued at registeredAt; a marker of user revocation is
+// compared with that instant by whole seconds (ADR-031, amendment 2026-10-24).
+func TestAuthenticateUserAppliesTheRuleOnIssuedAtToTheMarkerOfTheUser(t *testing.T) {
+	cases := map[string]struct {
+		marker   *time.Time
+		accepted bool
+	}{
+		"no marker":                       {nil, true},
+		"issued before the revocation":    {at(registeredAt.Add(time.Minute)), false},
+		"issued at the instant of it":     {at(registeredAt), false},
+		"issued after the revocation":     {at(registeredAt.Add(-time.Second)), true},
+		"revoked long before it was used": {at(registeredAt.Add(-time.Hour)), true},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			revoked := newRevokedList()
+			if c.marker != nil {
+				revoked.markers["client-1"] = *c.marker
+			}
+			useCase, _ := newUserAuthorizerWith(t, revoked)
+
+			claims, err := useCase.AuthenticateUser(context.Background(), "client-token")
+
+			if c.accepted && (err != nil || claims.Subject != "client-1") {
+				t.Errorf("claims = %+v, error = %v, want the token accepted", claims, err)
+			}
+			if !c.accepted && !errors.Is(err, model.ErrAccessTokenInvalid) {
+				t.Errorf("error = %v, want ErrAccessTokenInvalid", err)
+			}
+		})
+	}
+}
+
+func at(instant time.Time) *time.Time { return &instant }
+
+func TestAuthenticateUserIgnoresTheMarkerOfAnotherUser(t *testing.T) {
+	revoked := newRevokedList()
+	revoked.markers["admin-1"] = registeredAt.Add(time.Hour)
+	useCase, _ := newUserAuthorizerWith(t, revoked)
+
+	if _, err := useCase.AuthenticateUser(context.Background(), "client-token"); err != nil {
+		t.Errorf("client token: error = %v, want it accepted", err)
+	}
+	if _, err := useCase.AuthenticateUser(context.Background(), "admin-token"); !errors.Is(err, model.ErrAccessTokenInvalid) {
+		t.Errorf("admin token: error = %v, want ErrAccessTokenInvalid", err)
+	}
+}
+
+func TestAuthorizeUserAnswersATokenEndedByTheMarkerAsInvalidAndNotAsForbidden(t *testing.T) {
+	revoked := newRevokedList()
+	revoked.markers["client-1"] = registeredAt
+	useCase, _ := newUserAuthorizerWith(t, revoked)
+
+	_, err := useCase.AuthorizeUser(context.Background(), "client-token", "user:role:update")
+
+	if !errors.Is(err, model.ErrAccessTokenInvalid) {
+		t.Errorf("error = %v, want ErrAccessTokenInvalid and not ErrPermissionDenied", err)
+	}
+}
+
+func TestAuthenticateUserFailsClosedWhenTheMarkerCannotBeRead(t *testing.T) {
+	revoked := newRevokedList()
+	revoked.markerErr = errors.New("connection reset")
+	useCase, _ := newUserAuthorizerWith(t, revoked)
+
+	claims, err := useCase.AuthenticateUser(context.Background(), "admin-token")
+
+	if !errors.Is(err, model.ErrRevokedTokensUnavailable) || errors.Is(err, model.ErrAccessTokenInvalid) || claims.TokenID != "jti-admin" {
+		t.Errorf("claims = %+v, error = %v, want the claims and ErrRevokedTokensUnavailable", claims, err)
+	}
+}
+
+func TestAuthenticateUserLooksUpTheTokenAndThenTheUserOfAValidToken(t *testing.T) {
+	revoked := newRevokedList()
+	useCase, _ := newUserAuthorizerWith(t, revoked)
+
+	_, _ = useCase.AuthenticateUser(context.Background(), "client-token")
+
+	if want := []string{"check jti", "check user"}; !reflect.DeepEqual(revoked.journal.steps, want) {
+		t.Errorf("lookups = %v, want %v", revoked.journal.steps, want)
 	}
 }
