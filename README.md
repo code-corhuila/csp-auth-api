@@ -237,11 +237,24 @@ and the count is committed although the answer is `400`; the fifth one retires t
 another account took the address meanwhile the answer is `409 EMAIL_ALREADY_REGISTERED`, the request is invalidated and no event is
 written. No session is revoked by the change. The tables are those of `csp-auth-db` V024 and V025.
 
+### Issuing a service credential (`cmd/auth-token`, ADR-052)
+
+The credential of a service is issued by this service's own offline command, not by an endpoint. The owner of the environment runs it where the
+private key already is, with the same variables as the service (`APP_AUTH_JWT_PRIVATE_KEY` or `APP_AUTH_JWT_PRIVATE_KEY_FILE`):
+
+```bash
+docker run --rm --entrypoint auth-token -e APP_AUTH_JWT_PRIVATE_KEY_FILE=/keys/jwt-private.pem   -v "$PWD/keys:/keys:ro" -v "$PWD/out:/out" csp-auth-api -subject csp-worker -lifetime 2160h -out /out/token.txt
+```
+
+The subject must be `csp-worker`, `booking-service` or `csp-workflow` (never a user id); the lifetime is at most 2160h (90 days, the default). The token
+(`sub`, `iss` `csp-auth`, `aud` `csp-internal`, `iat`, `exp`, `jti`, and the `kid` in the header) is written only to the file, created with mode `0600`
+and not replaced without `-force`. Stdout stays empty; one line on stderr records the subject, the `jti`, the expiry and the file, never the token or the key.
+
 Internal operations (ADR-020) accept a **service credential**: an RS256 token signed with the key of this service,
 with `exp` and a `sub` and sent as `Authorization: Bearer`. A missing or invalid token gets `401 UNAUTHORIZED` and a
 valid token whose `sub` is not in `SERVICE_SUBJECTS` (comma-separated, empty by default so that no service is allowed)
 gets `403 FORBIDDEN`. Issuer and audience are not required. The service has no endpoint that issues these tokens: the
-deployment secret manager provides them, and `csp-infra-postgres/scripts/dev-token.sh <sub> <minutes>` writes one for
+owner issues them with `auth-token` (above) and loads them as environment secrets, and `csp-infra-postgres/scripts/dev-token.sh <sub> <minutes>` writes one for
 development. The first internal operation is the purge of old rows.
 
 The purge of old rows (ADR-030) deletes, in this order, outbox events older than 30 days, refresh tokens that expired
