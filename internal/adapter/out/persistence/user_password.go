@@ -14,7 +14,21 @@ import (
 var (
 	_ out.PasswordUpdater       = (*UserRepository)(nil)
 	_ out.CurrentPasswordReader = (*UserRepository)(nil)
+	_ out.PasswordHashLocker    = (*UserRepository)(nil)
 )
+
+// LockPasswordHashOf returns the bcrypt hash of the active account userID and keeps its row locked (FOR NO KEY UPDATE) until
+// the transaction ends, so two changes of the same password run one after the other. An account that does not exist or was
+// deleted is model.ErrUserNotFound.
+func (r *UserRepository) LockPasswordHashOf(ctx context.Context, userID string) (string, error) {
+	var hash string
+	err := executorFor(ctx, r.pool).QueryRow(ctx,
+		`SELECT password_hash FROM auth.app_user WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE`, userID).Scan(&hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", model.ErrUserNotFound
+	}
+	return hash, err
+}
 
 // PasswordHashOf returns the bcrypt hash of the active account userID. An account that does not exist or was
 // deleted is model.ErrUserNotFound.
