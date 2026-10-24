@@ -168,3 +168,43 @@ func TestChangeUserRoleAnswers500AndLogsAnErrorWhenTheSessionsCannotBeMarked(t *
 		t.Errorf("log = %s, want an ERROR without the token or the jti", logs)
 	}
 }
+
+func TestChangeUserRoleCompletesWhenTheClientDisconnectsInTheMiddleOfTheCall(t *testing.T) {
+	requestCtx, cancel := context.WithCancel(context.WithValue(context.Background(), traceKey{}, "trace-1"))
+	defer cancel()
+	useCase := &cancellingChangeRole{cancelRequest: cancel}
+	request := httptest.NewRequest(http.MethodPatch, BasePath+"/users/"+roleTargetID+"/role", strings.NewReader(grantBody)).WithContext(requestCtx)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+userSecret)
+	request.Header.Set("Idempotency-Key", roleKey)
+	rec := httptest.NewRecorder()
+
+	NewHandler(WithChangeUserRole(&fakeUserAuthorizer{}, useCase)).ServeHTTP(rec, request)
+
+	if rec.Code != http.StatusOK || !useCase.completed {
+		t.Errorf("status = %d, completed = %t, want 200 and the change finished although the client left", rec.Code, useCase.completed)
+	}
+	if !useCase.hasDeadline || useCase.traceID != "trace-1" {
+		t.Errorf("deadline = %t, trace = %v, want a bounded context that keeps the values of the request", useCase.hasDeadline, useCase.traceID)
+	}
+}
+
+// cancellingChangeRole stands for the use case while the client leaves: the request context is cancelled in the
+// middle of the call and the change (commit and marker) only completes if the context it received is still alive.
+type cancellingChangeRole struct {
+	cancelRequest context.CancelFunc
+	completed     bool
+	hasDeadline   bool
+	traceID       any
+}
+
+func (f *cancellingChangeRole) ChangeRole(ctx context.Context, _ in.ChangeUserRoleCommand) (in.UserSummary, error) {
+	f.cancelRequest()
+	_, f.hasDeadline = ctx.Deadline()
+	f.traceID = ctx.Value(traceKey{})
+	if err := ctx.Err(); err != nil {
+		return in.UserSummary{}, err
+	}
+	f.completed = true
+	return promotedUser(), nil
+}
