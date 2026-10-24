@@ -20,9 +20,65 @@ import (
 )
 
 func (f fixture) changeRole(outbox out.UserRoleOutbox) *usecase.ChangeUserRole {
+	return f.changeRoleEndingSessions(outbox, NewRefreshTokenRepository(f.pool), &recordedSessions{})
+}
+
+func (f fixture) changeRoleEndingSessions(outbox out.UserRoleOutbox, tokens out.RefreshTokenRepository, sessions out.UserSessionRevocations) *usecase.ChangeUserRole {
 	return usecase.NewChangeUserRole(usecase.ChangeUserRolePorts{
 		Users: f.users, Roles: f.users, Outbox: outbox, IDs: system.UUIDGenerator{}, Clock: system.Clock{}, Transactions: f.transactions,
+		RefreshTokens: tokens, Sessions: sessions,
 	})
+}
+
+// recordedSessions stands for the marker of Redis: it remembers whose sessions were marked as ended.
+type recordedSessions struct{ marked []string }
+
+func (r *recordedSessions) RevokeUserSessions(_ context.Context, userID string, _ time.Time) error {
+	r.marked = append(r.marked, userID)
+	return nil
+}
+
+func (r *recordedSessions) UserSessionsRevokedAt(context.Context, string) (time.Time, bool, error) {
+	return time.Time{}, false, nil
+}
+
+// revokingThenFailing revokes the refresh tokens for real and then fails, the way a database error after the update would.
+type revokingThenFailing struct {
+	out.RefreshTokenRepository
+	err error
+}
+
+func (r revokingThenFailing) RevokeAllActiveByUser(ctx context.Context, userID string, at time.Time) (int, error) {
+	if _, err := r.RefreshTokenRepository.RevokeAllActiveByUser(ctx, userID, at); err != nil {
+		return 0, err
+	}
+	return 0, r.err
+}
+
+// saveRefreshToken stores an active refresh token of the user and returns its digest.
+func (f fixture) saveRefreshToken(t *testing.T, ctx context.Context, userID string) string {
+	t.Helper()
+	opaque, err := model.NewOpaqueToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := model.NewRefreshToken(newUUID(t), userID, opaque, "agent", time.Now().UTC(), 7*24*time.Hour)
+	if err != nil {
+		t.Fatalf("NewRefreshToken() error = %v", err)
+	}
+	if err := NewRefreshTokenRepository(f.pool).Save(ctx, token); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	return token.Hash()
+}
+
+func (f fixture) refreshTokenIsActive(t *testing.T, ctx context.Context, hash string) bool {
+	t.Helper()
+	token, err := NewRefreshTokenRepository(f.pool).FindByHash(ctx, hash)
+	if err != nil {
+		t.Fatalf("FindByHash() error = %v", err)
+	}
+	return token.IsValidAt(time.Now())
 }
 
 // registerAdmin registers a user and gives it the ADMIN role the way the seed does.
@@ -269,4 +325,81 @@ func TestARevokeWaitsForTheLockAndCountsWhatTheFirstOneLeft(t *testing.T) {
 	if live, _, _ := f.adminAssignments(t, ctx, second.ID()); live != 1 {
 		t.Errorf("live administrator assignments of the survivor = %d, want 1", live)
 	}
+}
+
+func TestChangeRoleRevokingAdminRevokesTheRefreshTokensOfTheTargetAndMarksItsSessions(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	f.lockAdministrators(t, ctx)
+	admin, target := f.registerAdmin(t, ctx), f.registerAdmin(t, ctx)
+	client := newUser(t, uniqueEmail(t))
+	if err := f.register(t, ctx, client); err != nil {
+		t.Fatalf("register error = %v", err)
+	}
+	targetTokens := []string{f.saveRefreshToken(t, ctx, target.ID()), f.saveRefreshToken(t, ctx, target.ID())}
+	adminToken, clientToken := f.saveRefreshToken(t, ctx, admin.ID()), f.saveRefreshToken(t, ctx, client.ID())
+	sessions := &recordedSessions{}
+	useCase := f.changeRoleEndingSessions(f.outbox, NewRefreshTokenRepository(f.pool), sessions)
+	command := func(userID string, enabled bool) in.ChangeUserRoleCommand {
+		return in.ChangeUserRoleCommand{ActingAdminID: admin.ID(), UserID: userID, Role: "ADMIN", Enabled: enabled}
+	}
+
+	for name, c := range map[string]in.ChangeUserRoleCommand{
+		"a grant":                     command(client.ID(), true),
+		"a revoke of a role not held": command(newUserID(t, f, ctx), false),
+	} {
+		if _, err := useCase.ChangeRole(ctx, c); err != nil {
+			t.Fatalf("%s: error = %v", name, err)
+		}
+	}
+	if !f.refreshTokenIsActive(t, ctx, clientToken) || !f.refreshTokenIsActive(t, ctx, targetTokens[0]) || len(sessions.marked) != 0 {
+		t.Fatalf("a grant and a no-op revoke ended sessions: marked = %v", sessions.marked)
+	}
+
+	if _, err := useCase.ChangeRole(ctx, command(target.ID(), false)); err != nil {
+		t.Fatalf("revoke error = %v", err)
+	}
+
+	for _, hash := range targetTokens {
+		if f.refreshTokenIsActive(t, ctx, hash) {
+			t.Error("a refresh token of the target is still active after the revoke")
+		}
+	}
+	if !f.refreshTokenIsActive(t, ctx, adminToken) || !f.refreshTokenIsActive(t, ctx, clientToken) {
+		t.Error("the refresh tokens of other users were revoked")
+	}
+	if len(sessions.marked) != 1 || sessions.marked[0] != target.ID() {
+		t.Errorf("marked = %v, want only %s", sessions.marked, target.ID())
+	}
+}
+
+func TestChangeRoleKeepsTheRoleAndTheRefreshTokensTogetherWhenTheRevocationFails(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	f.lockAdministrators(t, ctx)
+	admin, target := f.registerAdmin(t, ctx), f.registerAdmin(t, ctx)
+	token := f.saveRefreshToken(t, ctx, target.ID())
+	failure := errors.New("connection lost after the update")
+	sessions := &recordedSessions{}
+	useCase := f.changeRoleEndingSessions(f.outbox, revokingThenFailing{NewRefreshTokenRepository(f.pool), failure}, sessions)
+
+	_, err := useCase.ChangeRole(ctx, in.ChangeUserRoleCommand{ActingAdminID: admin.ID(), UserID: target.ID(), Role: "ADMIN", Enabled: false})
+
+	if !errors.Is(err, failure) {
+		t.Fatalf("error = %v, want %v", err, failure)
+	}
+	if live, _, _ := f.adminAssignments(t, ctx, target.ID()); live != 1 {
+		t.Errorf("live ADMIN assignments = %d, want 1: the role must not be lost while the sessions survive", live)
+	}
+	if !f.refreshTokenIsActive(t, ctx, token) || len(sessions.marked) != 0 {
+		t.Errorf("token active = %v, marked = %v, want the update rolled back and no marker", f.refreshTokenIsActive(t, ctx, token), sessions.marked)
+	}
+}
+
+// newUserID registers a user without ADMIN and returns its id.
+func newUserID(t *testing.T, f fixture, ctx context.Context) string {
+	t.Helper()
+	user := newUser(t, uniqueEmail(t))
+	if err := f.register(t, ctx, user); err != nil {
+		t.Fatalf("register error = %v", err)
+	}
+	return user.ID()
 }
