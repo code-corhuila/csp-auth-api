@@ -108,7 +108,7 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 
 func TestLoadReadsTheTokenSettings(t *testing.T) {
 	cfg, err := Load(lookupFrom(nil))
-	if err != nil || cfg.AccessTokenTTL != time.Hour || cfg.JWTPrivateKey != "" || cfg.JWTPrivateKeyFile != "" {
+	if err != nil || cfg.AccessTokenTTL != 15*time.Minute || cfg.JWTPrivateKey != "" || cfg.JWTPrivateKeyFile != "" {
 		t.Fatalf("defaults: cfg = %+v, err = %v; want 1h and no key", cfg, err)
 	}
 	cfg, err = Load(lookupFrom(map[string]string{
