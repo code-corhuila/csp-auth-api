@@ -200,6 +200,10 @@ token is written to Redis (`blacklist:{jti}`, `SET` with a ttl of its remaining 
 If Redis cannot be written the answer is `500 INTERNAL_ERROR` although the refresh tokens are already revoked: the client repeats
 the call, which is idempotent. A missing or invalid access token is `401`. The list is read on the protected routes too (below).
 
+The revocation survives the client: a browser that navigates away right after the click cancels its request, and the refresh tokens must
+not stay alive for that. The use case runs on a context that keeps the values of the request (trace id) but not its cancellation, bounded by
+a fixed deadline of 10 seconds (`logoutDeadline`, norm 5.3.10); the bearer token and the body are still read on the request context.
+
 `PATCH /api/v1/auth/me/email` and `POST /api/v1/auth/me/email/verify` (HU-AUTH-004, ADR-034) change the email of the caller in two
 steps. Both need an access token that holds `profile:update:self` (any signed-in user) and an `Idempotency-Key` (accepted, not
 stored: repeating the request is harmless). The account is always the one in the token, and the routes are enabled by the same
