@@ -9,6 +9,12 @@ All notable changes of `csp-auth-api` are recorded here. The format follows
 
 Everything below is in `develop`; it is promoted to `qa` and `main` only when it is ordered.
 
+### Changed
+
+- The access token lives 15 minutes by default: `APP_AUTH_JWT_EXPIRY` defaults to 900 seconds (it was 3600; the range 1 to 3600 stays), so `expiresIn` is 900
+  and a signed-out user or a demoted administrator keeps a valid token in the other services for at most 15 minutes (ADR-054, contract 1.12.0).
+  `.env.example` and the README say so. Configuration test of the default.
+
 ### Added
 
 - `GET /api/v1/auth/jwks` answers `Cache-Control: public, max-age=300` (contract 1.11.0, ADR-053): the key changes only in a coordinated
