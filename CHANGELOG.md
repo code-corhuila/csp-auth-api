@@ -9,6 +9,11 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- HU-AUTH-006, password reset (ADR-050), the endpoints: `POST /api/v1/auth/forgot-password` (always `202` without body, the same for an
+  active, unknown, inactive or over-limit account) and `POST /api/v1/auth/reset-password` (`204`, or `401 INVALID_TOKEN`; it consumes the token,
+  replaces the hash and revokes every refresh token in one transaction). Each route has its own bulkhead and a 4 KiB body limit, and without
+  the SMTP host or `APP_AUTH_PASSWORD_RESET_URL` both answer the `404` of the contract. The three variables are in `.env.example`,
+  `deploy/compose.yml` and the README.
 - HU-AUTH-006, password reset (ADR-050), delivery and settings: `SMTPPasswordResetSender`, the adapter of the new `PasswordResetSender` port, which
   only queues the message (a bounded in-memory queue, two workers) so the latency or the failure of the relay cannot change the answer of
   the request, and sends the link `<APP_AUTH_PASSWORD_RESET_URL>#token=<token>` in a plain-text message in Spanish. The SMTP exchange and the
