@@ -12,7 +12,7 @@ import (
 type PasswordResetRepository interface {
 	// LockRequestsOf serializes the requests of a user until the transaction ends, so two concurrent
 	// requests are counted and superseded one after the other. It returns model.ErrUserNotFound when
-	// the account does not exist or was deleted.
+	// the account does not exist, was deleted or is not active.
 	LockRequestsOf(ctx context.Context, userID string) error
 	// CountRequestsSince counts the requests of the user made at or after since, superseded ones included.
 	CountRequestsSince(ctx context.Context, userID string, since time.Time) (int, error)

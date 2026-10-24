@@ -11,6 +11,9 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- HU-AUTH-006, password reset (ADR-050), adapters: `PasswordResetRepository` over `auth.password_reset` (requests locked per user, a new
+  request supersedes the pending one by soft delete, the token locked by its digest after the account), `UpdatePasswordHash` on the user
+  repository, the `ResetTokenGenerator` and the purge of password resets that expired more than 7 days ago (ADR-030 extended).
 - HU-AUTH-006, password reset (ADR-050), domain and use cases: the `ResetToken` value object (a UUID of which only the SHA-256
   digest is stored), the `PasswordReset` entity (one hour, single use, three requests per user in a rolling hour), the inbound
   ports `RequestPasswordReset` and `ResetPassword` and their use cases. A request does the same work for any email and sends the
