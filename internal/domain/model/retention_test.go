@@ -26,7 +26,8 @@ func TestNewPurgeBatchSizeRejectsTheRestOfTheIntegers(t *testing.T) {
 func TestDefaultRetentionPolicyIsTheOneOfADR030(t *testing.T) {
 	policy := DefaultRetentionPolicy()
 
-	if policy.OutboxEvents != 30*24*time.Hour || policy.RefreshTokens != 30*24*time.Hour || policy.IdempotencyKeys != 7*24*time.Hour || policy.EmailVerifications != 7*24*time.Hour {
-		t.Errorf("policy = %+v, want 30 days for the outbox and the refresh tokens and 7 days for the idempotency keys and the email verifications", policy)
+	if policy.OutboxEvents != 30*24*time.Hour || policy.RefreshTokens != 30*24*time.Hour || policy.IdempotencyKeys != 7*24*time.Hour ||
+		policy.EmailVerifications != 7*24*time.Hour || policy.PasswordResets != 7*24*time.Hour {
+		t.Errorf("policy = %+v, want 30 days for the outbox and the refresh tokens and 7 days for the idempotency keys, the email verifications and the password resets", policy)
 	}
 }
