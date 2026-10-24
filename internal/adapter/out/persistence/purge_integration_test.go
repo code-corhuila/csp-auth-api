@@ -19,11 +19,11 @@ const purgeLockKey = 3012
 
 const day = 24 * time.Hour
 
-// purgeFixture holds the advisory lock for the whole test and empties the four tables of old
+// purgeFixture holds the advisory lock for the whole test and empties the five tables of old
 // rows first, so the counts of the test are its own.
 type purgeFixture struct {
 	fixture
-	outbox, tokens, keys, verifications *agedRows
+	outbox, tokens, keys, verifications, resets *agedRows
 }
 
 func newPurgeFixture(t *testing.T) purgeFixture {
@@ -46,6 +46,7 @@ func newPurgeFixture(t *testing.T) purgeFixture {
 		tokens:        NewRefreshTokenPurger(f.pool).(*agedRows),
 		keys:          NewIdempotencyKeyPurger(f.pool).(*agedRows),
 		verifications: NewEmailVerificationPurger(f.pool).(*agedRows),
+		resets:        NewPasswordResetPurger(f.pool).(*agedRows),
 	}
 	p.drain(t)
 	return p
@@ -57,7 +58,7 @@ func (p purgeFixture) drain(t *testing.T) {
 	for _, step := range []struct {
 		records *agedRows
 		cutoff  time.Time
-	}{{p.outbox, now.Add(-30 * day)}, {p.tokens, now.Add(-30 * day)}, {p.keys, now.Add(-7 * day)}, {p.verifications, now.Add(-7 * day)}} {
+	}{{p.outbox, now.Add(-30 * day)}, {p.tokens, now.Add(-30 * day)}, {p.keys, now.Add(-7 * day)}, {p.verifications, now.Add(-7 * day)}, {p.resets, now.Add(-7 * day)}} {
 		for {
 			deleted, err := step.records.DeleteOlderThan(context.Background(), step.cutoff, 500)
 			if err != nil {
@@ -134,6 +135,28 @@ func (p purgeFixture) seedVerification(t *testing.T, expiredAgo time.Duration, v
 		 VALUES ($1, $2, '123456', $3, $4, 'purge-target@example.com')`,
 		id, user.ID(), expiresAt, verifiedAt); err != nil {
 		t.Fatalf("seed an email verification: %v", err)
+	}
+	return id
+}
+
+// seedReset stores a password reset that expired expiredAgo ago and, if used, was consumed. Each one belongs to a
+// user of its own, as only one request per user is pending.
+func (p purgeFixture) seedReset(t *testing.T, expiredAgo time.Duration, used bool) string {
+	t.Helper()
+	user := newUser(t, uniqueEmail(t))
+	if err := p.register(t, context.Background(), user); err != nil {
+		t.Fatalf("register error = %v", err)
+	}
+	id := newUUID(t)
+	expiresAt := time.Now().Add(-expiredAgo)
+	var usedAt *time.Time
+	if used {
+		usedAt = &expiresAt
+	}
+	if _, err := p.pool.Exec(context.Background(),
+		`INSERT INTO auth.password_reset (id, user_id, token_hash, expires_at, used_at) VALUES ($1, $2, $3, $4, $5)`,
+		id, user.ID(), model.HashOpaqueToken(id), expiresAt, usedAt); err != nil {
+		t.Fatalf("seed a password reset: %v", err)
 	}
 	return id
 }
@@ -232,7 +255,9 @@ func TestPurgeUseCaseOverTheRealTablesIsBoundedByTheBatchSizeAndFinishesInTwoCal
 	youngKey := p.seedKey(t, day)
 	verifications := []string{p.seedVerification(t, 8*day, false), p.seedVerification(t, 9*day, true)}
 	youngVerification := p.seedVerification(t, 6*day, false)
-	purge := usecase.NewPurgeOldRecords(p.outbox, p.tokens, p.keys, p.verifications, system.Clock{})
+	resets := []string{p.seedReset(t, 8*day, false), p.seedReset(t, 9*day, true)}
+	youngReset := p.seedReset(t, 6*day, false)
+	purge := usecase.NewPurgeOldRecords(p.outbox, p.tokens, p.keys, p.verifications, p.resets, system.Clock{})
 
 	first, err := purge.Purge(ctx, in.PurgeOldRecordsCommand{BatchSize: 3})
 
@@ -245,8 +270,8 @@ func TestPurgeUseCaseOverTheRealTablesIsBoundedByTheBatchSizeAndFinishesInTwoCal
 		}
 	}
 	second, err := purge.Purge(ctx, in.PurgeOldRecordsCommand{BatchSize: model.MaxPurgeBatchSize})
-	if err != nil || second.ProcessedCount != 5 || second.HasMore {
-		t.Fatalf("second Purge() = %+v, %v, want the 5 left and nothing more", second, err)
+	if err != nil || second.ProcessedCount != 7 || second.HasMore {
+		t.Fatalf("second Purge() = %+v, %v, want the 7 left and nothing more", second, err)
 	}
 	third, err := purge.Purge(ctx, in.PurgeOldRecordsCommand{BatchSize: 10})
 	if err != nil || third.ProcessedCount != 0 || third.HasMore {
@@ -272,6 +297,55 @@ func TestPurgeUseCaseOverTheRealTablesIsBoundedByTheBatchSizeAndFinishesInTwoCal
 	}
 	if !p.present(t, "auth.email_verification", "id", youngVerification) {
 		t.Error("the email verification that expired 6 days ago was deleted")
+	}
+	for _, id := range resets {
+		if p.present(t, "auth.password_reset", "id", id) {
+			t.Errorf("password reset %s was not deleted", id)
+		}
+	}
+	if !p.present(t, "auth.password_reset", "id", youngReset) {
+		t.Error("the password reset that expired 6 days ago was deleted")
+	}
+}
+
+func TestPasswordResetPurgerDeletesResetsExpiredBeforeTheCutoffWhetherUsedOrNot(t *testing.T) {
+	p, ctx := newPurgeFixture(t), context.Background()
+	cutoff := time.Now().Add(-7 * day)
+	old := map[string]string{
+		"unused, expired 8 days ago": p.seedReset(t, 8*day, false),
+		"used, expired 9 days ago":   p.seedReset(t, 9*day, true),
+	}
+	survivors := map[string]string{
+		"expired 6 days ago, unused": p.seedReset(t, 6*day, false),
+		"expired 6 days ago, used":   p.seedReset(t, 6*day, true),
+		"still pending":              p.seedReset(t, -10*time.Minute, false),
+	}
+
+	first, err := p.resets.DeleteOlderThan(ctx, cutoff, 1)
+	if err != nil || first != 1 {
+		t.Fatalf("DeleteOlderThan(limit 1) = %d, %v, want 1", first, err)
+	}
+	if left, _ := p.resets.ExistOlderThan(ctx, cutoff); !left {
+		t.Error("ExistOlderThan() = false, want true: one old reset is left")
+	}
+	if !p.present(t, "auth.password_reset", "id", old["unused, expired 8 days ago"]) {
+		t.Error("the oldest resets go first: the youngest of the old ones should be the one left")
+	}
+	if rest, err := p.resets.DeleteOlderThan(ctx, cutoff, 5); err != nil || rest != 1 {
+		t.Fatalf("second DeleteOlderThan(limit 5) = %d, %v, want the 1 left", rest, err)
+	}
+	if left, _ := p.resets.ExistOlderThan(ctx, cutoff); left {
+		t.Error("ExistOlderThan() = true, want false")
+	}
+	for name, id := range old {
+		if p.present(t, "auth.password_reset", "id", id) {
+			t.Errorf("reset %s was not deleted", name)
+		}
+	}
+	for name, id := range survivors {
+		if !p.present(t, "auth.password_reset", "id", id) {
+			t.Errorf("reset %s was deleted", name)
+		}
 	}
 }
 
