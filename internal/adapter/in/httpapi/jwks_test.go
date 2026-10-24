@@ -59,3 +59,17 @@ func TestJWKSIsAbsentWithoutKeys(t *testing.T) {
 		t.Errorf("status = %d, want 404 when no key source is injected", rec.Code)
 	}
 }
+
+func TestJWKSMayBeCachedForFiveMinutes(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey() error = %v", err)
+	}
+	handler := NewHandler(WithPublicKeys(fixedKeys{{KeyID: "kid-1", Key: &key.PublicKey}}))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/auth/jwks", nil))
+
+	if got, want := rec.Header().Get("Cache-Control"), "public, max-age=300"; got != want {
+		t.Errorf("Cache-Control = %q, want %q (ADR-053)", got, want)
+	}
+}
