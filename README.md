@@ -260,6 +260,39 @@ which exposes the port on the `platform` network without publishing it: only the
 Copy `.env.example` to `.env` for local values and never commit `.env`. The file lists first the variables the
 service reads (HTTP, database, bcrypt, tokens and Redis).
 
+## Password reset
+
+`POST /api/v1/auth/forgot-password` and `POST /api/v1/auth/reset-password` (HU-AUTH-006, ADR-050) let a user who forgot the password
+choose a new one with a link sent by email. Both are public and take no `Idempotency-Key` (a repeat of the first replaces the pending
+token and a replay of the second is a `401`, so neither needs a stored key). They are enabled by the settings of the other routes,
+**`APP_AUTH_SMTP_HOST` and `APP_AUTH_PASSWORD_RESET_URL`** (see [Email delivery](#email-delivery-smtp)); without either the two routes answer
+`404` with the envelope of the contract and the start-up log says which one is missing.
+
+```bash
+curl -i -X POST http://localhost:8081/api/v1/auth/forgot-password -H 'Content-Type: application/json' -d '{"email":"maria@example.com"}'
+curl -i -X POST http://localhost:8081/api/v1/auth/reset-password -H 'Content-Type: application/json' -d '{"token":"<uuid of the link>","password":"NewSecret123"}'
+```
+
+`forgot-password` answers `202` with no body for an active account, an unknown email, a locked or deleted account and a user who
+already asked three times in the rolling hour: the answer, its body and its duration do not tell which case it was. Only an active account
+within its limit gets a token: a UUIDv4 (`crypto/rand`) of which only the SHA-256 digest is stored in `auth.password_reset`, valid for one
+hour and for one use; a new request soft-deletes the previous pending one. The message is not sent inside the request: once the transaction
+commits the `PasswordResetSender` port queues it (`SMTPPasswordResetSender`, a bounded in-memory queue of 64 messages and two workers), so
+the latency or the failure of the relay cannot change the answer. A message that fails, or finds the queue full, is a `WARN` with the user id
+and the class of the error, and the user asks again; messages not yet sent are lost if the process stops. The link is
+`APP_AUTH_PASSWORD_RESET_URL` followed by `#token=<token>`: the token travels in the fragment, which browsers do not send to servers. The
+token, its digest, the link and the address are never logged, and nothing is written to the outbox. A malformed or missing email, or a body
+over 4 KiB, is `400 VALIDATION_ERROR`; the only `429` is the bulkhead below.
+
+`reset-password` answers `204` and, in one transaction, consumes the token, replaces the password hash (bcrypt, the cost of registration)
+and revokes every active refresh token of the user. An unknown, expired, used or superseded token, and the token of an account that is no
+longer active, are the same `401 INVALID_TOKEN`; a malformed token or a password that breaks the rules of registration (8 to 72 bytes, one
+uppercase letter, one digit) is `400` and does not consume the token. Access tokens already issued last until they expire (at most one hour).
+
+Each route has a bulkhead (Norma 5.3.10): at most `APP_AUTH_PASSWORD_RESET_MAX_CONCURRENCY` requests run at once and the next one waits at most
+`APP_AUTH_PASSWORD_RESET_QUEUE_TIMEOUT` before it is answered `429 RATE_LIMITED` with `Retry-After: 1`, after the body is read and before any
+transaction opens. It does not depend on the email. The retention purge also deletes the password resets that expired more than seven days ago.
+
 ## Redis
 
 `APP_AUTH_REDIS_URL` (`redis://auth_app:<password>@redis:6379/0`, URL-safe password) points at the Redis of
@@ -317,12 +350,15 @@ never versioned (Annex G):
 | `APP_AUTH_SMTP_TIMEOUT` | `5s` | Go duration that bounds the whole exchange, connection included. |
 | `APP_AUTH_EMAIL_CHANGE_MAX_CONCURRENCY` | `4` | Bulkhead of `PATCH /me/email`: at most this many requests run at once. At least 1 and, with `APP_AUTH_SMTP_HOST` set, below `APP_AUTH_DATABASE_MAX_CONNECTIONS`, so the other routes always find a connection; otherwise the service does not start. |
 | `APP_AUTH_EMAIL_CHANGE_QUEUE_TIMEOUT` | `1s` | Go duration (maximum `5s`) a request waits for a free slot before it is refused. |
+| `APP_AUTH_PASSWORD_RESET_URL` | empty | Page of the portal that the link of the password reset opens: an absolute `http` or `https` URL without a fragment. Empty: `POST /forgot-password` and `POST /reset-password` answer `404`, with or without the SMTP host. |
+| `APP_AUTH_PASSWORD_RESET_MAX_CONCURRENCY` | `4` | Bulkhead of each of the two password reset routes. At least 1 and, with `APP_AUTH_SMTP_HOST` set, below `APP_AUTH_DATABASE_MAX_CONNECTIONS`; otherwise the service does not start. |
+| `APP_AUTH_PASSWORD_RESET_QUEUE_TIMEOUT` | `1s` | Go duration (maximum `5s`) a password reset request waits for a free slot before it is refused. |
 
-Where the variables go: `deploy/compose.yml` passes the seven of them and the two of the bulkhead through from the platform environment (the `.env` of `csp-infra`;
+Where the variables go: `deploy/compose.yml` passes the seven of them, the two of the bulkhead and the three of the password reset through from the platform environment (the `.env` of `csp-infra`;
 in development its git-ignored `env/dev.env`, which may point at the local Mailpit below with `APP_AUTH_SMTP_TLS=none`), and `.env.example`
 lists them with no value for the host, user, password and sender. In qa and main the SMTP relay and its credentials are provided by Oscar and
 set per environment as secrets (`APP_AUTH_SMTP_HOST`, `_USER`, `_PASSWORD`, `_FROM`); they are never versioned. Without
-`APP_AUTH_SMTP_HOST` the two email change routes answer `404`.
+`APP_AUTH_SMTP_HOST` the two email change routes answer `404`, and so do the two password reset routes (see [Password reset](#password-reset)).
 
 A `404` on the two routes therefore means the service runs without `APP_AUTH_SMTP_HOST`, not that the route does not exist. A relay that
 fails is a `500` with a `WARN` that carries the user id and the class of the error (`connect`, `tls`, `auth`, `rejected`, `timeout`,
