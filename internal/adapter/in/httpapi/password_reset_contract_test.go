@@ -38,13 +38,14 @@ func TestResetPasswordResponsesFulfillTheContract(t *testing.T) {
 		useCase in.ResetPassword
 		a       resetAttempt
 	}{
-		"204 changed":        {&fakeResetPassword{}, tracedReset(resetPasswordAttempt(resetBody))},
-		"400 invalid fields": {&fakeResetPassword{}, tracedReset(resetPasswordAttempt(`{"token":"abc","password":"weak"}`))},
-		"400 weak password":  {&fakeResetPassword{err: model.ErrWeakPassword}, tracedReset(resetPasswordAttempt(resetBody))},
-		"400 unreadable":     {&fakeResetPassword{}, tracedReset(resetPasswordAttempt(`{`))},
-		"400 body too large": {&fakeResetPassword{}, tracedReset(resetPasswordAttempt(`{"token":"` + strings.Repeat("a", 5000) + `"}`))},
-		"401 rejected token": {&fakeResetPassword{err: model.ErrPasswordResetRejected}, tracedReset(resetPasswordAttempt(resetBody))},
-		"500 unexpected":     {&fakeResetPassword{err: errors.New("driver failure")}, tracedReset(resetPasswordAttempt(resetBody))},
+		"204 changed":          {&fakeResetPassword{}, tracedReset(resetPasswordAttempt(resetBody))},
+		"400 invalid fields":   {&fakeResetPassword{}, tracedReset(resetPasswordAttempt(`{"token":"abc","password":"weak"}`))},
+		"400 weak password":    {&fakeResetPassword{err: model.ErrWeakPassword}, tracedReset(resetPasswordAttempt(resetBody))},
+		"400 current password": {&fakeResetPassword{err: model.ErrPasswordUnchanged}, tracedReset(resetPasswordAttempt(resetBody))},
+		"400 unreadable":       {&fakeResetPassword{}, tracedReset(resetPasswordAttempt(`{`))},
+		"400 body too large":   {&fakeResetPassword{}, tracedReset(resetPasswordAttempt(`{"token":"` + strings.Repeat("a", 5000) + `"}`))},
+		"401 rejected token":   {&fakeResetPassword{err: model.ErrPasswordResetRejected}, tracedReset(resetPasswordAttempt(resetBody))},
+		"500 unexpected":       {&fakeResetPassword{err: errors.New("driver failure")}, tracedReset(resetPasswordAttempt(resetBody))},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

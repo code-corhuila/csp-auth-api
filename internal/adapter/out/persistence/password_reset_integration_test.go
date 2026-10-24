@@ -17,7 +17,10 @@ import (
 	"github.com/code-corhuila/csp-auth-api/internal/domain/model"
 )
 
-const resetPassword = "NewSecret123"
+const (
+	resetPassword   = "NewSecret123"
+	currentPassword = "Current123"
+)
 
 // recordingResetSender keeps what the use case hands to the sender, so a test knows the raw token.
 type recordingResetSender struct {
@@ -59,7 +62,7 @@ func (f fixture) requestPasswordReset(sender out.PasswordResetSender) *usecase.R
 
 func (f fixture) resetPassword(sessions out.RefreshTokenRevoker) *usecase.ResetPassword {
 	return usecase.NewResetPassword(usecase.ResetPasswordPorts{
-		Resets: f.passwordResets(), Hasher: security.NewBcryptHasher(4), Passwords: f.users, Sessions: sessions,
+		Resets: f.passwordResets(), Hasher: security.NewBcryptHasher(4), Current: f.users, Passwords: f.users, Sessions: sessions,
 		Clock: system.Clock{}, Transactions: f.transactions,
 	})
 }
@@ -292,6 +295,43 @@ func TestResetIsAllOrNothingAndTheTokenStaysUsableAfterAFailure(t *testing.T) {
 	}
 	if err := f.resetPassword(NewRefreshTokenRepository(f.pool)).Reset(ctx, command); err != nil {
 		t.Errorf("Reset() after the failure error = %v, want the token to work", err)
+	}
+}
+
+func TestResetWithTheCurrentPasswordChangesNothingAndTheTokenStillWorksWithAnotherOne(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	user := f.registeredUser(t, ctx)
+	f.openSessions(t, ctx, user.ID(), 2)
+	current, _ := model.NewPassword(currentPassword)
+	currentHash, err := security.NewBcryptHasher(4).Hash(current)
+	if err != nil {
+		t.Fatalf("Hash() error = %v", err)
+	}
+	if err := f.users.UpdatePasswordHash(ctx, user.ID(), currentHash, time.Now()); err != nil {
+		t.Fatalf("UpdatePasswordHash() error = %v", err)
+	}
+	sender := &recordingResetSender{}
+	if err := f.requestPasswordReset(sender).RequestReset(ctx, requestFor(user)); err != nil {
+		t.Fatalf("RequestReset() error = %v", err)
+	}
+	reset, token := f.resetPassword(NewRefreshTokenRepository(f.pool)), sender.tokens()[0]
+
+	sameErr := reset.Reset(ctx, in.ResetPasswordCommand{Token: token, Password: currentPassword})
+
+	if !errors.Is(sameErr, model.ErrPasswordUnchanged) {
+		t.Fatalf("Reset() with the current password error = %v, want ErrPasswordUnchanged", sameErr)
+	}
+	if hash := f.passwordHash(t, ctx, user.ID()); hash != currentHash {
+		t.Error("the password hash changed although the new password was the current one")
+	}
+	if rows := f.resetRows(t, ctx, user.ID()); len(rows) != 1 || !rows[0].pending {
+		t.Errorf("rows = %+v, want the token still pending", rows)
+	}
+	if active := f.activeSessions(t, ctx, user.ID()); active != 2 {
+		t.Errorf("active sessions = %d, want 2", active)
+	}
+	if err := reset.Reset(ctx, in.ResetPasswordCommand{Token: token, Password: resetPassword}); err != nil {
+		t.Errorf("Reset() with another password error = %v, want the same token to work", err)
 	}
 }
 
