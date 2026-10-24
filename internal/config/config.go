@@ -82,6 +82,12 @@ type Config struct {
 	PasswordResetURL            string
 	PasswordResetMaxConcurrency int
 	PasswordResetQueueTimeout   time.Duration
+
+	PasswordChangeMaxAttempts    int
+	PasswordChangeWindow         time.Duration
+	PasswordChangeLock           time.Duration
+	PasswordChangeMaxConcurrency int
+	PasswordChangeQueueTimeout   time.Duration
 }
 
 // Lookup returns the value of an environment variable, as os.LookupEnv does.
@@ -125,6 +131,9 @@ func Load(lookup Lookup) (Config, error) {
 		return Config{}, err
 	}
 	if err := loadPasswordReset(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
+	if err := loadPasswordChangeLimit(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
 

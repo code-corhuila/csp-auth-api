@@ -21,24 +21,32 @@ const keyWithoutExpiration = time.Duration(-1)
 
 // LoginAttempts implements out.LoginAttempts with two string keys per client address, attempts:{ip}
 // (the failure counter, which lives for the window) and locked:{ip} (the lock, which lives for the
-// lock time), as in data-model.md. Both expire by themselves, so nothing is ever purged.
+// lock time), as in data-model.md. Both expire by themselves, so nothing is ever purged. The limit of the wrong
+// current passwords counts the same way under other prefixes (PasswordChangeAttempts).
 type LoginAttempts struct {
-	client *goredis.Client
-	policy model.LoginAttemptPolicy
+	client        *goredis.Client
+	policy        model.LoginAttemptPolicy
+	counterPrefix string
+	lockPrefix    string
 }
 
 var _ out.LoginAttempts = (*LoginAttempts)(nil)
 
 // NewLoginAttempts creates the store over client with the rule of policy.
 func NewLoginAttempts(client *goredis.Client, policy model.LoginAttemptPolicy) *LoginAttempts {
-	return &LoginAttempts{client: client, policy: policy}
+	return newAttemptLimit(client, policy, failedLoginsKeyPrefix, loginLockKeyPrefix)
+}
+
+// newAttemptLimit counts and locks under the keys counterPrefix+subject and lockPrefix+subject.
+func newAttemptLimit(client *goredis.Client, policy model.LoginAttemptPolicy, counterPrefix, lockPrefix string) *LoginAttempts {
+	return &LoginAttempts{client: client, policy: policy, counterPrefix: counterPrefix, lockPrefix: lockPrefix}
 }
 
 // LockedFor is one TTL of the lock key: a missing key is not locked.
 func (a *LoginAttempts) LockedFor(ctx context.Context, clientAddress string) (time.Duration, error) {
-	remaining, err := a.client.TTL(ctx, loginLockKey(clientAddress)).Result()
+	remaining, err := a.client.TTL(ctx, a.lockPrefix+clientAddress).Result()
 	if err != nil {
-		return 0, fmt.Errorf("look up login lock in redis: %w", err)
+		return 0, fmt.Errorf("look up lock in redis: %w", err)
 	}
 	switch {
 	case remaining == keyWithoutExpiration:
@@ -53,40 +61,32 @@ func (a *LoginAttempts) LockedFor(ctx context.Context, clientAddress string) (ti
 // RecordFailure counts one failure. The first one of a window starts the window; the one that reaches
 // the policy writes the lock and drops the counter, so the next window starts clean after the lock.
 func (a *LoginAttempts) RecordFailure(ctx context.Context, clientAddress string) error {
-	counterKey := failedLoginsKey(clientAddress)
+	counterKey := a.counterPrefix + clientAddress
 	failures, err := a.client.Incr(ctx, counterKey).Result()
 	if err != nil {
-		return fmt.Errorf("count failed login in redis: %w", err)
+		return fmt.Errorf("count failed attempt in redis: %w", err)
 	}
 	if failures == 1 {
 		if err := a.client.Expire(ctx, counterKey, a.policy.Window).Err(); err != nil {
-			return fmt.Errorf("start login window in redis: %w", err)
+			return fmt.Errorf("start attempt window in redis: %w", err)
 		}
 	}
 	if !a.policy.Reached(int(failures)) {
 		return nil
 	}
-	if err := a.client.Set(ctx, loginLockKey(clientAddress), "1", a.policy.Lock).Err(); err != nil {
-		return fmt.Errorf("lock client in redis: %w", err)
+	if err := a.client.Set(ctx, a.lockPrefix+clientAddress, "1", a.policy.Lock).Err(); err != nil {
+		return fmt.Errorf("lock subject in redis: %w", err)
 	}
 	if err := a.client.Del(ctx, counterKey).Err(); err != nil {
-		return fmt.Errorf("drop login counter in redis: %w", err)
+		return fmt.Errorf("drop attempt counter in redis: %w", err)
 	}
 	return nil
 }
 
 // Clear is one DEL of the counter; a lock is not cleared because a locked client never gets to log in.
 func (a *LoginAttempts) Clear(ctx context.Context, clientAddress string) error {
-	if err := a.client.Del(ctx, failedLoginsKey(clientAddress)).Err(); err != nil {
-		return fmt.Errorf("clear failed logins in redis: %w", err)
+	if err := a.client.Del(ctx, a.counterPrefix+clientAddress).Err(); err != nil {
+		return fmt.Errorf("clear failed attempts in redis: %w", err)
 	}
 	return nil
-}
-
-func failedLoginsKey(clientAddress string) string {
-	return failedLoginsKeyPrefix + clientAddress
-}
-
-func loginLockKey(clientAddress string) string {
-	return loginLockKeyPrefix + clientAddress
 }

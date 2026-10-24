@@ -9,6 +9,10 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- HU-AUTH-007, change of the own password (ADR-051), adapters and settings: `PasswordChangeAttempts` over Redis under
+  `attempts:pwd:{userId}` and `locked:pwd:{userId}`, bounded by the circuit breaker of ADR-048, which is now shared with the login limiter;
+  `LockPasswordHashOf` on the user repository (`FOR NO KEY UPDATE`); and the settings `APP_AUTH_PASSWORD_CHANGE_MAX_ATTEMPTS`, `_WINDOW`,
+  `_LOCK`, `_MAX_CONCURRENCY` and `_QUEUE_TIMEOUT`, validated at start-up (`.env.example`, `deploy/compose.yml`).
 - HU-AUTH-007, change of the own password (ADR-051), domain and use case: `CheckPresentedPassword` (a current password is 1 to 72 bytes
   and is not judged by the password policy), `ErrWrongCurrentPassword`, the lock error `PasswordChangeRateLimitedError` and the policy of
   5 wrong passwords in 15 minutes, the `ChangePassword` use case and the output ports `PasswordChangeAttempts` and `PasswordHashLocker`. In one
