@@ -35,7 +35,10 @@ func logout(useCase in.Logout) claimsHandler {
 			body = decoded
 		}
 
-		err := useCase.Logout(r.Context(), in.LogoutCommand{
+		// A sign out always ends the refresh capability of the session (ADR-033), even if the browser leaves the page.
+		ctx, cancel := detachedFromClient(r)
+		defer cancel()
+		err := useCase.Logout(ctx, in.LogoutCommand{
 			UserID:       claims.Subject,
 			TokenID:      claims.TokenID,
 			ExpiresAt:    claims.ExpiresAt,

@@ -195,6 +195,15 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Fixed
 
+- HU-AUTH-003, `PATCH /api/v1/auth/users/{userId}/role` (ADR-031) no longer loses the marker that ends the sessions of a user who lost `ADMIN`
+  when the client disconnects after the commit: the change runs on the context detached from the cancellation of the request, with the
+  10 second deadline shared with the sign out (`detachedFromClient`), so `blacklist:user:{userId}` is written and the old access tokens are `401`.
+
+- HU-AUTH-003, `POST /api/v1/auth/logout` (ADR-033) no longer loses the revocation when the client disconnects: the browser that navigates away
+  right after the click cancelled the request, the use case failed with `context canceled`, the refresh tokens stayed active and the session
+  came back. The use case now runs on a context detached from the cancellation of the request, which keeps its values and is bounded by a
+  10 second deadline; the answer on Redis down is unchanged (`500` after the commit, the retry is idempotent).
+
 - The bulkhead unit tests no longer depend on the speed of the machine (HU-AUTH-004, issue [#134](https://github.com/code-corhuila/csp-auth-api/issues/134)): `TestRequestEmailChangeIsRefusedWith429BeforeTheUseCaseWhenNoSlotIsFree` failed under load because it asserted an answer in under 1 second, and the other two upper bounds of 1 second of the file had the same flaw. They now use a guard of 30 seconds that only catches a call that is stuck, and the contract check runs last so the other checks also run when the contract file is not set.
 - The container restarts when the database is not ready at start: `restart: on-failure` in `deploy/compose.yml`; on the first `up` of the platform the service started before PostgreSQL answered and stayed stopped (HU-AUTH-003, issue [#84](https://github.com/code-corhuila/csp-auth-api/issues/84)).
 - The container image builds again: `deploy/Dockerfile` copies `go.sum` together with `go.mod` before `go mod download`;
