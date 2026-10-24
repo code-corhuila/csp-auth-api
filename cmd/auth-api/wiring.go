@@ -35,7 +35,8 @@ type poolOpener func(ctx context.Context, settings persistence.PoolSettings) (*p
 //   - A signing key and a database URL: also POST /register, POST /login and POST /refresh, served by the real use cases,
 //     GET /users and PATCH /users/{userId}/role, open to the access tokens that hold user:role:update,
 //     GET /me and PATCH /me (HU-AUTH-007, ADR-051), open to the access tokens that hold profile:read:self and
-//     profile:update:self, and
+//     profile:update:self,
+//     POST /me/password (HU-AUTH-007, ADR-051), open to the access tokens that hold profile:update:self, and
 //     PATCH /me/email and POST /me/email/verify when APP_AUTH_SMTP_HOST is set (the verification code goes
 //     to that SMTP relay, ADR-034; without it the two routes are not enabled), open to the access tokens that
 //     hold profile:update:self,
@@ -99,6 +100,14 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 	logger.Info("user list route enabled")
 	options = append(options, newOwnProfile(authorizer, pool))
 	logger.Info("own profile routes enabled")
+	passwordGate, err := httpapi.NewBulkhead(cfg.PasswordChangeMaxConcurrency, cfg.PasswordChangeQueueTimeout)
+	if err != nil {
+		closeRedis()
+		pool.Close()
+		return nil, noop, fmt.Errorf("password change limit: %w", err)
+	}
+	options = append(options, httpapi.WithPasswordChange(authorizer, newChangePassword(cfg, pool, issuer, redisState.passwordChanges), passwordGate))
+	logger.Info("password change route enabled", "maxConcurrency", passwordGate.Limit(), "queueTimeout", passwordGate.Wait().String())
 	if cfg.SMTPHost != "" {
 		requestEmailChange, err := newRequestEmailChange(cfg, logger, pool)
 		if err != nil {
@@ -138,10 +147,12 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 }
 
 // redisState is what the service keeps in the Redis of the auth state (ADR-028): the list of revoked
-// access tokens (logout) and the counters and locks of the login attempt limit (HU-AUTH-005).
+// access tokens (logout), the counters and locks of the login attempt limit (HU-AUTH-005) and the ones of the wrong
+// current passwords of the change of password (HU-AUTH-007).
 type redisState struct {
-	revoked  out.RevokedTokens
-	attempts out.LoginAttempts
+	revoked         out.RevokedTokens
+	attempts        out.LoginAttempts
+	passwordChanges out.PasswordChangeAttempts
 }
 
 // openRedisState connects the Redis of the auth state when APP_AUTH_REDIS_URL is set (the client does not
@@ -150,11 +161,15 @@ type redisState struct {
 func openRedisState(logger *slog.Logger, cfg config.Config) (redisState, func(), error) {
 	if cfg.RedisURL == "" {
 		logger.Info("APP_AUTH_REDIS_URL is not set: logout is not enabled, revoked access tokens are not checked and the login is not limited")
-		return redisState{revoked: noRevokedTokens{}, attempts: noLoginAttempts{}}, func() {}, nil
+		return redisState{revoked: noRevokedTokens{}, attempts: noLoginAttempts{}, passwordChanges: noPasswordChangeAttempts{}}, func() {}, nil
 	}
 	policy, err := model.NewLoginAttemptPolicy(cfg.LoginMaxAttempts, cfg.LoginWindow, cfg.LoginLock)
 	if err != nil {
 		return redisState{}, nil, fmt.Errorf("login attempt limit: %w", err)
+	}
+	passwordPolicy, err := model.NewLoginAttemptPolicy(cfg.PasswordChangeMaxAttempts, cfg.PasswordChangeWindow, cfg.PasswordChangeLock)
+	if err != nil {
+		return redisState{}, nil, fmt.Errorf("password change limit: %w", err)
 	}
 	if cfg.LoginLimitTimeout <= 0 || cfg.LoginLimitPause <= 0 {
 		return redisState{}, nil, errors.New("login attempt limit: the timeout and the pause must be positive")
@@ -164,7 +179,8 @@ func openRedisState(logger *slog.Logger, cfg config.Config) (redisState, func(),
 		return redisState{}, nil, err
 	}
 	attempts := redis.NewBoundedLoginAttempts(redis.NewLoginAttempts(client, policy), cfg.LoginLimitTimeout, cfg.LoginLimitPause, system.Clock{})
-	state := redisState{revoked: redis.NewRevokedTokens(client), attempts: attempts}
+	passwordChanges := redis.NewBoundedPasswordChangeAttempts(redis.NewPasswordChangeAttempts(client, passwordPolicy), cfg.LoginLimitTimeout, cfg.LoginLimitPause, system.Clock{})
+	state := redisState{revoked: redis.NewRevokedTokens(client), attempts: attempts, passwordChanges: passwordChanges}
 	return state, func() { _ = client.Close() }, nil
 }
 
@@ -189,6 +205,15 @@ func (noLoginAttempts) LockedFor(context.Context, string) (time.Duration, error)
 func (noLoginAttempts) RecordFailure(context.Context, string) error { return nil }
 
 func (noLoginAttempts) Clear(context.Context, string) error { return nil }
+
+// noPasswordChangeAttempts is the limit of the change of password of a service without Redis: nothing is counted and nobody is locked.
+type noPasswordChangeAttempts struct{}
+
+func (noPasswordChangeAttempts) Locked(context.Context, string) (time.Duration, error) { return 0, nil }
+
+func (noPasswordChangeAttempts) RecordFailure(context.Context, string) error { return nil }
+
+func (noPasswordChangeAttempts) Clear(context.Context, string) error { return nil }
 
 func newRegisterUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer) *usecase.RegisterUser {
 	clock, ids := system.Clock{}, system.UUIDGenerator{}
@@ -262,6 +287,23 @@ func newOwnProfile(authorizer *usecase.AuthorizeUser, pool *pgxpool.Pool) httpap
 	users := persistence.NewUserRepository(pool)
 	return httpapi.WithOwnProfile(authorizer, usecase.NewGetProfile(users),
 		usecase.NewUpdateProfile(users, users, system.Clock{}, persistence.NewTransactionManager(pool)))
+}
+
+func newChangePassword(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer, attempts out.PasswordChangeAttempts) *usecase.ChangePassword {
+	clock, ids := system.Clock{}, system.UUIDGenerator{}
+	users, tokens := persistence.NewUserRepository(pool), persistence.NewRefreshTokenRepository(pool)
+	return usecase.NewChangePassword(usecase.ChangePasswordPorts{
+		Users:        users,
+		Hashes:       users,
+		Passwords:    users,
+		Sessions:     tokens,
+		Hasher:       security.NewBcryptHasher(cfg.BcryptRounds),
+		Attempts:     attempts,
+		Tokens:       issuer,
+		Refresh:      usecase.NewIssueRefreshToken(tokens, ids, clock, cfg.RefreshTokenTTL),
+		Clock:        clock,
+		Transactions: persistence.NewTransactionManager(pool),
+	})
 }
 
 func newAuthorizeService(cfg config.Config, issuer *token.Issuer) *usecase.AuthorizeService {
