@@ -55,7 +55,7 @@ func (f fixture) passwordResets() *PasswordResetRepository { return NewPasswordR
 
 func (f fixture) requestPasswordReset(sender out.PasswordResetSender) *usecase.RequestPasswordReset {
 	return usecase.NewRequestPasswordReset(usecase.RequestPasswordResetPorts{
-		Users: f.users, Resets: f.passwordResets(), Tokens: system.ResetTokenGenerator{}, Sender: sender,
+		Users: f.users, Resets: f.passwordResets(), Keys: NewPasswordResetKeyRepository(f.pool), Tokens: system.ResetTokenGenerator{}, Sender: sender,
 		IDs: system.UUIDGenerator{}, Clock: system.Clock{}, Transactions: f.transactions,
 	})
 }
@@ -139,8 +139,13 @@ func (f fixture) activeSessions(t *testing.T, ctx context.Context, userID string
 	return active
 }
 
+// requestFor asks for a link for user with a key of its own, so that each call is a new request.
 func requestFor(user *model.User) in.RequestPasswordResetCommand {
-	return in.RequestPasswordResetCommand{Email: user.Email().String()}
+	return resetCommand(system.UUIDGenerator{}.NewID(), user.Email().String())
+}
+
+func resetCommand(key, email string) in.RequestPasswordResetCommand {
+	return in.RequestPasswordResetCommand{IdempotencyKey: "it-key-" + key, Email: email}
 }
 
 func TestRequestStoresOnlyTheDigestOfTheTokenItDelivers(t *testing.T) {
@@ -225,7 +230,7 @@ func TestUnknownAndLockedAccountsGetTheSameSuccessAndNothingIsStored(t *testing.
 	sender := &recordingResetSender{}
 	request := f.requestPasswordReset(sender)
 
-	unknownErr := request.RequestReset(ctx, in.RequestPasswordResetCommand{Email: uniqueEmail(t)})
+	unknownErr := request.RequestReset(ctx, resetCommand(newUUID(t), uniqueEmail(t)))
 	lockedErr := request.RequestReset(ctx, requestFor(locked))
 
 	if unknownErr != nil || lockedErr != nil || len(sender.tokens()) != 0 || len(f.resetRows(t, ctx, locked.ID())) != 0 {
@@ -399,5 +404,204 @@ func TestUpdatePasswordHashOfAnAccountThatDoesNotExistIsNotFound(t *testing.T) {
 
 	if !errors.Is(err, model.ErrUserNotFound) {
 		t.Errorf("UpdatePasswordHash() error = %v, want ErrUserNotFound", err)
+	}
+}
+
+type resetKeyRow struct {
+	hash   string
+	linked *string
+}
+
+func (f fixture) resetKeyRows(t *testing.T, ctx context.Context, key string) []resetKeyRow {
+	t.Helper()
+	rows, err := f.pool.Query(ctx, `SELECT request_hash, password_reset_id::text FROM auth.password_reset_idempotency_key WHERE key = $1`, key)
+	if err != nil {
+		t.Fatalf("password_reset_idempotency_key query error = %v", err)
+	}
+	defer rows.Close()
+	var result []resetKeyRow
+	for rows.Next() {
+		var row resetKeyRow
+		if err := rows.Scan(&row.hash, &row.linked); err != nil {
+			t.Fatal(err)
+		}
+		result = append(result, row)
+	}
+	return result
+}
+
+func mustEmail(t *testing.T, raw string) model.Email {
+	t.Helper()
+	email, err := model.NewEmail(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return email
+}
+
+func TestPasswordResetKeyIsStoredFoundAndNeverOverwritten(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	keys := NewPasswordResetKeyRepository(f.pool)
+	key, _ := model.NewIdempotencyKey("it-key-" + newUUID(t))
+
+	if _, found, err := keys.Find(ctx, key); err != nil || found {
+		t.Fatalf("Find() before Save = %v, %v, want not found", found, err)
+	}
+	record := out.PasswordResetKeyRecord{RequestHash: model.PasswordResetRequestHash(mustEmail(t, uniqueEmail(t)))}
+	if err := keys.Save(ctx, key, record); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	got, found, err := keys.Find(ctx, key)
+	if err != nil || !found || got != record {
+		t.Errorf("Find() = %+v, %v, %v, want %+v with no link", got, found, err, record)
+	}
+	if err := keys.Save(ctx, key, out.PasswordResetKeyRecord{RequestHash: record.RequestHash}); !errors.Is(err, model.ErrIdempotencyKeyTaken) {
+		t.Errorf("second Save() error = %v, want ErrIdempotencyKeyTaken", err)
+	}
+}
+
+func TestRequestRepeatedWithTheSameKeyReplaysWithoutANewTokenAndTheKeyLinksToTheStoredRequest(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	user := f.registeredUser(t, ctx)
+	sender := &recordingResetSender{}
+	request := f.requestPasswordReset(sender)
+	command := resetCommand(newUUID(t), user.Email().String())
+
+	if err := request.RequestReset(ctx, command); err != nil {
+		t.Fatalf("first RequestReset() error = %v", err)
+	}
+	if err := request.RequestReset(ctx, command); err != nil {
+		t.Fatalf("second RequestReset() error = %v, want the silent success of the first answer", err)
+	}
+
+	rows := f.resetRows(t, ctx, user.ID())
+	if len(sender.tokens()) != 1 || len(rows) != 1 || !rows[0].pending {
+		t.Errorf("tokens = %d, rows = %+v, want one token and one pending request: a replay creates and sends nothing", len(sender.tokens()), rows)
+	}
+	keyRows := f.resetKeyRows(t, ctx, command.IdempotencyKey)
+	var linkedTo string
+	if err := f.pool.QueryRow(ctx, `SELECT id::text FROM auth.password_reset WHERE user_id = $1`, user.ID()).Scan(&linkedTo); err != nil {
+		t.Fatal(err)
+	}
+	if len(keyRows) != 1 || keyRows[0].linked == nil || *keyRows[0].linked != linkedTo || keyRows[0].hash != model.PasswordResetRequestHash(user.Email()) {
+		t.Errorf("key rows = %+v, want one holding the hash of the address and linked to the request %s", keyRows, linkedTo)
+	}
+	other := command
+	other.Email = uniqueEmail(t)
+	if err := request.RequestReset(ctx, other); !errors.Is(err, model.ErrIdempotencyKeyConflict) {
+		t.Errorf("same key, other address: error = %v, want ErrIdempotencyKeyConflict", err)
+	}
+}
+
+func TestKeysOfUnknownLockedAndOverTheLimitRequestsAreStoredAloneAndConflictLikeAnyOther(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	locked, limited := f.registeredUser(t, ctx), f.registeredUser(t, ctx)
+	if _, err := f.pool.Exec(ctx, `UPDATE auth.app_user SET status = 'LOCKED' WHERE id = $1`, locked.ID()); err != nil {
+		t.Fatalf("lock error = %v", err)
+	}
+	sender := &recordingResetSender{}
+	request := f.requestPasswordReset(sender)
+	for range 3 {
+		if err := request.RequestReset(ctx, requestFor(limited)); err != nil {
+			t.Fatalf("request error = %v", err)
+		}
+	}
+	cases := map[string]string{"unknown": uniqueEmail(t), "locked": locked.Email().String(), "over the limit": limited.Email().String()}
+	for name, email := range cases {
+		t.Run(name, func(t *testing.T) {
+			command := resetCommand(newUUID(t), email)
+
+			first, replay := request.RequestReset(ctx, command), request.RequestReset(ctx, command)
+
+			keyRows := f.resetKeyRows(t, ctx, command.IdempotencyKey)
+			if first != nil || replay != nil || len(keyRows) != 1 || keyRows[0].linked != nil {
+				t.Errorf("first = %v, replay = %v, key rows = %+v, want the same success and one key with no link", first, replay, keyRows)
+			}
+			command.Email = uniqueEmail(t)
+			if err := request.RequestReset(ctx, command); !errors.Is(err, model.ErrIdempotencyKeyConflict) {
+				t.Errorf("same key, other address: error = %v, want ErrIdempotencyKeyConflict", err)
+			}
+		})
+	}
+	if len(sender.tokens()) != 3 {
+		t.Errorf("tokens = %d, want only the 3 of the account within its limit", len(sender.tokens()))
+	}
+}
+
+func TestConcurrentRequestsWithTheSameKeyAndAddressDeliverOneTokenAndStoreOneKey(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	for round := range 10 {
+		user := f.registeredUser(t, ctx)
+		sender := &recordingResetSender{}
+		request := f.requestPasswordReset(sender)
+		command := resetCommand(newUUID(t), user.Email().String())
+
+		errs := requestConcurrently(ctx, request, command, command)
+
+		if errs[0] != nil || errs[1] != nil {
+			t.Fatalf("round %d: errors = %v / %v, want the same success twice", round, errs[0], errs[1])
+		}
+		if rows := f.resetRows(t, ctx, user.ID()); len(sender.tokens()) != 1 || len(rows) != 1 || len(f.resetKeyRows(t, ctx, command.IdempotencyKey)) != 1 {
+			t.Fatalf("round %d: tokens = %d, rows = %+v, want one token, one request and one key", round, len(sender.tokens()), rows)
+		}
+	}
+}
+
+func TestConcurrentRequestsWithTheSameKeyAndOtherAddressesAreOneSuccessAndOneConflict(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	request := f.requestPasswordReset(&recordingResetSender{})
+	first := resetCommand(newUUID(t), f.registeredUser(t, ctx).Email().String())
+	second := first
+	second.Email = uniqueEmail(t)
+
+	errs := requestConcurrently(ctx, request, first, second)
+
+	successes, conflicts := 0, 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, model.ErrIdempotencyKeyConflict):
+			conflicts++
+		default:
+			t.Errorf("unexpected error %v", err)
+		}
+	}
+	if successes != 1 || conflicts != 1 || len(f.resetKeyRows(t, ctx, first.IdempotencyKey)) != 1 {
+		t.Errorf("successes = %d, conflicts = %d, want 1 and 1 over a single key", successes, conflicts)
+	}
+}
+
+func requestConcurrently(ctx context.Context, request *usecase.RequestPasswordReset, commands ...in.RequestPasswordResetCommand) []error {
+	errs := make([]error, len(commands))
+	var start, done sync.WaitGroup
+	start.Add(1)
+	for i, command := range commands {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			start.Wait()
+			errs[i] = request.RequestReset(ctx, command)
+		}()
+	}
+	start.Done()
+	done.Wait()
+	return errs
+}
+
+func TestDeletingTheRequestOfAKeyKeepsTheKeyWithoutALink(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	user := f.registeredUser(t, ctx)
+	command := resetCommand(newUUID(t), user.Email().String())
+	if err := f.requestPasswordReset(&recordingResetSender{}).RequestReset(ctx, command); err != nil {
+		t.Fatalf("RequestReset() error = %v", err)
+	}
+
+	if _, err := f.pool.Exec(ctx, `DELETE FROM auth.password_reset WHERE user_id = $1`, user.ID()); err != nil {
+		t.Fatalf("delete of the request error = %v, want the purge of requests never to fail on a key", err)
+	}
+
+	if keyRows := f.resetKeyRows(t, ctx, command.IdempotencyKey); len(keyRows) != 1 || keyRows[0].linked != nil {
+		t.Errorf("key rows = %+v, want the key kept with no link", keyRows)
 	}
 }

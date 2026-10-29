@@ -12,7 +12,7 @@ const (
 	maxIdempotencyKeyLength = 128
 )
 
-// IdempotencyKey is the client key that makes a registration safe to retry (Norma 5.3.8).
+// IdempotencyKey is the client key that makes a registration or a password reset request safe to retry (Norma 5.3.8).
 type IdempotencyKey struct {
 	value string
 }
@@ -38,5 +38,13 @@ func (k IdempotencyKey) String() string {
 func RegistrationRequestHash(email Email, name Name, phone Phone, address Address) string {
 	canonical := fmt.Sprintf("%q|%q|%q|%q", email.String(), name.String(), phone.String(), address.String())
 	digest := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(digest[:])
+}
+
+// PasswordResetRequestHash is the SHA-256 hex digest of the normalised email of a password reset
+// request, used to tell a retry from a request for another address that reuses the key (HU-AUTH-006,
+// ADR-050). The email is already lowercase and trimmed (Email). Nothing else is stored with the key.
+func PasswordResetRequestHash(email Email) string {
+	digest := sha256.Sum256([]byte(email.String()))
 	return hex.EncodeToString(digest[:])
 }

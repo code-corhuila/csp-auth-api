@@ -48,13 +48,13 @@ func (r *IdempotencyKeyRepository) Save(ctx context.Context, key model.Idempoten
 	_, err := executorFor(ctx, r.pool).Exec(ctx,
 		`INSERT INTO auth.idempotency_key (key, user_id, request_hash) VALUES ($1, $2, $3)`,
 		key.String(), record.UserID, record.RequestHash)
-	if isDuplicateIdempotencyKey(err) {
+	if isUniqueViolationOf(err, idempotencyKeyPrimaryKey) {
 		return model.ErrIdempotencyKeyTaken
 	}
 	return err
 }
 
-func isDuplicateIdempotencyKey(err error) bool {
+func isUniqueViolationOf(err error, constraint string) bool {
 	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == idempotencyKeyPrimaryKey
+	return errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == constraint
 }

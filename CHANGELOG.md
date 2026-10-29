@@ -9,6 +9,12 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Changed
 
+- `POST /forgot-password` requires `Idempotency-Key` (8 to 128 characters, `400 VALIDATION_ERROR` on the header otherwise) and stores it in
+  `auth.password_reset_idempotency_key` with the SHA-256 of the normalised email, in the same transaction as the token (linked to it) and, for the
+  cases that create no token, alone: a replay answers the same silent `202` and creates and sends nothing, the same key with another email is
+  `409 IDEMPOTENCY_KEY_CONFLICT` whatever the account is, and a concurrent request with the same key replays. The purge (ADR-030) also deletes these
+  keys after seven days. HU-AUTH-006, Norma 5.3.8, contract 1.13.0; needs the migrations V031 to V035 of `csp-auth-db`. Domain, use case, handler,
+  contract, integration and purge tests. `POST /reset-password` is unchanged.
 - The access token lives 15 minutes by default: `APP_AUTH_JWT_EXPIRY` defaults to 900 seconds (it was 3600; the range 1 to 3600 stays), so `expiresIn` is 900
   and a signed-out user or a demoted administrator keeps a valid token in the other services for at most 15 minutes (ADR-054, contract 1.12.0).
   `.env.example` and the README say so. Configuration test of the default.
