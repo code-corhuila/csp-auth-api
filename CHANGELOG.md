@@ -13,6 +13,7 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   every response (health, ready, jwks, 404, 405 and panics included) and stored in the request context; an unknown route answers `404 NOT_FOUND` and a
   wrong method `405 METHOD_NOT_ALLOWED` with `Allow`, both with the common envelope instead of the plain text of `net/http`; a panic answers
   `500 INTERNAL_ERROR` with the envelope and the cause only in the log. The existing routes keep their behaviour. Unit tests of each case.
+- The delivery test of the password reset sender no longer depends on the speed of the machine (HU-AUTH-006, issue [#173](https://github.com/code-corhuila/csp-auth-api/issues/173)): `TestSendReturnsAtOnceAndTheMessageIsDeliveredAfterwards` failed under load because it polled the fake relay for only 5 seconds, less than the 10 seconds the sender allows a delivery. The polling guard is now 30 seconds and ends as soon as the message arrives; the assertions are unchanged.
 - `POST /forgot-password` requires `Idempotency-Key` (8 to 128 characters, `400 VALIDATION_ERROR` on the header otherwise) and stores it in
   `auth.password_reset_idempotency_key` with the SHA-256 of the normalised email, in the same transaction as the token (linked to it) and, for the
   cases that create no token, alone: a replay answers the same silent `202` and creates and sends nothing, the same key with another email is
@@ -25,6 +26,7 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- Integration test of `GET /me` through the real handler stack: `alg none`, HS256 signed with the public key (PEM and DER), expired, signed with another key, malformed and missing tokens are `401 UNAUTHORIZED` with the common envelope, a traceId and `WWW-Authenticate: Bearer` (Norma 5.3.7, Annex C). Tests only.
 - `cmd/auth-token` (ADR-052), the offline command that issues the credential of a service: subject from the closed list `csp-worker`,
   `booking-service`, `csp-workflow`; lifetime at most 90 days; key from `APP_AUTH_JWT_PRIVATE_KEY(_FILE)` kept in memory; token written only to a
   file of mode `0600` (not replaced without `-force`), never printed; one audit line on stderr (subject, `jti`, expiry, file). Claims `sub`, `iss`,
