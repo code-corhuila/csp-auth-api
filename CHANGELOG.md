@@ -7,6 +7,12 @@ All notable changes of `csp-auth-api` are recorded here. The format follows
 
 Everything below is in `develop`; it is promoted to `qa` and `main` only when it is ordered.
 
+### Added
+
+- Development only: the profile `mail-relay` of `deploy/compose.yml`, a Mailpit (`mailpit-relay`, reachable as `mailpit`) that stores every message and relays
+  those whose recipient matches `MAILPIT_RELAY_MATCHING` to a real SMTP provider, configured by `MAILPIT_RELAY_FILE` (rendered by `csp-infra-postgres`). The
+  service keeps talking to Mailpit only, so an expired key or a provider that is down only fails the relay. No change in the Go code.
+
 ### Changed
 
 - The service credential (ADR-020) must carry the issuer `csp-auth` and an audience that contains `csp-internal` (ADR-056), in addition to RS256,
