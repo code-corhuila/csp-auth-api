@@ -180,7 +180,7 @@ func signServiceToken(t *testing.T, key *rsa.PrivateKey, subject string, lifetim
 	t.Helper()
 	now := time.Now()
 	signed, err := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"sub": subject, "iat": now.Unix(), "exp": now.Add(lifetime).Unix(),
+		"sub": subject, "iss": "csp-auth", "aud": "csp-internal", "iat": now.Unix(), "exp": now.Add(lifetime).Unix(),
 	}).SignedString(key)
 	if err != nil {
 		t.Fatalf("sign the service token: %v", err)
