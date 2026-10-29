@@ -32,8 +32,8 @@ func TestLoginRateLimitedAnswers429WithRetryAfterAndTheSharedEnvelope(t *testing
 		t.Errorf("Retry-After = %q, want the remaining lock rounded up to 271 seconds", got)
 	}
 	envelope := decode(t, rec)
-	if envelope["error"] != "RATE_LIMITED" || envelope["traceId"] == "" {
-		t.Errorf("envelope = %v, want RATE_LIMITED with a trace id", envelope)
+	if envelope["error"] != "TOO_MANY_REQUESTS" || envelope["traceId"] == "" {
+		t.Errorf("envelope = %v, want TOO_MANY_REQUESTS with a trace id", envelope)
 	}
 	if rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("X-Correlation-Id") == "" {
 		t.Errorf("headers = %v, want no-store and a correlation id", rec.Header())
