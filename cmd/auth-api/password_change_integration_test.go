@@ -139,8 +139,8 @@ func TestPasswordChangeEndToEndAgainstTheDatabaseAndRedis(t *testing.T) {
 		status, header, payload := callPassword(t, server.URL, access, newE2EPassword, e2ePassword)
 
 		seconds, err := strconv.Atoi(header.Get("Retry-After"))
-		if status != http.StatusTooManyRequests || payload["error"] != "RATE_LIMITED" || err != nil || seconds < 1 || seconds > 900 {
-			t.Errorf("status = %d, Retry-After = %q, body = %v, want 429 RATE_LIMITED with up to 900 seconds even for the right password", status, header.Get("Retry-After"), payload)
+		if status != http.StatusTooManyRequests || payload["error"] != "TOO_MANY_REQUESTS" || err != nil || seconds < 1 || seconds > 900 {
+			t.Errorf("status = %d, Retry-After = %q, body = %v, want 429 TOO_MANY_REQUESTS with up to 900 seconds even for the right password", status, header.Get("Retry-After"), payload)
 		}
 		if status, _, _ := callPassword(t, server.URL, otherAccess, e2ePassword, newE2EPassword); status != http.StatusOK {
 			t.Errorf("another user: status = %d, want 200: the lock is per user", status)

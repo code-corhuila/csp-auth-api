@@ -23,7 +23,7 @@ const (
 	codeNotFound           = "NOT_FOUND"
 	codeLastAdmin          = "LAST_ADMIN"
 	codeNoRoles            = "USER_WITHOUT_ROLES"
-	codeRateLimited        = "RATE_LIMITED"
+	codeTooManyRequests    = "TOO_MANY_REQUESTS"
 	codeInvalidToken       = "INVALID_TOKEN"
 )
 
@@ -105,7 +105,7 @@ func translateLoginError(w http.ResponseWriter, traceID string, err error) {
 	case errors.Is(err, model.ErrTooManyLoginAttempts):
 		w.Header().Set("Retry-After", loginRetryAfterSeconds(err))
 		writeJSON(w, http.StatusTooManyRequests, errorResponse{
-			Error: codeRateLimited, Message: "Too many failed login attempts, try again later", TraceID: traceID,
+			Error: codeTooManyRequests, Message: "Too many failed login attempts, try again later", TraceID: traceID,
 		})
 	default:
 		slog.Error("login user failed", "traceId", traceID, "error", err)
@@ -199,7 +199,7 @@ func translateRequestEmailChangeError(w http.ResponseWriter, traceID string, err
 	case errors.Is(err, model.ErrTooManyEmailChangeRequests):
 		w.Header().Set("Retry-After", retryAfterSeconds(err))
 		writeJSON(w, http.StatusTooManyRequests, errorResponse{
-			Error: codeRateLimited, Message: "Too many requests", TraceID: traceID,
+			Error: codeTooManyRequests, Message: "Too many requests", TraceID: traceID,
 		})
 	default:
 		slog.Error("request email change failed", "traceId", traceID, "error", err)
