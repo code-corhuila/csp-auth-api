@@ -143,9 +143,12 @@ services:
     profiles: [mail-relay]
     command: ["--smtp-relay-config=/etc/mailpit/relay.yml"]
     environment:
-      MP_SMTP_RELAY_MATCHING: ${MAILPIT_RELAY_MATCHING:?set MAILPIT_RELAY_MATCHING (a regular expression of the recipients to relay)}
+      # Empty relays nothing (the messages are only stored); no default on purpose, so that nothing reaches the provider by accident.
+      MP_SMTP_RELAY_MATCHING: ${MAILPIT_RELAY_MATCHING:-}
     volumes:
-      - ${MAILPIT_RELAY_FILE:?run csp-infra-postgres/scripts/mailpit-relay.sh}:/etc/mailpit/relay.yml:ro
+      # Compose reads every service of the file, started or not, so the variables have defaults and the platform does not need them.
+      # csp-infra-postgres/scripts/mailpit-relay.sh renders the real file and sets MAILPIT_RELAY_FILE.
+      - ${MAILPIT_RELAY_FILE:-./mailpit-relay.example.yml}:/etc/mailpit/relay.yml:ro
     expose: ["1025"]
     ports: ["127.0.0.1:1025:1025", "127.0.0.1:8025:8025"]
     networks:
