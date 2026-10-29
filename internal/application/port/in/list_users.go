@@ -19,7 +19,7 @@ type UserPage struct {
 }
 
 // ListUsers is the use case that lets an administrator find the user whose role to change
-// (HU-AUTH-003, ADR-031). Users are ordered by email and then id; soft-deleted users are not
+// (HU-AUTH-003, ADR-031). Users are ordered from newest to oldest (created_at, then id, both descending); soft-deleted users are not
 // listed. Errors: model.ErrInvalidEmailPrefix, model.ErrInvalidPageNumber and model.ErrInvalidPageLimit.
 type ListUsers interface {
 	ListUsers(ctx context.Context, query ListUsersQuery) (UserPage, error)
