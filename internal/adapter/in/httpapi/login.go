@@ -6,10 +6,11 @@ import (
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/in"
 )
 
-// WithLoginUser publishes the use case at POST /login (HU-AUTH-002), public.
-func WithLoginUser(useCase in.LoginUser) Option {
+// WithLoginUser publishes the use case at POST /login (HU-AUTH-002), public. The route compares with bcrypt, so gate caps
+// how many requests run at once (Norma 5.3.10): one that finds no free slot is refused with 429 before the comparison.
+func WithLoginUser(useCase in.LoginUser, gate *Bulkhead) Option {
 	return func(mux *http.ServeMux) {
-		mux.HandleFunc("POST "+BasePath+"/login", login(useCase))
+		mux.HandleFunc("POST "+BasePath+"/login", login(useCase, gate))
 	}
 }
 
@@ -19,7 +20,7 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
-func login(useCase in.LoginUser) http.HandlerFunc {
+func login(useCase in.LoginUser, gate *Bulkhead) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		traceID := correlationID(r)
 		w.Header().Set(headerCorrelationID, traceID)
@@ -32,6 +33,12 @@ func login(useCase in.LoginUser) http.HandlerFunc {
 			writeValidation(w, traceID, problems)
 			return
 		}
+
+		release, admitted := admit(w, r, gate, traceID, "login request")
+		if !admitted {
+			return
+		}
+		defer release()
 
 		result, err := useCase.Login(r.Context(), in.LoginUserCommand{
 			Email:     body.Email,

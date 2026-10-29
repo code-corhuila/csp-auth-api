@@ -78,9 +78,9 @@ func writeAuthenticationError(w http.ResponseWriter, traceID string, err error) 
 		writeUnauthorized(w, traceID)
 	case errors.Is(err, model.ErrRevokedTokensUnavailable):
 		slog.Warn("revoked token list unavailable, request refused", "traceId", traceID, "error", err)
-		writeInternal(w, traceID)
+		writeInternal(w, traceID, err)
 	default:
 		slog.Error("authenticate user failed", "traceId", traceID, "error", err)
-		writeInternal(w, traceID)
+		writeInternal(w, traceID, err)
 	}
 }

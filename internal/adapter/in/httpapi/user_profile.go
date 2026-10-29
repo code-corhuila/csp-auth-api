@@ -99,7 +99,7 @@ func translateProfileError(w http.ResponseWriter, traceID, operation string, err
 		writeUnauthorized(w, traceID)
 	default:
 		slog.Error(operation+" failed", "traceId", traceID, "error", err)
-		writeInternal(w, traceID)
+		writeInternal(w, traceID, err)
 	}
 }
 
