@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/out"
+	"github.com/code-corhuila/csp-auth-api/internal/platform/logging"
 )
 
 // Bounds of the in-process delivery queue (ADR-050, Norma 5.3.10): at most passwordResetWorkers messages
@@ -32,7 +33,7 @@ type SMTPPasswordResetSender struct {
 	settings Settings
 	resetURL string
 	logger   *slog.Logger
-	queue    chan out.PasswordResetDelivery
+	queue    chan queuedReset
 	ctx      context.Context
 	stop     context.CancelFunc
 	workers  sync.WaitGroup
@@ -50,7 +51,7 @@ func NewSMTPPasswordResetSender(settings Settings, resetURL string, logger *slog
 	ctx, stop := context.WithCancel(context.Background())
 	s := &SMTPPasswordResetSender{
 		settings: settings, resetURL: resetURL, logger: logger,
-		queue: make(chan out.PasswordResetDelivery, passwordResetQueueSize), ctx: ctx, stop: stop,
+		queue: make(chan queuedReset, passwordResetQueueSize), ctx: ctx, stop: stop,
 	}
 	for range passwordResetWorkers {
 		s.workers.Add(1)
@@ -59,13 +60,20 @@ func NewSMTPPasswordResetSender(settings Settings, resetURL string, logger *slog
 	return s, nil
 }
 
+// queuedReset is a message waiting for a worker, with the trace id of the request that asked for it, so the log line of a
+// failed delivery can be tied to that request although the delivery runs after it ended.
+type queuedReset struct {
+	delivery out.PasswordResetDelivery
+	traceID  string
+}
+
 // Send queues the message without waiting for it to be delivered. A full queue is ErrPasswordResetQueueFull.
-func (s *SMTPPasswordResetSender) Send(_ context.Context, delivery out.PasswordResetDelivery) error {
+func (s *SMTPPasswordResetSender) Send(ctx context.Context, delivery out.PasswordResetDelivery) error {
 	if s.ctx.Err() != nil {
 		return ErrPasswordResetSenderClosed
 	}
 	select {
-	case s.queue <- delivery:
+	case s.queue <- queuedReset{delivery: delivery, traceID: logging.TraceIDFrom(ctx)}:
 		return nil
 	default:
 		return ErrPasswordResetQueueFull
@@ -84,16 +92,17 @@ func (s *SMTPPasswordResetSender) work() {
 		select {
 		case <-s.ctx.Done():
 			return
-		case delivery := <-s.queue:
-			s.deliver(delivery)
+		case queued := <-s.queue:
+			s.deliver(queued)
 		}
 	}
 }
 
 // deliver sends one message. A failure is logged as WARN with the user id and the class only.
-func (s *SMTPPasswordResetSender) deliver(delivery out.PasswordResetDelivery) {
-	ctx, cancel := context.WithTimeout(s.ctx, s.settings.Timeout)
+func (s *SMTPPasswordResetSender) deliver(queued queuedReset) {
+	ctx, cancel := context.WithTimeout(logging.WithTraceID(s.ctx, queued.traceID), s.settings.Timeout)
 	defer cancel()
+	delivery := queued.delivery
 	to := delivery.Email.String()
 	link := s.resetURL + "#token=" + delivery.Token.Reveal()
 	message, err := buildResetMessage(s.settings.From, to, link, delivery.ExpiresAt, time.Now(), newMessageID())

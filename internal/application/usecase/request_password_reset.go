@@ -69,7 +69,7 @@ func (c *RequestPasswordReset) RequestReset(ctx context.Context, command in.Requ
 	}
 	delivery := out.PasswordResetDelivery{UserID: request.user.ID(), Email: request.email, Token: request.token, ExpiresAt: reset.ExpiresAt()}
 	if err := c.ports.Sender.Send(ctx, delivery); err != nil {
-		slog.Warn("password reset link not sent", "userId", request.user.ID(), "error", err)
+		slog.WarnContext(ctx, "password reset link not sent", "userId", request.user.ID(), "error", err)
 	}
 	return nil
 }

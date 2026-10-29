@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -15,16 +16,23 @@ import (
 
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/persistence"
 	"github.com/code-corhuila/csp-auth-api/internal/config"
+	"github.com/code-corhuila/csp-auth-api/internal/platform/logging"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := newLogger(os.Stdout)
+	slog.SetDefault(logger)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx, logger, os.LookupEnv); err != nil {
 		logger.Error("auth-api stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+// newLogger writes JSON lines, and adds the traceId of the request to every record logged with its context (Norma 5.3.9).
+func newLogger(out io.Writer) *slog.Logger {
+	return slog.New(logging.NewTraceHandler(slog.NewJSONHandler(out, nil)))
 }
 
 func run(ctx context.Context, logger *slog.Logger, lookup config.Lookup) error {

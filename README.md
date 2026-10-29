@@ -307,6 +307,15 @@ One step wraps the whole router (`httpapi.NewHandler`, Norma 5.3.5 and 5.3.9), s
 - A panic in a handler answers `500 INTERNAL_ERROR` with the same envelope; the cause is written only to the log. If the response had already
   started, the answer already sent is kept.
 
+### Logs
+
+`main` makes the JSON logger the default one (`slog.SetDefault`), and a handler wrapper (`internal/platform/logging`) adds `traceId` to every record
+written with a context that carries the correlation id: the use cases, the Redis adapters and the mail senders log with `slog.XContext(ctx, ...)`, and the
+queued reset message keeps the id of the request that asked for it. The `httpapi` layer stores the id and the other layers read it through `context`
+only. Each request writes one access line, `request handled`, with `method`, `route` (the matched pattern, or the method and path without the query
+string when no route matched), `status`, `durationMs` and `traceId`. No line carries a token, an `Idempotency-Key`, a password or an address: the access
+line takes nothing from the headers, the query string or the body.
+
 ## Own profile
 
 `GET /api/v1/auth/me` and `PATCH /api/v1/auth/me` (HU-AUTH-007, ADR-051) read and edit the personal data of the caller. They need an
