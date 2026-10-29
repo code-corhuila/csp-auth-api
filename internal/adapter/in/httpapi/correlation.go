@@ -14,9 +14,13 @@ const (
 	maxCorrelationIDLen = 128
 )
 
-// correlationID reuses the X-Correlation-Id received when it is safe to echo (printable ASCII,
-// at most 128 characters) and generates one otherwise (Norma 5.3.9).
+// correlationID returns the id the root wrapper stored in the context. Without it (a handler used alone) it reuses the
+// X-Correlation-Id received when it is safe to echo (printable ASCII, at most 128 characters) and generates one
+// otherwise (Norma 5.3.9).
 func correlationID(r *http.Request) string {
+	if id := CorrelationIDFrom(r.Context()); id != "" {
+		return id
+	}
 	received := r.Header.Get(headerCorrelationID)
 	if received != "" && len(received) <= maxCorrelationIDLen && isPrintableASCII(received) {
 		return received
