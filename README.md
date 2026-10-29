@@ -258,9 +258,10 @@ owner issues them with `auth-token` (above) and loads them as environment secret
 development. The first internal operation is the purge of old rows.
 
 The purge of old rows (ADR-030) deletes, in this order, outbox events older than 30 days, refresh tokens that expired
-or were revoked more than 30 days ago, idempotency keys older than 7 days and email change requests (`auth.email_verification`)
-that expired more than 7 days ago, verified or not, at most `batchSize` rows (1 to 500) in total per call; it needs the
-`DELETE` grants of migrations V019 and V026 of `csp-auth-db` for `auth_writer`.
+or were revoked more than 30 days ago, idempotency keys older than 7 days, email change requests (`auth.email_verification`)
+that expired more than 7 days ago, verified or not, and the password resets that expired more than 7 days ago, then the keys of
+`forgot-password` (`auth.password_reset_idempotency_key`) older than 7 days, at most `batchSize` rows (1 to 500) in total per call; it needs the
+`DELETE` grants of migrations V019, V026 and V035 of `csp-auth-db` for `auth_writer`.
 
 `POST /api/v1/auth/internal/maintenance/purge` (HU-AUTH-002) runs it. It is enabled by the same two settings as
 `/register`, is not routed by the gateway and is called by `csp-worker` with its service credential (`sub` in
@@ -271,7 +272,7 @@ curl -i -X POST http://localhost:8081/api/v1/auth/internal/maintenance/purge   -
 ```
 
 The body is optional and `batchSize` is 1 to 500 (default 100, otherwise `400`). It answers `200` with
-`{"processedCount":N,"hasMore":true|false}`: the rows deleted in this call over the four tables and whether any
+`{"processedCount":N,"hasMore":true|false}`: the rows deleted in this call over the six tables and whether any
 eligible row is left, so the caller repeats it until `hasMore` is `false`. A repeated call is safe. After the purge of an
 `Idempotency-Key`, the same registration answers `409 EMAIL_ALREADY_REGISTERED` instead of the `200` replay. A missing or
 invalid token is `401` and a valid token of another subject is `403`.
@@ -359,13 +360,13 @@ any transaction.
 ## Password reset
 
 `POST /api/v1/auth/forgot-password` and `POST /api/v1/auth/reset-password` (HU-AUTH-006, ADR-050) let a user who forgot the password
-choose a new one with a link sent by email. Both are public and take no `Idempotency-Key` (a repeat of the first replaces the pending
-token and a replay of the second is a `401`, so neither needs a stored key). They are enabled by the settings of the other routes,
+choose a new one with a link sent by email. Both are public. Only `forgot-password` takes the `Idempotency-Key` header, required, 8 to 128
+characters (Norma 5.3.8); `reset-password` creates nothing and a replay of it is a `401`, so it takes none. They are enabled by the settings of the other routes,
 **`APP_AUTH_SMTP_HOST` and `APP_AUTH_PASSWORD_RESET_URL`** (see [Email delivery](#email-delivery-smtp)); without either the two routes answer
 `404` with the envelope of the contract and the start-up log says which one is missing.
 
 ```bash
-curl -i -X POST http://localhost:8081/api/v1/auth/forgot-password -H 'Content-Type: application/json' -d '{"email":"maria@example.com"}'
+curl -i -X POST http://localhost:8081/api/v1/auth/forgot-password -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" -d '{"email":"maria@example.com"}'
 curl -i -X POST http://localhost:8081/api/v1/auth/reset-password -H 'Content-Type: application/json' -d '{"token":"<uuid of the link>","password":"NewSecret123"}'
 ```
 
@@ -378,7 +379,14 @@ the latency or the failure of the relay cannot change the answer. A message that
 and the class of the error, and the user asks again; messages not yet sent are lost if the process stops. The link is
 `APP_AUTH_PASSWORD_RESET_URL` followed by `#token=<token>`: the token travels in the fragment, which browsers do not send to servers. The
 token, its digest, the link and the address are never logged, and nothing is written to the outbox. A malformed or missing email, or a body
-over 4 KiB, is `400 VALIDATION_ERROR`; the only `429` is the bulkhead below.
+over 4 KiB, is `400 VALIDATION_ERROR`; a missing or malformed `Idempotency-Key` is the same `400` with a detail for the header.
+
+The key is stored in `auth.password_reset_idempotency_key` with the SHA-256 of the normalised (lowercase, trimmed) email and nothing else. It is
+recorded for every request that passes validation, whatever the account is: for an active account within its limit in the same transaction as
+the token, linked to it, and in the other cases alone with no link, so a replay is indistinguishable. The same key and email again is the same
+silent `202` and creates and sends nothing; the same key with another email is `409 IDEMPOTENCY_KEY_CONFLICT` (as in `/register`), which depends
+only on the key and the email sent, never on the account. Two concurrent requests with the same key resolve on the primary key: the loser
+re-reads the key and replays. Keys are purged after seven days (the purge above); the only `429` is the bulkhead below.
 
 `reset-password` answers `204` and, in one transaction, consumes the token, replaces the password hash (bcrypt, the cost of registration)
 and revokes every active refresh token of the user. An unknown, expired, used or superseded token, and the token of an account that is no
