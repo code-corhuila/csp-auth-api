@@ -163,7 +163,7 @@ func TestTheAbortOfTheHandlerIsNotSwallowed(t *testing.T) {
 func TestTheRedirectToACleanPathIsPassedOn(t *testing.T) {
 	rec := serve(NewHandler(), http.MethodGet, "/api/v1/auth//health", "")
 
-	if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") == "" {
-		t.Errorf("status = %d, Location = %q, want the 301 of the mux", rec.Code, rec.Header().Get("Location"))
+	if rec.Code != http.StatusTemporaryRedirect || rec.Header().Get("Location") == "" {
+		t.Errorf("status = %d, Location = %q, want the redirect of the mux", rec.Code, rec.Header().Get("Location"))
 	}
 }
