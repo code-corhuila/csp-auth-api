@@ -171,8 +171,8 @@ func TestRefreshRejectedTokenLogsOnceWithTheTraceIdAndNeverTheToken(t *testing.T
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
 	out := logs.String()
-	if strings.Count(out, "\n") != 1 || !strings.Contains(out, "level=WARN") || !strings.Contains(out, "traceId=trace-rejected") {
-		t.Errorf("log = %q, want one WARN line with the trace id", out)
+	if strings.Count(out, "level=WARN") != 1 || !strings.Contains(out, "traceId=trace-rejected") {
+		t.Errorf("log = %q, want one WARN line with the trace id (the other line is the access one)", out)
 	}
 	if strings.Contains(out, presentedToken) || strings.Contains(out, string(model.HashOpaqueToken(presentedToken))) {
 		t.Errorf("the log leaks the token or its hash: %q", out)

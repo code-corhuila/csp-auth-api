@@ -106,7 +106,7 @@ func (c *ChangePassword) replace(ctx context.Context, command in.ChangePasswordC
 func (c *ChangePassword) ensureNotLocked(ctx context.Context, userID string) error {
 	remaining, err := c.ports.Attempts.Locked(ctx, userID)
 	if err != nil {
-		warnUnlessPaused("password change limit unavailable, the change goes on", err)
+		warnUnlessPaused(ctx, "password change limit unavailable, the change goes on", err)
 		return nil
 	}
 	if remaining > 0 {
@@ -117,12 +117,12 @@ func (c *ChangePassword) ensureNotLocked(ctx context.Context, userID string) err
 
 func (c *ChangePassword) recordFailure(ctx context.Context, userID string) {
 	if err := c.ports.Attempts.RecordFailure(ctx, userID); err != nil {
-		warnUnlessPaused("wrong current password could not be counted", err)
+		warnUnlessPaused(ctx, "wrong current password could not be counted", err)
 	}
 }
 
 func (c *ChangePassword) forgetFailures(ctx context.Context, userID string) {
 	if err := c.ports.Attempts.Clear(ctx, userID); err != nil {
-		warnUnlessPaused("wrong current passwords could not be cleared", err)
+		warnUnlessPaused(ctx, "wrong current passwords could not be cleared", err)
 	}
 }
