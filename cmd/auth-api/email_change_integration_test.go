@@ -43,6 +43,25 @@ func callEmail(t *testing.T, baseURL, method, path, bearer, body string) (int, h
 	return response.StatusCode, response.Header, string(raw)
 }
 
+// requestChangeWithKey sends the request with an Idempotency-Key of the caller instead of the one derived from the body.
+func requestChangeWithKey(t *testing.T, baseURL, bearer, key, email string) (int, string) {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodPatch, baseURL+emailChangePath, strings.NewReader(fmt.Sprintf(`{"email":%q}`, email)))
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", key)
+	request.Header.Set("Authorization", "Bearer "+bearer)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("PATCH %s error = %v", emailChangePath, err)
+	}
+	defer response.Body.Close()
+	raw, _ := io.ReadAll(response.Body)
+	return response.StatusCode, string(raw)
+}
+
 func requestChange(t *testing.T, baseURL, bearer, email string) (int, http.Header, string) {
 	t.Helper()
 	return callEmail(t, baseURL, http.MethodPatch, emailChangePath, bearer, fmt.Sprintf(`{"email":%q}`, email))
@@ -226,6 +245,37 @@ func TestEmailChangeEndToEndAgainstTheDatabase(t *testing.T) {
 		}
 		if seconds, err := strconv.Atoi(header.Get("Retry-After")); err != nil || seconds < 3590 || seconds > 3600 {
 			t.Errorf("Retry-After = %q, want the seconds until the first request of this test leaves the hour (3590 to 3600)", header.Get("Retry-After"))
+		}
+	})
+
+	t.Run("the same key again is 202 without a new code or a count, another address with it is 409 IDEMPOTENCY_KEY_CONFLICT", func(t *testing.T) {
+		_, replayID, replayAccess, _ := signUpUser(t, server.URL, "e2e-replay")
+		key, target := "e2e-replay-key-"+replayID, "e2e-replay-"+replayID+"@example.com"
+		status, body := requestChangeWithKey(t, server.URL, replayAccess, key, target)
+		if status != http.StatusAccepted || body != "" {
+			t.Fatalf("first request: status = %d, body = %q, want 202 and no body", status, body)
+		}
+		code := relay.codeFor(t, target)
+
+		for i := 1; i <= 4; i++ {
+			if status, body := requestChangeWithKey(t, server.URL, replayAccess, key, target); status != http.StatusAccepted || body != "" {
+				t.Fatalf("replay %d: status = %d, body = %q, want 202 and no body", i, status, body)
+			}
+		}
+
+		if again := relay.codeFor(t, target); again != code {
+			t.Errorf("the code changed from %s to %s: a replay sent a new message", code, again)
+		}
+		if status, body := requestChangeWithKey(t, server.URL, replayAccess, key, "e2e-replay-other-"+replayID+"@example.com"); status != http.StatusConflict || !strings.Contains(body, "IDEMPOTENCY_KEY_CONFLICT") {
+			t.Errorf("another address with the key: status = %d, body = %s, want 409 IDEMPOTENCY_KEY_CONFLICT", status, body)
+		}
+		for i := 1; i <= 2; i++ {
+			if status, _, _ := requestChange(t, server.URL, replayAccess, fmt.Sprintf("e2e-replay-%d-%s@example.com", i, replayID)); status != http.StatusAccepted {
+				t.Errorf("new request %d: status = %d, want 202: the replays are not counted against the limit of 3", i, status)
+			}
+		}
+		if status, body := verifyCode(t, server.URL, replayAccess, code); status != http.StatusBadRequest {
+			t.Errorf("verify the code of the first request after newer requests: status = %d, body = %s, want 400 (superseded)", status, body)
 		}
 	})
 
