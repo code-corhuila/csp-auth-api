@@ -12,7 +12,7 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 - The service credential (ADR-020) must carry the issuer `csp-auth` and an audience that contains `csp-internal` (ADR-056), in addition to RS256,
   `exp` and `sub`. A token without them, or with another issuer or audience, answers `401`; a user's access token (audience `csp-api`) is no longer
   a service credential. Unit tests of each case of the verifier. The helper of the purge end-to-end test (`integration` tag) signs its service
-  token with `iss` and `aud`, which it lacked when the check was added.
+  token with `iss` and `aud`, which it lacked when the check was added, and its case of a user's access token expects `401` instead of `403`.
 - Every `429` answers the code `TOO_MANY_REQUESTS` of the norm (Annex F) instead of `RATE_LIMITED` (contract 1.15.0): the client address limit of the login, the password change lock, the email change limit and the bulkheads of register, login, forgot password, reset password, email change and password change. Statuses and `Retry-After` do not change. A table test covers every route that can answer `429`.
 - Structured logging with the correlation id (Norma 5.3.9, Annex C): `main` sets the JSON logger as the default one, a handler wrapper
   (`internal/platform/logging`) adds `traceId` to every record logged with the context of a request, the use cases, the Redis adapters and the mail senders
