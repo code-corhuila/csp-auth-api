@@ -38,7 +38,7 @@ func admit(w http.ResponseWriter, r *http.Request, gate *Bulkhead, traceID, rout
 		slog.Warn(route+" refused: no free slot", "traceId", traceID, "limit", gate.Limit(), "wait", gate.Wait().String())
 		w.Header().Set("Retry-After", busyRetryAfterSeconds)
 		writeJSON(w, http.StatusTooManyRequests, errorResponse{
-			Error: codeRateLimited, Message: "Too many requests", TraceID: traceID,
+			Error: codeTooManyRequests, Message: "Too many requests", TraceID: traceID,
 		})
 	}
 	return release, admitted

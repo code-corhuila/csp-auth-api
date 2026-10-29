@@ -375,8 +375,8 @@ func TestPasswordResetRoutesAreRefusedWith429BeforeTheUseCaseWhenTheirSlotsAreTa
 				rec = c.send(gate, slow, c.attempt)
 			})
 
-			if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "1" || !strings.Contains(rec.Body.String(), `"error":"RATE_LIMITED"`) {
-				t.Errorf("status = %d, Retry-After = %q, body = %s, want 429 RATE_LIMITED with Retry-After 1", rec.Code, rec.Header().Get("Retry-After"), rec.Body)
+			if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "1" || !strings.Contains(rec.Body.String(), `"error":"TOO_MANY_REQUESTS"`) {
+				t.Errorf("status = %d, Retry-After = %q, body = %s, want 429 TOO_MANY_REQUESTS with Retry-After 1", rec.Code, rec.Header().Get("Retry-After"), rec.Body)
 			}
 			if calls := slow.callCount(); calls != 1 {
 				t.Errorf("use case calls = %d, want the refused request to never reach it", calls)

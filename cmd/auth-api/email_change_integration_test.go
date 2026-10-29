@@ -240,8 +240,8 @@ func TestEmailChangeEndToEndAgainstTheDatabase(t *testing.T) {
 			}
 		}
 		status, header, body := requestChange(t, server.URL, limitedAccess, "e2e-limit-4-"+limitedID+"@example.com")
-		if status != http.StatusTooManyRequests || !strings.Contains(body, "RATE_LIMITED") {
-			t.Errorf("status = %d, body = %s, want 429 RATE_LIMITED", status, body)
+		if status != http.StatusTooManyRequests || !strings.Contains(body, "TOO_MANY_REQUESTS") {
+			t.Errorf("status = %d, body = %s, want 429 TOO_MANY_REQUESTS", status, body)
 		}
 		if seconds, err := strconv.Atoi(header.Get("Retry-After")); err != nil || seconds < 3590 || seconds > 3600 {
 			t.Errorf("Retry-After = %q, want the seconds until the first request of this test leaves the hour (3590 to 3600)", header.Get("Retry-After"))

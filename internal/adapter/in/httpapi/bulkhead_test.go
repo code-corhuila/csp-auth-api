@@ -148,8 +148,8 @@ func TestRequestEmailChangeIsRefusedWith429BeforeTheUseCaseWhenNoSlotIsFree(t *t
 		rec = sendEmailChangeGated(gate, &fakeUserAuthorizer{}, slow, &fakeVerifyEmailChange{}, traced(requestAttempt(emailBody)))
 	})
 
-	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "1" || !strings.Contains(rec.Body.String(), `"error":"RATE_LIMITED"`) {
-		t.Errorf("status = %d, Retry-After = %q, body = %s, want 429 RATE_LIMITED with Retry-After 1", rec.Code, rec.Header().Get("Retry-After"), rec.Body)
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "1" || !strings.Contains(rec.Body.String(), `"error":"TOO_MANY_REQUESTS"`) {
+		t.Errorf("status = %d, Retry-After = %q, body = %s, want 429 TOO_MANY_REQUESTS with Retry-After 1", rec.Code, rec.Header().Get("Retry-After"), rec.Body)
 	}
 	slow.mu.Lock()
 	calls := slow.calls
