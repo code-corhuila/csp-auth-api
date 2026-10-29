@@ -212,8 +212,8 @@ not stay alive for that. The use case runs on a context that keeps the values of
 a fixed deadline of 10 seconds (`detachedDeadline`, norm 5.3.10); the bearer token and the body are still read on the request context.
 
 `PATCH /api/v1/auth/me/email` and `POST /api/v1/auth/me/email/verify` (HU-AUTH-004, ADR-034) change the email of the caller in two
-steps. Both need an access token that holds `profile:update:self` (any signed-in user) and an `Idempotency-Key` (accepted, not
-stored: repeating the request is harmless). The account is always the one in the token, and the routes are enabled by the same
+steps. Both need an access token that holds `profile:update:self` (any signed-in user) and an `Idempotency-Key` of 8 to 128
+characters. The request step stores its key (below); the verification only validates it, because it creates nothing. The account is always the one in the token, and the routes are enabled by the same
 two settings as the other protected routes **and by `APP_AUTH_SMTP_HOST`**: without it the two routes answer `404` and the start-up
 log says so once (see [Email delivery](#email-delivery-smtp)).
 
@@ -225,7 +225,15 @@ curl -i -X POST http://localhost:8081/api/v1/auth/me/email/verify -H "Authorizat
 The request normalizes the address to lower case and answers `202` with no body: the code is never in the response. An invalid address
 is `400`, an address used by any active account (the own one included) is `409 EMAIL_ALREADY_REGISTERED`, and the fourth request of a
 user in a rolling hour (superseded ones count) is `429 RATE_LIMITED` with `Retry-After: 3600`; `429` with `Retry-After: 1` also means
-that the service is busy sending other codes (bulkhead, see [Email delivery](#email-delivery-smtp)). A new request replaces the pending one.
+that the service is busy sending other codes (bulkhead, see [Email delivery](#email-delivery-smtp)). A new request with a new key replaces the
+pending one.
+
+The key of the request is stored (Norma 5.3.8, ADR-034) in `auth.email_change_idempotency_key` with the SHA-256 of the user id and the normalised
+new address, linked to the pending request and in the same transaction as it. It is recorded only when a request is really created: a `409
+EMAIL_ALREADY_REGISTERED` or a `429` leaves no key. The same key with the same address, by the same user, is a replay: `202` again, nothing is
+created or sent, and it does not count against the limit of three per hour. The same key with another address, or by another user, is `409
+IDEMPOTENCY_KEY_CONFLICT`. The account row is locked first, so two concurrent requests of one user with the same key are one replay; the same key
+from two users loses on the unique key before anything is sent and answers the conflict. Keys are purged after seven days.
 The code has six digits (`crypto/rand`, leading zeros kept), lasts 15 minutes and is handed to the `VerificationCodeSender` port
 inside the transaction of the request. The adapter is `SMTPVerificationCodeSender` (ADR-034): it sends one plain-text message in Spanish
 through the SMTP relay and nowhere else. If the relay fails the request is rolled back and the answer is `500`; the user asks again.
@@ -235,7 +243,7 @@ true, the request is consumed and `UserEmailChanged` (user id and new email only
 request, an expired or exhausted request and a wrong code all answer the same `400 VALIDATION_ERROR`. Each wrong code is counted
 and the count is committed although the answer is `400`; the fifth one retires the request. The comparison is in constant time. If
 another account took the address meanwhile the answer is `409 EMAIL_ALREADY_REGISTERED`, the request is invalidated and no event is
-written. No session is revoked by the change. The tables are those of `csp-auth-db` V024 and V025.
+written. No session is revoked by the change. The tables are those of `csp-auth-db` V024 and V025, and V036 to V040 for the key.
 
 ### Issuing a service credential (`cmd/auth-token`, ADR-052)
 
@@ -260,8 +268,9 @@ development. The first internal operation is the purge of old rows.
 The purge of old rows (ADR-030) deletes, in this order, outbox events older than 30 days, refresh tokens that expired
 or were revoked more than 30 days ago, idempotency keys older than 7 days, email change requests (`auth.email_verification`)
 that expired more than 7 days ago, verified or not, and the password resets that expired more than 7 days ago, then the keys of
-`forgot-password` (`auth.password_reset_idempotency_key`) older than 7 days, at most `batchSize` rows (1 to 500) in total per call; it needs the
-`DELETE` grants of migrations V019, V026 and V035 of `csp-auth-db` for `auth_writer`.
+`forgot-password` (`auth.password_reset_idempotency_key`) older than 7 days and those of the email change
+(`auth.email_change_idempotency_key`) older than 7 days, at most `batchSize` rows (1 to 500) in total per call; it needs the
+`DELETE` grants of migrations V019, V026, V035 and V040 of `csp-auth-db` for `auth_writer`.
 
 `POST /api/v1/auth/internal/maintenance/purge` (HU-AUTH-002) runs it. It is enabled by the same two settings as
 `/register`, is not routed by the gateway and is called by `csp-worker` with its service credential (`sub` in
@@ -272,7 +281,7 @@ curl -i -X POST http://localhost:8081/api/v1/auth/internal/maintenance/purge   -
 ```
 
 The body is optional and `batchSize` is 1 to 500 (default 100, otherwise `400`). It answers `200` with
-`{"processedCount":N,"hasMore":true|false}`: the rows deleted in this call over the six tables and whether any
+`{"processedCount":N,"hasMore":true|false}`: the rows deleted in this call over the seven tables and whether any
 eligible row is left, so the caller repeats it until `hasMore` is `false`. A repeated call is safe. After the purge of an
 `Idempotency-Key`, the same registration answers `409 EMAIL_ALREADY_REGISTERED` instead of the `200` replay. A missing or
 invalid token is `401` and a valid token of another subject is `403`.

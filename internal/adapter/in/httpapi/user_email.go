@@ -55,8 +55,8 @@ type verifyEmailChangeRequest struct {
 }
 
 // requestEmailChange answers 202 without a body: the code never travels in the response. The
-// Idempotency-Key is only validated, because a repeated request replaces the code (ADR-034). A request that
-// finds no free slot of gate is refused with 429 before the use case opens a transaction.
+// Idempotency-Key is validated here and stored by the use case, so a replay answers 202 again and sends nothing
+// (ADR-034). A request that finds no free slot of gate is refused with 429 before the use case opens a transaction.
 func requestEmailChange(useCase in.RequestEmailChange, gate *Bulkhead) callerHandler {
 	return func(w http.ResponseWriter, r *http.Request, callerID string) {
 		traceID := w.Header().Get(headerCorrelationID) // set by requirePermission, which wraps this handler
@@ -78,7 +78,9 @@ func requestEmailChange(useCase in.RequestEmailChange, gate *Bulkhead) callerHan
 		}
 		defer release()
 
-		if err := useCase.RequestChange(r.Context(), in.RequestEmailChangeCommand{UserID: callerID, Email: body.Email}); err != nil {
+		if err := useCase.RequestChange(r.Context(), in.RequestEmailChangeCommand{
+			UserID: callerID, Email: body.Email, IdempotencyKey: r.Header.Get(headerIdempotencyKey),
+		}); err != nil {
 			translateRequestEmailChangeError(w, traceID, err)
 			return
 		}

@@ -20,6 +20,12 @@ import (
 	"github.com/code-corhuila/csp-auth-api/internal/domain/model"
 )
 
+// freshKey is an Idempotency-Key no other request of the test run used.
+func freshKey(t *testing.T) string {
+	t.Helper()
+	return system.UUIDGenerator{}.NewID()
+}
+
 type fixedCode struct{ code string }
 
 func (g fixedCode) NewCode() (model.VerificationCode, error) {
@@ -54,7 +60,7 @@ func (f fixture) emailRequests() *EmailVerificationRepository {
 
 func (f fixture) requestEmailChange(sender out.VerificationCodeSender, code string) *usecase.RequestEmailChange {
 	return usecase.NewRequestEmailChange(usecase.RequestEmailChangePorts{
-		Users: f.users, Requests: f.emailRequests(), Codes: fixedCode{code}, Sender: sender,
+		Users: f.users, Requests: f.emailRequests(), Keys: NewEmailChangeKeyRepository(f.pool), Codes: fixedCode{code}, Sender: sender,
 		IDs: system.UUIDGenerator{}, Clock: system.Clock{}, Transactions: f.transactions,
 	})
 }
@@ -126,7 +132,7 @@ func TestRequestRoundTripKeepsTheCodeLeadingZerosAndTheNormalizedEmail(t *testin
 	user := f.registeredUser(t, ctx)
 	sender := &recordingSender{}
 
-	err := f.requestEmailChange(sender, "004217").RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: "  New.Mail@Example.COM "})
+	err := f.requestEmailChange(sender, "004217").RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: "  New.Mail@Example.COM ", IdempotencyKey: freshKey(t)})
 	if err != nil {
 		t.Fatalf("RequestChange() error = %v", err)
 	}
@@ -161,11 +167,11 @@ func TestANewRequestSupersedesThePreviousOneAndTheFourthInAnHourIsRejected(t *te
 	useCase := f.requestEmailChange(&recordingSender{}, "111111")
 
 	for i := 0; i < 3; i++ {
-		if err := useCase.RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: uniqueEmail(t)}); err != nil {
+		if err := useCase.RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: uniqueEmail(t), IdempotencyKey: freshKey(t)}); err != nil {
 			t.Fatalf("request %d error = %v", i+1, err)
 		}
 	}
-	err := useCase.RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: uniqueEmail(t)})
+	err := useCase.RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: uniqueEmail(t), IdempotencyKey: freshKey(t)})
 
 	if !errors.Is(err, model.ErrTooManyEmailChangeRequests) {
 		t.Fatalf("fourth request error = %v, want ErrTooManyEmailChangeRequests", err)
@@ -224,7 +230,7 @@ func TestTheFourthRequestTellsWhenTheOldestOneLeavesTheWindow(t *testing.T) {
 		}
 	}
 
-	err := f.requestEmailChange(&recordingSender{}, "555555").RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: uniqueEmail(t)})
+	err := f.requestEmailChange(&recordingSender{}, "555555").RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: uniqueEmail(t), IdempotencyKey: freshKey(t)})
 
 	var limited *model.EmailChangeRateLimitedError
 	if !errors.As(err, &limited) {
@@ -246,7 +252,7 @@ func TestConcurrentRequestsOfOneUserLeaveOneActiveRequest(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs[i] = useCase.RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: uniqueEmail(t)})
+			errs[i] = useCase.RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: uniqueEmail(t), IdempotencyKey: freshKey(t)})
 		}()
 	}
 	wg.Wait()
@@ -283,7 +289,7 @@ func TestARequestWhoseSenderFailsLeavesNothingBehind(t *testing.T) {
 	user := f.registeredUser(t, ctx)
 	sendErr := errors.New("sender down")
 
-	err := f.requestEmailChange(&recordingSender{err: sendErr}, "555555").RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: uniqueEmail(t)})
+	err := f.requestEmailChange(&recordingSender{err: sendErr}, "555555").RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: uniqueEmail(t), IdempotencyKey: freshKey(t)})
 
 	if !errors.Is(err, sendErr) {
 		t.Fatalf("error = %v, want the sender error", err)
@@ -299,7 +305,7 @@ func TestARequestForAnEmailOfAnActiveAccountIsRejected(t *testing.T) {
 	useCase := f.requestEmailChange(&recordingSender{}, "666666")
 
 	for _, email := range []string{other.Email().String(), user.Email().String()} {
-		err := useCase.RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: email})
+		err := useCase.RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: email, IdempotencyKey: freshKey(t)})
 		if !errors.Is(err, model.ErrEmailAlreadyRegistered) {
 			t.Errorf("RequestChange(%s) error = %v, want ErrEmailAlreadyRegistered", email, err)
 		}
@@ -308,7 +314,7 @@ func TestARequestForAnEmailOfAnActiveAccountIsRejected(t *testing.T) {
 
 func (f fixture) requestChangeTo(t *testing.T, ctx context.Context, user *model.User, email, code string) {
 	t.Helper()
-	if err := f.requestEmailChange(&recordingSender{}, code).RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: email}); err != nil {
+	if err := f.requestEmailChange(&recordingSender{}, code).RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: email, IdempotencyKey: freshKey(t)}); err != nil {
 		t.Fatalf("RequestChange() error = %v", err)
 	}
 }
@@ -482,7 +488,7 @@ func (r slowRequests) FindPendingForUpdate(ctx context.Context, userID string) (
 func TestARequestAndACorrectVerificationRacingNeverDeadlock(t *testing.T) {
 	f, ctx := newFixture(t), context.Background()
 	request := usecase.NewRequestEmailChange(usecase.RequestEmailChangePorts{
-		Users: slowUsers{f.users}, Requests: f.emailRequests(), Codes: fixedCode{"222222"}, Sender: &recordingSender{},
+		Users: slowUsers{f.users}, Requests: f.emailRequests(), Keys: NewEmailChangeKeyRepository(f.pool), Codes: fixedCode{"222222"}, Sender: &recordingSender{},
 		IDs: system.UUIDGenerator{}, Clock: system.Clock{}, Transactions: f.transactions,
 	})
 	verify := usecase.NewVerifyEmailChange(usecase.VerifyEmailChangePorts{
@@ -491,7 +497,7 @@ func TestARequestAndACorrectVerificationRacingNeverDeadlock(t *testing.T) {
 	for i := range 30 {
 		user := f.registeredUser(t, ctx)
 		firstEmail := uniqueEmail(t)
-		if err := f.requestEmailChange(&recordingSender{}, "111111").RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: firstEmail}); err != nil {
+		if err := f.requestEmailChange(&recordingSender{}, "111111").RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: firstEmail, IdempotencyKey: freshKey(t)}); err != nil {
 			t.Fatalf("iteration %d: first request error = %v", i, err)
 		}
 
@@ -502,7 +508,7 @@ func TestARequestAndACorrectVerificationRacingNeverDeadlock(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			requestErr = request.RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: uniqueEmail(t)})
+			requestErr = request.RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: uniqueEmail(t), IdempotencyKey: freshKey(t)})
 		}()
 		go func() {
 			defer wg.Done()
@@ -526,5 +532,205 @@ func TestARequestAndACorrectVerificationRacingNeverDeadlock(t *testing.T) {
 		default:
 			t.Fatalf("iteration %d: verify error = %v, account email = %q, want the new email set or a uniform refusal with the email unchanged", i, verifyErr, email)
 		}
+	}
+}
+
+type emailChangeKeyRow struct {
+	hash   string
+	linked *string
+}
+
+func (f fixture) emailChangeKeyRows(t *testing.T, ctx context.Context, key string) []emailChangeKeyRow {
+	t.Helper()
+	rows, err := f.pool.Query(ctx, `SELECT request_hash, email_verification_id::text FROM auth.email_change_idempotency_key WHERE key = $1`, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var result []emailChangeKeyRow
+	for rows.Next() {
+		var row emailChangeKeyRow
+		if err := rows.Scan(&row.hash, &row.linked); err != nil {
+			t.Fatal(err)
+		}
+		result = append(result, row)
+	}
+	return result
+}
+
+func (f fixture) emailVerificationCount(t *testing.T, ctx context.Context, userID string) int {
+	t.Helper()
+	var count int
+	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM auth.email_verification WHERE user_id = $1`, userID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+func TestEmailChangeKeyIsStoredFoundAndNeverOverwritten(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	user := f.registeredUser(t, ctx)
+	if err := f.requestEmailChange(&recordingSender{}, "004217").RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: uniqueEmail(t), IdempotencyKey: freshKey(t)}); err != nil {
+		t.Fatalf("RequestChange() error = %v", err)
+	}
+	var verificationID string
+	if err := f.pool.QueryRow(ctx, `SELECT id::text FROM auth.email_verification WHERE user_id = $1`, user.ID()).Scan(&verificationID); err != nil {
+		t.Fatal(err)
+	}
+	keys := NewEmailChangeKeyRepository(f.pool)
+	key, _ := model.NewIdempotencyKey("it-key-" + newUUID(t))
+
+	if _, found, err := keys.Find(ctx, key); err != nil || found {
+		t.Fatalf("Find() before Save = %v, %v, want not found", found, err)
+	}
+	record := out.EmailChangeKeyRecord{RequestHash: model.EmailChangeRequestHash(user.ID(), mustEmail(t, uniqueEmail(t))), EmailVerificationID: verificationID}
+	if err := keys.Save(ctx, key, record); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	got, found, err := keys.Find(ctx, key)
+	if err != nil || !found || got != record {
+		t.Errorf("Find() = %+v, %v, %v, want %+v", got, found, err, record)
+	}
+	if err := keys.Save(ctx, key, record); !errors.Is(err, model.ErrIdempotencyKeyTaken) {
+		t.Errorf("second Save() error = %v, want ErrIdempotencyKeyTaken", err)
+	}
+}
+
+func TestRequestRepeatedWithTheSameKeyReplaysWithoutANewCodeAndDoesNotCountAgainstTheLimit(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	user := f.registeredUser(t, ctx)
+	sender := &recordingSender{}
+	request := f.requestEmailChange(sender, "004217")
+	command := in.RequestEmailChangeCommand{UserID: user.ID(), Email: uniqueEmail(t), IdempotencyKey: freshKey(t)}
+
+	for range 5 {
+		if err := request.RequestChange(ctx, command); err != nil {
+			t.Fatalf("RequestChange() error = %v, want the same success every time", err)
+		}
+	}
+
+	if len(sender.deliveries) != 1 || f.emailVerificationCount(t, ctx, user.ID()) != 1 {
+		t.Fatalf("deliveries = %d, requests = %d, want one of each: a replay creates and sends nothing", len(sender.deliveries), f.emailVerificationCount(t, ctx, user.ID()))
+	}
+	rows := f.emailChangeKeyRows(t, ctx, command.IdempotencyKey)
+	if len(rows) != 1 || rows[0].linked == nil || *rows[0].linked != sender.deliveries[0].RequestID || rows[0].hash != model.EmailChangeRequestHash(user.ID(), mustEmail(t, command.Email)) {
+		t.Errorf("key rows = %+v, want one holding the hash of the account and address, linked to request %s", rows, sender.deliveries[0].RequestID)
+	}
+	for range 2 {
+		if err := request.RequestChange(ctx, in.RequestEmailChangeCommand{UserID: user.ID(), Email: uniqueEmail(t), IdempotencyKey: freshKey(t)}); err != nil {
+			t.Fatalf("a second and third new request error = %v, want them within the limit of 3: the replays were not counted", err)
+		}
+	}
+	other := command
+	other.Email = uniqueEmail(t)
+	if err := request.RequestChange(ctx, other); !errors.Is(err, model.ErrIdempotencyKeyConflict) {
+		t.Errorf("same key, other address: error = %v, want ErrIdempotencyKeyConflict", err)
+	}
+}
+
+func TestRequestsRefusedByTheAddressOrTheLimitLeaveNoKeyAndAnotherAccountConflicts(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	owner, other := f.registeredUser(t, ctx), f.registeredUser(t, ctx)
+	request := f.requestEmailChange(&recordingSender{}, "004217")
+
+	taken := in.RequestEmailChangeCommand{UserID: owner.ID(), Email: other.Email().String(), IdempotencyKey: freshKey(t)}
+	if err := request.RequestChange(ctx, taken); !errors.Is(err, model.ErrEmailAlreadyRegistered) || len(f.emailChangeKeyRows(t, ctx, taken.IdempotencyKey)) != 0 {
+		t.Errorf("taken address: error = %v, key rows = %d, want ErrEmailAlreadyRegistered and no key", err, len(f.emailChangeKeyRows(t, ctx, taken.IdempotencyKey)))
+	}
+	for range 3 {
+		if err := request.RequestChange(ctx, in.RequestEmailChangeCommand{UserID: owner.ID(), Email: uniqueEmail(t), IdempotencyKey: freshKey(t)}); err != nil {
+			t.Fatalf("request error = %v", err)
+		}
+	}
+	limited := in.RequestEmailChangeCommand{UserID: owner.ID(), Email: uniqueEmail(t), IdempotencyKey: freshKey(t)}
+	if err := request.RequestChange(ctx, limited); !errors.Is(err, model.ErrTooManyEmailChangeRequests) || len(f.emailChangeKeyRows(t, ctx, limited.IdempotencyKey)) != 0 {
+		t.Errorf("over the limit: error = %v, key rows = %d, want ErrTooManyEmailChangeRequests and no key", err, len(f.emailChangeKeyRows(t, ctx, limited.IdempotencyKey)))
+	}
+	used := in.RequestEmailChangeCommand{UserID: other.ID(), Email: uniqueEmail(t), IdempotencyKey: freshKey(t)}
+	if err := request.RequestChange(ctx, used); err != nil {
+		t.Fatalf("request error = %v", err)
+	}
+	if err := request.RequestChange(ctx, in.RequestEmailChangeCommand{UserID: owner.ID(), Email: used.Email, IdempotencyKey: used.IdempotencyKey}); !errors.Is(err, model.ErrIdempotencyKeyConflict) {
+		t.Errorf("key of another account: error = %v, want ErrIdempotencyKeyConflict", err)
+	}
+}
+
+// requestEmailChangesConcurrently runs the commands at the same instant and returns their errors in order.
+func requestEmailChangesConcurrently(ctx context.Context, request *usecase.RequestEmailChange, commands ...in.RequestEmailChangeCommand) []error {
+	errs := make([]error, len(commands))
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i, command := range commands {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs[i] = request.RequestChange(ctx, command)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	return errs
+}
+
+func TestConcurrentRequestsWithTheSameKeyDeliverOneCodeAndStoreOneKey(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	for round := range 10 {
+		user := f.registeredUser(t, ctx)
+		sender := &recordingSender{}
+		command := in.RequestEmailChangeCommand{UserID: user.ID(), Email: uniqueEmail(t), IdempotencyKey: freshKey(t)}
+
+		errs := requestEmailChangesConcurrently(ctx, f.requestEmailChange(sender, "004217"), command, command)
+
+		if errs[0] != nil || errs[1] != nil {
+			t.Fatalf("round %d: errors = %v / %v, want the same success twice", round, errs[0], errs[1])
+		}
+		if len(sender.deliveries) != 1 || f.emailVerificationCount(t, ctx, user.ID()) != 1 || len(f.emailChangeKeyRows(t, ctx, command.IdempotencyKey)) != 1 {
+			t.Fatalf("round %d: deliveries = %d, requests = %d, want one code, one request and one key", round, len(sender.deliveries), f.emailVerificationCount(t, ctx, user.ID()))
+		}
+	}
+}
+
+func TestConcurrentRequestsOfTwoAccountsWithTheSameKeyAreOneSuccessAndOneConflict(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	for round := range 10 {
+		sender := &recordingSender{}
+		key := freshKey(t)
+		first := in.RequestEmailChangeCommand{UserID: f.registeredUser(t, ctx).ID(), Email: uniqueEmail(t), IdempotencyKey: key}
+		second := in.RequestEmailChangeCommand{UserID: f.registeredUser(t, ctx).ID(), Email: uniqueEmail(t), IdempotencyKey: key}
+
+		errs := requestEmailChangesConcurrently(ctx, f.requestEmailChange(sender, "004217"), first, second)
+
+		successes, conflicts := 0, 0
+		for _, err := range errs {
+			switch {
+			case err == nil:
+				successes++
+			case errors.Is(err, model.ErrIdempotencyKeyConflict):
+				conflicts++
+			default:
+				t.Errorf("round %d: unexpected error %v", round, err)
+			}
+		}
+		if successes != 1 || conflicts != 1 || len(sender.deliveries) != 1 || len(f.emailChangeKeyRows(t, ctx, key)) != 1 {
+			t.Fatalf("round %d: successes = %d, conflicts = %d, deliveries = %d, want 1, 1 and one code over a single key", round, successes, conflicts, len(sender.deliveries))
+		}
+	}
+}
+
+func TestDeletingTheRequestOfAnEmailChangeKeyKeepsTheKeyWithoutALink(t *testing.T) {
+	f, ctx := newFixture(t), context.Background()
+	user := f.registeredUser(t, ctx)
+	command := in.RequestEmailChangeCommand{UserID: user.ID(), Email: uniqueEmail(t), IdempotencyKey: freshKey(t)}
+	if err := f.requestEmailChange(&recordingSender{}, "004217").RequestChange(ctx, command); err != nil {
+		t.Fatalf("RequestChange() error = %v", err)
+	}
+
+	if _, err := f.pool.Exec(ctx, `DELETE FROM auth.email_verification WHERE user_id = $1`, user.ID()); err != nil {
+		t.Fatalf("delete the request: %v", err)
+	}
+
+	if rows := f.emailChangeKeyRows(t, ctx, command.IdempotencyKey); len(rows) != 1 || rows[0].linked != nil {
+		t.Errorf("key rows = %+v, want the key kept with no link (ON DELETE SET NULL)", rows)
 	}
 }

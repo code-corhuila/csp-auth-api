@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -87,6 +88,36 @@ func (r *fakeEmailRequests) ConfirmEmailChange(_ context.Context, request *model
 	return nil
 }
 
+type fakeEmailKeys struct {
+	journal *journal
+	records map[string]out.EmailChangeKeyRecord
+	findErr error
+	saveErr error
+	// beforeSave runs when Save is called, to play a concurrent request that commits first.
+	beforeSave func()
+}
+
+func (k *fakeEmailKeys) Find(_ context.Context, key model.IdempotencyKey) (out.EmailChangeKeyRecord, bool, error) {
+	k.journal.record("find-key")
+	record, ok := k.records[key.String()]
+	return record, ok, k.findErr
+}
+
+func (k *fakeEmailKeys) Save(_ context.Context, key model.IdempotencyKey, record out.EmailChangeKeyRecord) error {
+	k.journal.record("save-key")
+	if k.beforeSave != nil {
+		k.beforeSave()
+	}
+	if k.saveErr != nil {
+		return k.saveErr
+	}
+	if _, exists := k.records[key.String()]; exists {
+		return model.ErrIdempotencyKeyTaken
+	}
+	k.records[key.String()] = record
+	return nil
+}
+
 type fakeCodes struct {
 	code string
 	err  error
@@ -131,6 +162,7 @@ type requestFixture struct {
 	useCase      *RequestEmailChange
 	users        *fakeRepository
 	requests     *fakeEmailRequests
+	keys         *fakeEmailKeys
 	sender       *fakeSender
 	transactions *fakeTransactions
 	journal      *journal
@@ -141,19 +173,22 @@ func newRequestFixture() *requestFixture {
 	f := &requestFixture{
 		users:        &fakeRepository{journal: j, taken: map[string]bool{}},
 		requests:     &fakeEmailRequests{journal: j},
+		keys:         &fakeEmailKeys{journal: j, records: map[string]out.EmailChangeKeyRecord{}},
 		sender:       &fakeSender{journal: j},
 		transactions: &fakeTransactions{journal: j},
 		journal:      j,
 	}
 	f.useCase = NewRequestEmailChange(RequestEmailChangePorts{
-		Users: f.users, Requests: f.requests, Codes: fakeCodes{code: "012345"}, Sender: f.sender,
-		IDs: &fakeIDs{next: []string{"request-1"}}, Clock: fakeClock{}, Transactions: f.transactions,
+		Users: f.users, Requests: f.requests, Keys: f.keys, Codes: fakeCodes{code: "012345"}, Sender: f.sender,
+		IDs: &fakeIDs{next: []string{"request-1", "request-2"}}, Clock: fakeClock{}, Transactions: f.transactions,
 	})
 	return f
 }
 
+const emailChangeKey = "key-0001-email"
+
 func requestCommand() in.RequestEmailChangeCommand {
-	return in.RequestEmailChangeCommand{UserID: "user-1", Email: " New.Address@Example.com "}
+	return in.RequestEmailChangeCommand{UserID: "user-1", Email: " New.Address@Example.com ", IdempotencyKey: emailChangeKey}
 }
 
 func TestRequestChangeStoresTheRequestAndSendsTheCodeInsideTheTransaction(t *testing.T) {
@@ -164,7 +199,7 @@ func TestRequestChangeStoresTheRequestAndSendsTheCodeInsideTheTransaction(t *tes
 	if err != nil {
 		t.Fatalf("RequestChange() error = %v", err)
 	}
-	wantSteps := []string{"begin", "lock-requests", "count", "supersede", "add", "send", "commit"}
+	wantSteps := []string{"begin", "lock-requests", "find-key", "count", "supersede", "add", "save-key", "send", "commit"}
 	if !reflect.DeepEqual(f.journal.steps, wantSteps) {
 		t.Errorf("steps = %v, want %v", f.journal.steps, wantSteps)
 	}
@@ -241,7 +276,7 @@ func TestRequestChangeTellsTheRemainingWaitFromTheClockOfThePort(t *testing.T) {
 func TestRequestChangeRejectsAnInvalidEmailBeforeOpeningTheTransaction(t *testing.T) {
 	f := newRequestFixture()
 
-	err := f.useCase.RequestChange(context.Background(), in.RequestEmailChangeCommand{UserID: "user-1", Email: "not-an-email"})
+	err := f.useCase.RequestChange(context.Background(), in.RequestEmailChangeCommand{UserID: "user-1", Email: "not-an-email", IdempotencyKey: emailChangeKey})
 
 	if !errors.Is(err, model.ErrInvalidEmail) || len(f.journal.steps) != 0 {
 		t.Errorf("error = %v, steps = %v, want ErrInvalidEmail and no step", err, f.journal.steps)
@@ -282,6 +317,8 @@ func TestRequestChangeStopsWhenAnyPortFails(t *testing.T) {
 		"count":    func(f *requestFixture) { f.requests.countErr = failure },
 		"add":      func(f *requestFixture) { f.requests.addErr = failure },
 		"generate": func(f *requestFixture) { f.useCase.ports.Codes = fakeCodes{err: failure} },
+		"find key": func(f *requestFixture) { f.keys.findErr = failure },
+		"save key": func(f *requestFixture) { f.keys.saveErr = failure },
 	}
 	for name, arrange := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -294,6 +331,148 @@ func TestRequestChangeStopsWhenAnyPortFails(t *testing.T) {
 				t.Errorf("error = %v, committed = %v, sent = %d, want the failure, a rollback and no delivery", err, f.transactions.committed, len(f.sender.deliveries))
 			}
 		})
+	}
+}
+
+func TestRequestChangeRejectsAnInvalidKeyBeforeOpeningTheTransaction(t *testing.T) {
+	f := newRequestFixture()
+	command := requestCommand()
+	command.IdempotencyKey = "short"
+
+	err := f.useCase.RequestChange(context.Background(), command)
+
+	if !errors.Is(err, model.ErrInvalidIdempotencyKey) || len(f.journal.steps) != 0 {
+		t.Errorf("error = %v, steps = %v, want ErrInvalidIdempotencyKey and no step", err, f.journal.steps)
+	}
+}
+
+func TestRequestChangeStoresTheKeyWithTheHashOfTheAccountAndAddressLinkedToTheRequest(t *testing.T) {
+	f := newRequestFixture()
+
+	_ = f.useCase.RequestChange(context.Background(), requestCommand())
+
+	email, _ := model.NewEmail("new.address@example.com")
+	want := out.EmailChangeKeyRecord{RequestHash: model.EmailChangeRequestHash("user-1", email), EmailVerificationID: "request-1"}
+	if got := f.keys.records[emailChangeKey]; got != want {
+		t.Errorf("record = %+v, want %+v", got, want)
+	}
+}
+
+func TestRequestChangeReplayAnswersWithoutCreatingSendingOrCounting(t *testing.T) {
+	f := newRequestFixture()
+	_ = f.useCase.RequestChange(context.Background(), requestCommand())
+	f.journal.steps = nil
+	f.requests.requestTimes = []time.Time{registeredAt.Add(-40 * time.Minute), registeredAt.Add(-20 * time.Minute), registeredAt.Add(-5 * time.Minute)}
+
+	err := f.useCase.RequestChange(context.Background(), requestCommand())
+
+	if err != nil {
+		t.Fatalf("replay error = %v, want nil: the limit is not counted for a replay", err)
+	}
+	if want := []string{"begin", "lock-requests", "find-key", "commit"}; !reflect.DeepEqual(f.journal.steps, want) {
+		t.Errorf("steps = %v, want %v", f.journal.steps, want)
+	}
+	if len(f.requests.added) != 1 || len(f.sender.deliveries) != 1 {
+		t.Errorf("added = %d, sent = %d, want the first request only", len(f.requests.added), len(f.sender.deliveries))
+	}
+}
+
+func TestRequestChangeReplayAnswersEvenWhenTheAddressIsTakenByNow(t *testing.T) {
+	f := newRequestFixture()
+	_ = f.useCase.RequestChange(context.Background(), requestCommand())
+	f.users.taken["new.address@example.com"] = true
+
+	if err := f.useCase.RequestChange(context.Background(), requestCommand()); err != nil {
+		t.Errorf("replay error = %v, want nil", err)
+	}
+}
+
+func TestRequestChangeWithTheKeyOfAnotherAddressIsAConflictAndWritesNothing(t *testing.T) {
+	f := newRequestFixture()
+	_ = f.useCase.RequestChange(context.Background(), requestCommand())
+	other := requestCommand()
+	other.Email = "other.address@example.com"
+
+	err := f.useCase.RequestChange(context.Background(), other)
+
+	if !errors.Is(err, model.ErrIdempotencyKeyConflict) || len(f.requests.added) != 1 || len(f.sender.deliveries) != 1 {
+		t.Errorf("error = %v, added = %d, sent = %d, want ErrIdempotencyKeyConflict and nothing more", err, len(f.requests.added), len(f.sender.deliveries))
+	}
+}
+
+func TestRequestChangeWithTheKeyOfAnotherAccountIsAConflict(t *testing.T) {
+	f := newRequestFixture()
+	_ = f.useCase.RequestChange(context.Background(), requestCommand())
+	other := requestCommand()
+	other.UserID = "user-2"
+
+	err := f.useCase.RequestChange(context.Background(), other)
+
+	if !errors.Is(err, model.ErrIdempotencyKeyConflict) || len(f.sender.deliveries) != 1 {
+		t.Errorf("error = %v, sent = %d, want ErrIdempotencyKeyConflict and no delivery", err, len(f.sender.deliveries))
+	}
+}
+
+func TestRequestChangeRefusedRequestsRecordNoKey(t *testing.T) {
+	cases := map[string]func(*requestFixture){
+		"address taken": func(f *requestFixture) { f.users.taken["new.address@example.com"] = true },
+		"limit reached": func(f *requestFixture) {
+			f.requests.requestTimes = []time.Time{registeredAt.Add(-40 * time.Minute), registeredAt.Add(-20 * time.Minute), registeredAt.Add(-5 * time.Minute)}
+		},
+	}
+	for name, arrange := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newRequestFixture()
+			arrange(f)
+
+			err := f.useCase.RequestChange(context.Background(), requestCommand())
+
+			if err == nil || len(f.keys.records) != 0 || slices.Contains(f.journal.steps, "save-key") {
+				t.Errorf("error = %v, keys = %v, steps = %v, want a refusal and no key", err, f.keys.records, f.journal.steps)
+			}
+		})
+	}
+}
+
+func TestRequestChangeSavesTheKeyBeforeSendingSoALostRaceSendsNothing(t *testing.T) {
+	f := newRequestFixture()
+	f.keys.saveErr = model.ErrIdempotencyKeyTaken
+
+	_ = f.useCase.RequestChange(context.Background(), requestCommand())
+
+	if slices.Contains(f.journal.steps, "send") || len(f.sender.deliveries) != 0 {
+		t.Errorf("steps = %v, want no send when the key is lost", f.journal.steps)
+	}
+}
+
+func TestRequestChangeLosingTheRaceOnTheKeyRetriesOnceAndSeesTheWinner(t *testing.T) {
+	f := newRequestFixture()
+	email, _ := model.NewEmail("new.address@example.com")
+	f.keys.beforeSave = func() {
+		f.keys.records[emailChangeKey] = out.EmailChangeKeyRecord{RequestHash: model.EmailChangeRequestHash("user-1", email), EmailVerificationID: "winner"}
+	}
+
+	err := f.useCase.RequestChange(context.Background(), requestCommand())
+
+	if err != nil || len(f.sender.deliveries) != 0 {
+		t.Errorf("error = %v, sent = %d, want a replay of the winner and no delivery", err, len(f.sender.deliveries))
+	}
+	want := []string{"begin", "lock-requests", "find-key", "count", "supersede", "add", "save-key", "rollback", "begin", "lock-requests", "find-key", "commit"}
+	if !reflect.DeepEqual(f.journal.steps, want) {
+		t.Errorf("steps = %v, want %v", f.journal.steps, want)
+	}
+}
+
+func TestRequestChangeLosingTheRaceToAnotherRequestIsAConflict(t *testing.T) {
+	f := newRequestFixture()
+	f.keys.beforeSave = func() {
+		f.keys.records[emailChangeKey] = out.EmailChangeKeyRecord{RequestHash: "another-request", EmailVerificationID: "winner"}
+	}
+
+	err := f.useCase.RequestChange(context.Background(), requestCommand())
+
+	if !errors.Is(err, model.ErrIdempotencyKeyConflict) {
+		t.Errorf("error = %v, want ErrIdempotencyKeyConflict", err)
 	}
 }
 
@@ -492,7 +671,7 @@ func TestRequestChangeReportsAnAccountThatIsGoneAndWritesNothing(t *testing.T) {
 
 func TestRequestChangeRejectsAnEmailLongerThanTheDatabaseStoresBeforeOpeningATransaction(t *testing.T) {
 	f := newRequestFixture()
-	command := in.RequestEmailChangeCommand{UserID: "user-1", Email: strings.Repeat("a", model.MaxEmailLength) + "@example.com"}
+	command := in.RequestEmailChangeCommand{UserID: "user-1", Email: strings.Repeat("a", model.MaxEmailLength) + "@example.com", IdempotencyKey: emailChangeKey}
 
 	err := f.useCase.RequestChange(context.Background(), command)
 
