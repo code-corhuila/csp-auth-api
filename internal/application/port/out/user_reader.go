@@ -23,6 +23,6 @@ type UserListPage struct {
 // UserReader reads users for lists (pattern CQRS read side), apart from the aggregate repository.
 type UserReader interface {
 	// SearchUsers returns the page of users whose email starts with prefix (all users when prefix is
-	// the zero value), ordered by email and then id. Soft-deleted users are not read.
+	// the zero value), ordered from newest to oldest (created_at, then id, both descending). Soft-deleted users are not read.
 	SearchUsers(ctx context.Context, prefix model.EmailPrefix, page model.Page) (UserListPage, error)
 }
