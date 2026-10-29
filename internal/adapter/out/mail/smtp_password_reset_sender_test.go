@@ -67,9 +67,13 @@ func newResetSender(t *testing.T, settings Settings, logs io.Writer) *SMTPPasswo
 	return sender
 }
 
+// deliveryGuard only catches a message that never arrives: the wait ends as soon as the relay has it, and it is longer
+// than the delivery timeout of the sender so a loaded machine cannot fail the test before the sender gives up.
+const deliveryGuard = 30 * time.Second
+
 func waitForMails(t *testing.T, server *fakeServer, count int) []receivedMail {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(deliveryGuard)
 	for time.Now().Before(deadline) {
 		if mails := server.mails(); len(mails) >= count {
 			return mails
@@ -162,7 +166,7 @@ func TestAFailedDeliveryIsLoggedWithTheUserAndTheClassOnly(t *testing.T) {
 		t.Fatalf("Send() error = %v, want the failure to be the business of the worker", err)
 	}
 
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(deliveryGuard)
 	for !strings.Contains(logs.String(), "errorClass=rejected") && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}

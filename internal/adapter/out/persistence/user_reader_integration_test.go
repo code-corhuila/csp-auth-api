@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -47,13 +48,27 @@ func pageOf(t *testing.T, number, limit int) model.Page {
 	return page
 }
 
-func TestSearchUsersPagesByEmailThenIdWithItsActiveRoles(t *testing.T) {
+func TestSearchUsersPagesNewestFirstWithItsActiveRoles(t *testing.T) {
 	f, ctx := newFixture(t), context.Background()
 	f.lockAdministrators(t, ctx)
 	reader := NewUserReader(f.pool)
 	prefix := "pg" + strings.ReplaceAll(newUUID(t)[:8], "-", "")
-	users := f.registerWithPrefix(t, ctx, prefix, "1", "2", "3")
-	if _, err := f.pool.Exec(ctx, `INSERT INTO auth.user_role (user_id, role_id) SELECT $1, id FROM auth.role WHERE name = 'ADMIN'`, users[1].ID()); err != nil {
+	registered := f.registerWithPrefix(t, ctx, prefix, "1", "2", "3", "4")
+	// The email order (1, 2, 3, 4) differs from the creation order on purpose. Users 3 and 4 share
+	// their instant, so only the id breaks the tie.
+	base := time.Now().UTC().Truncate(time.Second)
+	instants := []time.Time{base.Add(3 * time.Hour), base, base.Add(time.Hour), base.Add(time.Hour)}
+	for position, user := range registered {
+		if _, err := f.pool.Exec(ctx, `UPDATE auth.app_user SET created_at = $2 WHERE id = $1`, user.ID(), instants[position]); err != nil {
+			t.Fatalf("set created_at error = %v", err)
+		}
+	}
+	tied := []*model.User{registered[2], registered[3]}
+	if tied[0].ID() < tied[1].ID() {
+		tied[0], tied[1] = tied[1], tied[0]
+	}
+	users := []*model.User{registered[0], tied[0], tied[1], registered[1]}
+	if _, err := f.pool.Exec(ctx, `INSERT INTO auth.user_role (user_id, role_id) SELECT $1, id FROM auth.role WHERE name = 'ADMIN'`, users[0].ID()); err != nil {
 		t.Fatalf("grant ADMIN error = %v", err)
 	}
 
@@ -70,22 +85,22 @@ func TestSearchUsersPagesByEmailThenIdWithItsActiveRoles(t *testing.T) {
 		t.Fatalf("SearchUsers() page 3 error = %v", err)
 	}
 
-	if first.Total != 3 || second.Total != 3 || beyond.Total != 3 || len(beyond.Items) != 0 {
-		t.Errorf("totals = %d/%d/%d and %d items beyond the end, want 3/3/3 and none", first.Total, second.Total, beyond.Total, len(beyond.Items))
+	if first.Total != 4 || second.Total != 4 || beyond.Total != 4 || len(beyond.Items) != 0 {
+		t.Errorf("totals = %d/%d/%d and %d items beyond the end, want 4/4/4 and none", first.Total, second.Total, beyond.Total, len(beyond.Items))
 	}
-	if len(first.Items) != 2 || len(second.Items) != 1 {
+	if len(first.Items) != 2 || len(second.Items) != 2 {
 		t.Fatalf("page sizes = %d and %d, want 2 and 1", len(first.Items), len(second.Items))
 	}
 	for position, item := range append(first.Items, second.Items...) {
 		if item.ID != users[position].ID() || item.Email != users[position].Email().String() || item.Name != "Ana Perez" {
-			t.Errorf("item %d = %+v, want %s ordered by email", position, item, users[position].Email())
+			t.Errorf("item %d = %+v, want %s, newest first (ties by id descending)", position, item, users[position].Email())
 		}
 	}
-	if want := []model.Role{model.RoleAdmin, model.RoleClient}; !reflect.DeepEqual(first.Items[1].Roles, want) {
-		t.Errorf("roles of the administrator = %v, want %v", first.Items[1].Roles, want)
+	if want := []model.Role{model.RoleAdmin, model.RoleClient}; !reflect.DeepEqual(first.Items[0].Roles, want) {
+		t.Errorf("roles of the administrator = %v, want %v", first.Items[0].Roles, want)
 	}
-	if want := []model.Role{model.RoleClient}; !reflect.DeepEqual(first.Items[0].Roles, want) {
-		t.Errorf("roles of the client = %v, want %v", first.Items[0].Roles, want)
+	if want := []model.Role{model.RoleClient}; !reflect.DeepEqual(first.Items[1].Roles, want) {
+		t.Errorf("roles of the client = %v, want %v", first.Items[1].Roles, want)
 	}
 }
 
