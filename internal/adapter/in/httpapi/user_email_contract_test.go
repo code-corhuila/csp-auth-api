@@ -31,6 +31,7 @@ func TestRequestEmailChangeResponsesFulfillTheContract(t *testing.T) {
 		"401 no token":          {&fakeUserAuthorizer{err: model.ErrAccessTokenInvalid}, &fakeRequestEmailChange{}, traced(requestAttempt(emailBody))},
 		"401 revoked token":     {&fakeUserAuthorizer{err: model.ErrAccessTokenInvalid}, &fakeRequestEmailChange{}, traced(requestAttempt(emailBody))},
 		"401 account is gone":   {&fakeUserAuthorizer{}, &fakeRequestEmailChange{err: model.ErrUserNotFound}, traced(requestAttempt(emailBody))},
+		"409 key conflict":      {&fakeUserAuthorizer{}, &fakeRequestEmailChange{err: model.ErrIdempotencyKeyConflict}, traced(requestAttempt(emailBody))},
 		"409 email registered":  {&fakeUserAuthorizer{}, &fakeRequestEmailChange{err: model.ErrEmailAlreadyRegistered}, traced(requestAttempt(emailBody))},
 		"429 too many requests": {&fakeUserAuthorizer{}, &fakeRequestEmailChange{err: &model.EmailChangeRateLimitedError{RetryAfter: 1500 * time.Millisecond}}, traced(requestAttempt(emailBody))},
 		"500 unexpected":        {&fakeUserAuthorizer{}, &fakeRequestEmailChange{err: errors.New("driver failure")}, traced(requestAttempt(emailBody))},

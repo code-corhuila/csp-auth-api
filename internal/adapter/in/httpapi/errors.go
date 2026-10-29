@@ -199,6 +199,8 @@ func translateRequestEmailChangeError(w http.ResponseWriter, traceID string, err
 		writeJSON(w, http.StatusConflict, errorResponse{
 			Error: codeEmailRegistered, Message: "the email is already registered", TraceID: traceID,
 		})
+	case errors.Is(err, model.ErrIdempotencyKeyConflict):
+		writeIdempotencyConflict(w, traceID)
 	case errors.Is(err, model.ErrTooManyEmailChangeRequests):
 		w.Header().Set("Retry-After", retryAfterSeconds(err))
 		writeJSON(w, http.StatusTooManyRequests, errorResponse{

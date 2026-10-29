@@ -9,6 +9,12 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Changed
 
+- `PATCH /me/email` stores its `Idempotency-Key` (Norma 5.3.8, ADR-034) in `auth.email_change_idempotency_key` with the SHA-256 of the user id and the
+  normalised new email, in the same transaction as the pending request (linked to it) and only when a request is really created: a replay answers `202`
+  again, creates and sends nothing and does not count against the limit of three per hour; the same key with another email or by another user is
+  `409 IDEMPOTENCY_KEY_CONFLICT`; concurrent requests with the same key replay. The purge (ADR-030) also deletes these keys after seven days.
+  HU-AUTH-006, contract 1.14.0; needs the migrations V036 to V040 of `csp-auth-db`. `POST /me/email/verify` still validates the key and does not store it.
+  Domain, use case, adapter, purge, contract, integration and end-to-end tests.
 - One root wrapper in `httpapi.NewHandler` (Norma 5.3.5, 5.3.9, Annex C): the correlation id is decided once per request, returned in `X-Correlation-Id` on
   every response (health, ready, jwks, 404, 405 and panics included) and stored in the request context; an unknown route answers `404 NOT_FOUND` and a
   wrong method `405 METHOD_NOT_ALLOWED` with `Allow`, both with the common envelope instead of the plain text of `net/http`; a panic answers
