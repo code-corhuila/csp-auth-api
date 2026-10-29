@@ -92,7 +92,7 @@ func (r *RefreshSession) revokeSessionsOnReuse(ctx context.Context, hash string)
 		return
 	}
 	if err != nil {
-		slog.Error("refresh token reuse check failed", "error", err)
+		slog.ErrorContext(ctx, "refresh token reuse check failed", "error", err)
 		return
 	}
 	now := r.clock.Now()
@@ -101,8 +101,8 @@ func (r *RefreshSession) revokeSessionsOnReuse(ctx context.Context, hash string)
 	}
 	revoked, err := r.refreshTokens.RevokeAllActiveByUser(ctx, token.UserID(), now)
 	if err != nil {
-		slog.Error("refresh token reuse revocation failed", "userId", token.UserID(), "tokenId", token.ID(), "error", err)
+		slog.ErrorContext(ctx, "refresh token reuse revocation failed", "userId", token.UserID(), "tokenId", token.ID(), "error", err)
 		return
 	}
-	slog.Warn("refresh token reuse detected, sessions revoked", "userId", token.UserID(), "tokenId", token.ID(), "revokedTokens", revoked)
+	slog.WarnContext(ctx, "refresh token reuse detected, sessions revoked", "userId", token.UserID(), "tokenId", token.ID(), "revokedTokens", revoked)
 }

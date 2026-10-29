@@ -39,7 +39,7 @@ func (b *attemptsBreaker) call(ctx context.Context, operation func(context.Conte
 	// fails is answered as paused too, with its cause in the chain: the WARN of the pause is already written, so the use
 	// case does not write a second one for it.
 	if err != nil && ctx.Err() == nil {
-		b.openPause(err)
+		b.openPause(ctx, err)
 		return fmt.Errorf("%w: %w", b.paused, err)
 	}
 	return err
@@ -53,7 +53,7 @@ func (b *attemptsBreaker) isPaused() bool {
 
 // openPause starts a pause and writes its WARN, once: calls that were already running when the pause opened find it open and
 // write nothing. The log never carries the subject of the limit.
-func (b *attemptsBreaker) openPause(cause error) {
+func (b *attemptsBreaker) openPause(ctx context.Context, cause error) {
 	b.mu.Lock()
 	now := b.clock.Now()
 	if now.Before(b.pausedUntil) {
@@ -62,5 +62,5 @@ func (b *attemptsBreaker) openPause(cause error) {
 	}
 	b.pausedUntil = now.Add(b.pause)
 	b.mu.Unlock()
-	slog.Warn(b.warning, "pause", b.pause.String(), "error", cause)
+	slog.WarnContext(ctx, b.warning, "pause", b.pause.String(), "error", cause)
 }

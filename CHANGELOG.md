@@ -11,6 +11,10 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Changed
 
+- Structured logging with the correlation id (Norma 5.3.9, Annex C): `main` sets the JSON logger as the default one, a handler wrapper
+  (`internal/platform/logging`) adds `traceId` to every record logged with the context of a request, the use cases, the Redis adapters and the mail senders
+  log with `slog.XContext`, and the root wrapper writes one access line per request (`method`, `route`, `status`, `durationMs`, `traceId`) without
+  tokens, `Idempotency-Key`, passwords or addresses. Tests of the handler, the access line and a use case log.
 - One root wrapper in `httpapi.NewHandler` (Norma 5.3.5, 5.3.9, Annex C): the correlation id is decided once per request, returned in `X-Correlation-Id` on
   every response (health, ready, jwks, 404, 405 and panics included) and stored in the request context; an unknown route answers `404 NOT_FOUND` and a
   wrong method `405 METHOD_NOT_ALLOWED` with `Allow`, both with the common envelope instead of the plain text of `net/http`; a panic answers
