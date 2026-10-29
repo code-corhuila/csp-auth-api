@@ -108,7 +108,7 @@ func TestRefreshRejectsUnreadableBodies(t *testing.T) {
 		"trailing data":      {body: refreshBody() + `{}`},
 		"empty body":         {body: ``},
 		"wrong content type": {body: refreshBody(), contentType: "text/plain"},
-		"oversized body":     {body: `{"refreshToken":"` + strings.Repeat("a", maxBodyBytes) + `"}`},
+		"oversized body":     {body: `{"refreshToken":"` + strings.Repeat("a", int(fallbackLimits.MaxBodyBytes)) + `"}`},
 		"token not a string": {body: `{"refreshToken":42}`},
 	}
 	for name, a := range cases {

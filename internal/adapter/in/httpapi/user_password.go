@@ -96,7 +96,7 @@ func translateChangePasswordError(w http.ResponseWriter, traceID string, err err
 		writeUnauthorized(w, traceID)
 	default:
 		slog.Error("change password failed", "traceId", traceID, "error", err)
-		writeInternal(w, traceID)
+		writeInternal(w, traceID, err)
 	}
 }
 

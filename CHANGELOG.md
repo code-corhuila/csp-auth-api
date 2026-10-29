@@ -19,6 +19,14 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 - `GET /api/v1/auth/users` lists the accounts from newest to oldest (`created_at DESC, id DESC`) instead of by email, as norm 5.3.6 asks; the email
   prefix search and the paging are unchanged. HU-AUTH-006, ADR-031 amendment, contract 1.14.0. Integration test of the order and of the page
   boundaries with accounts created at different instants and one tie.
+- Explicit request limits in the composition root (Norma 5.3.10, audit of Annex C): `APP_AUTH_HTTP_REQUEST_TIMEOUT` (10s, at most 60s) gives every
+  request a deadline, so a request that waits for a connection of a saturated pool ends with `503 SERVICE_UNAVAILABLE` (envelope, `Retry-After: 1`)
+  instead of queueing until the client leaves; `APP_AUTH_HTTP_MAX_HEADER_BYTES` (65536) sets `MaxHeaderBytes` of the server; the body limits
+  (`APP_AUTH_MAX_BODY_BYTES` 1048576, `APP_AUTH_PASSWORD_RESET_MAX_BODY_BYTES` 4096) and the detached deadline of logout and role change
+  (`APP_AUTH_DETACHED_DEADLINE` 10s) moved from constants into `internal/config`, with the same defaults, validated at start. `POST /register`
+  and `POST /login` have a bulkhead (`APP_AUTH_REGISTER_MAX_CONCURRENCY`, `APP_AUTH_LOGIN_MAX_CONCURRENCY`, 8, below the pool, 1s wait): a full one
+  answers `429 RATE_LIMITED` with `Retry-After: 1` after the body is validated and before bcrypt. `.env.example`, `deploy/compose.yml` and the README
+  table document them. Configuration, handler, wiring and integration tests (pool of one connection).
 - `POST /forgot-password` requires `Idempotency-Key` (8 to 128 characters, `400 VALIDATION_ERROR` on the header otherwise) and stores it in
   `auth.password_reset_idempotency_key` with the SHA-256 of the normalised email, in the same transaction as the token (linked to it) and, for the
   cases that create no token, alone: a replay answers the same silent `202` and creates and sends nothing, the same key with another email is

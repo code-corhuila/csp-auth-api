@@ -11,10 +11,11 @@ const (
 	headerIdempotencyKey = "Idempotency-Key"
 )
 
-// WithRegisterUser publishes the use case at POST /register (HU-AUTH-001), public.
-func WithRegisterUser(useCase in.RegisterUser) Option {
+// WithRegisterUser publishes the use case at POST /register (HU-AUTH-001), public. The route hashes with bcrypt, so gate
+// caps how many requests run at once (Norma 5.3.10): one that finds no free slot is refused with 429 before the hash.
+func WithRegisterUser(useCase in.RegisterUser, gate *Bulkhead) Option {
 	return func(mux *http.ServeMux) {
-		mux.HandleFunc("POST "+BasePath+"/register", register(useCase))
+		mux.HandleFunc("POST "+BasePath+"/register", register(useCase, gate))
 	}
 }
 
@@ -44,7 +45,7 @@ type authResponse struct {
 	User         userSummary `json:"user"`
 }
 
-func register(useCase in.RegisterUser) http.HandlerFunc {
+func register(useCase in.RegisterUser, gate *Bulkhead) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		traceID := correlationID(r)
 		w.Header().Set(headerCorrelationID, traceID)
@@ -58,6 +59,12 @@ func register(useCase in.RegisterUser) http.HandlerFunc {
 			writeValidation(w, traceID, problems)
 			return
 		}
+
+		release, admitted := admit(w, r, gate, traceID, "register request")
+		if !admitted {
+			return
+		}
+		defer release()
 
 		result, err := useCase.Register(r.Context(), in.RegisterUserCommand{
 			IdempotencyKey: key,
