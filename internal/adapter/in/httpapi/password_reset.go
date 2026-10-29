@@ -7,9 +7,6 @@ import (
 	"github.com/code-corhuila/csp-auth-api/internal/domain/model"
 )
 
-// maxPasswordResetBodyBytes is the limit of the body of the two password reset routes (ADR-050, Norma 5.3.10).
-const maxPasswordResetBodyBytes = 4 << 10
-
 // WithPasswordReset publishes the two steps of the password reset (HU-AUTH-006, ADR-050) at POST /forgot-password and
 // POST /reset-password, public. Only forgot-password takes an Idempotency-Key (Norma 5.3.8): reset-password creates nothing. Each route has its own gate: forgotGate caps the requests
 // that reach the database and resetGate the ones that also hash a password, so a flood of one cannot starve the other.
@@ -57,7 +54,7 @@ func forgotPassword(useCase in.RequestPasswordReset, gate *Bulkhead) http.Handle
 		w.Header().Set(headerCorrelationID, traceID)
 		w.Header().Set("Cache-Control", "no-store")
 
-		body, unreadable := decodeBodyWithin[forgotPasswordRequest](w, r, maxPasswordResetBodyBytes)
+		body, unreadable := decodeBodyWithin[forgotPasswordRequest](w, r, limitsOf(r.Context()).PasswordResetMaxBodyBytes)
 		key := r.Header.Get(headerIdempotencyKey)
 		checks := []check{{headerIdempotencyKey, errorOf(model.NewIdempotencyKey(key))}}
 		if unreadable == nil {
@@ -90,7 +87,7 @@ func resetPassword(useCase in.ResetPassword, gate *Bulkhead) http.HandlerFunc {
 		w.Header().Set(headerCorrelationID, traceID)
 		w.Header().Set("Cache-Control", "no-store")
 
-		body, unreadable := decodeBodyWithin[resetPasswordRequest](w, r, maxPasswordResetBodyBytes)
+		body, unreadable := decodeBodyWithin[resetPasswordRequest](w, r, limitsOf(r.Context()).PasswordResetMaxBodyBytes)
 		var checks []check
 		if unreadable == nil {
 			checks = append(checks,
