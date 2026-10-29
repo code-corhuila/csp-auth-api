@@ -18,7 +18,7 @@ var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 const (
 	countUsersSQL = `SELECT count(*) FROM auth.app_user WHERE deleted_at IS NULL AND email LIKE $1`
 	pageUsersSQL  = `SELECT id::text, email, name FROM auth.app_user WHERE deleted_at IS NULL AND email LIKE $1
-		 ORDER BY email, id LIMIT $2 OFFSET $3`
+		 ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3`
 )
 
 // UserReader implements out.UserReader over auth.app_user and auth.user_role.
