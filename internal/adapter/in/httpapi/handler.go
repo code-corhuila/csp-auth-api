@@ -21,7 +21,7 @@ func WithPublicKeys(keys in.PublicKeys) Option {
 	}
 }
 
-// NewHandler returns the router of the service.
+// NewHandler returns the router of the service, wrapped by the root step (correlation id, error envelope, recover).
 func NewHandler(options ...Option) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+BasePath+"/health", health)
@@ -29,7 +29,7 @@ func NewHandler(options ...Option) http.Handler {
 	for _, option := range options {
 		option(mux)
 	}
-	return mux
+	return root(mux)
 }
 
 func health(w http.ResponseWriter, _ *http.Request) {
