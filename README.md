@@ -295,6 +295,18 @@ which exposes the port on the `platform` network without publishing it: only the
 Copy `.env.example` to `.env` for local values and never commit `.env`. The file lists first the variables the
 service reads (HTTP, database, bcrypt, tokens and Redis).
 
+## Common envelope and correlation id
+
+One step wraps the whole router (`httpapi.NewHandler`, Norma 5.3.5 and 5.3.9), so the rules hold for every route, the next one included:
+
+- Every response, health, jwks, errors and panics included, carries `X-Correlation-Id`. The service reuses the received header when it is 1 to 128
+  printable ASCII characters and generates a version 4 UUID otherwise; the same value is the `traceId` of the error envelope and travels in the
+  request context (`httpapi.CorrelationIDFrom`).
+- An unknown route answers `404 NOT_FOUND` and a known path with another method answers `405 METHOD_NOT_ALLOWED` with the `Allow` header, both with the
+  common envelope `{error, message, traceId}` and not the plain text of `net/http`.
+- A panic in a handler answers `500 INTERNAL_ERROR` with the same envelope; the cause is written only to the log. If the response had already
+  started, the answer already sent is kept.
+
 ## Own profile
 
 `GET /api/v1/auth/me` and `PATCH /api/v1/auth/me` (HU-AUTH-007, ADR-051) read and edit the personal data of the caller. They need an

@@ -17,6 +17,10 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   and `POST /login` have a bulkhead (`APP_AUTH_REGISTER_MAX_CONCURRENCY`, `APP_AUTH_LOGIN_MAX_CONCURRENCY`, 8, below the pool, 1s wait): a full one
   answers `429 RATE_LIMITED` with `Retry-After: 1` after the body is validated and before bcrypt. `.env.example`, `deploy/compose.yml` and the README
   table document them. Configuration, handler, wiring and integration tests (pool of one connection).
+- One root wrapper in `httpapi.NewHandler` (Norma 5.3.5, 5.3.9, Annex C): the correlation id is decided once per request, returned in `X-Correlation-Id` on
+  every response (health, ready, jwks, 404, 405 and panics included) and stored in the request context; an unknown route answers `404 NOT_FOUND` and a
+  wrong method `405 METHOD_NOT_ALLOWED` with `Allow`, both with the common envelope instead of the plain text of `net/http`; a panic answers
+  `500 INTERNAL_ERROR` with the envelope and the cause only in the log. The existing routes keep their behaviour. Unit tests of each case.
 - `GET /api/v1/auth/users` lists the accounts from newest to oldest (`created_at DESC, id DESC`) instead of by email, as norm 5.3.6 asks; the email
   prefix search and the paging are unchanged. HU-AUTH-006, ADR-031 amendment, contract 1.14.0. Integration test of the order and of the page
   boundaries with accounts created at different instants and one tie.
