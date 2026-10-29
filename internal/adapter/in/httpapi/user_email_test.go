@@ -101,7 +101,7 @@ func TestRequestEmailChangeAnswers202WithoutBodyForTheAccountOfTheToken(t *testi
 	if rec.Code != http.StatusAccepted || rec.Body.Len() != 0 || rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("X-Correlation-Id") == "" {
 		t.Fatalf("status = %d, body = %q, headers = %v, want 202, no body, no-store and a correlation id", rec.Code, rec.Body, rec.Header())
 	}
-	if want := (in.RequestEmailChangeCommand{UserID: "admin-1", Email: "new.address@example.com"}); useCase.command != want {
+	if want := (in.RequestEmailChangeCommand{UserID: "admin-1", Email: "new.address@example.com", IdempotencyKey: emailKey}); useCase.command != want {
 		t.Errorf("command = %+v, want %+v", useCase.command, want)
 	}
 	if authorizer.permission != "profile:update:self" {
@@ -154,6 +154,7 @@ func TestRequestEmailChangeMapsTheErrorsOfTheUseCase(t *testing.T) {
 	}{
 		"invalid email":    {model.ErrInvalidEmail, http.StatusBadRequest, "VALIDATION_ERROR"},
 		"email registered": {model.ErrEmailAlreadyRegistered, http.StatusConflict, "EMAIL_ALREADY_REGISTERED"},
+		"key conflict":     {model.ErrIdempotencyKeyConflict, http.StatusConflict, "IDEMPOTENCY_KEY_CONFLICT"},
 		"too many":         {model.ErrTooManyEmailChangeRequests, http.StatusTooManyRequests, "RATE_LIMITED"},
 		"unexpected":       {errors.New("driver failure: password=hunter2"), http.StatusInternalServerError, "INTERNAL_ERROR"},
 	}

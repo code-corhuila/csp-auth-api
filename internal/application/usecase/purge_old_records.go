@@ -18,15 +18,16 @@ type PurgeOldRecords struct {
 	emailVerifications out.PurgeableRecords
 	passwordResets     out.PurgeableRecords
 	passwordResetKeys  out.PurgeableRecords
+	emailChangeKeys    out.PurgeableRecords
 	retention          model.RetentionPolicy
 	clock              out.Clock
 }
 
 var _ in.PurgeOldRecords = (*PurgeOldRecords)(nil)
 
-// NewPurgeOldRecords wires the use case with the six tables it purges and the retention of
+// NewPurgeOldRecords wires the use case with the seven tables it purges and the retention of
 // ADR-030.
-func NewPurgeOldRecords(outbox, refreshTokens, idempotencyKeys, emailVerifications, passwordResets, passwordResetKeys out.PurgeableRecords, clock out.Clock) *PurgeOldRecords {
+func NewPurgeOldRecords(outbox, refreshTokens, idempotencyKeys, emailVerifications, passwordResets, passwordResetKeys, emailChangeKeys out.PurgeableRecords, clock out.Clock) *PurgeOldRecords {
 	return &PurgeOldRecords{
 		outbox:             outbox,
 		refreshTokens:      refreshTokens,
@@ -34,6 +35,7 @@ func NewPurgeOldRecords(outbox, refreshTokens, idempotencyKeys, emailVerificatio
 		emailVerifications: emailVerifications,
 		passwordResets:     passwordResets,
 		passwordResetKeys:  passwordResetKeys,
+		emailChangeKeys:    emailChangeKeys,
 		retention:          model.DefaultRetentionPolicy(),
 		clock:              clock,
 	}
@@ -47,7 +49,7 @@ type purgeStep struct {
 }
 
 // Purge deletes old rows in the order outbox events, refresh tokens, idempotency keys, email
-// verification requests, password resets, password reset keys, at most
+// verification requests, password resets, password reset keys, email change keys, at most
 // the batch size in total: each table gets what the previous ones left of the batch. HasMore is
 // true while any table still holds a row older than its retention. Repeating the call only finds
 // what is left, so it is idempotent.
@@ -64,6 +66,7 @@ func (p *PurgeOldRecords) Purge(ctx context.Context, command in.PurgeOldRecordsC
 		{"email verifications", p.emailVerifications, now.Add(-p.retention.EmailVerifications)},
 		{"password resets", p.passwordResets, now.Add(-p.retention.PasswordResets)},
 		{"password reset keys", p.passwordResetKeys, now.Add(-p.retention.IdempotencyKeys)},
+		{"email change keys", p.emailChangeKeys, now.Add(-p.retention.IdempotencyKeys)},
 	}
 
 	remaining, processed := int(batch), 0

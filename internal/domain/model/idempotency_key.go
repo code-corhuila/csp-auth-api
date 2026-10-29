@@ -41,6 +41,15 @@ func RegistrationRequestHash(email Email, name Name, phone Phone, address Addres
 	return hex.EncodeToString(digest[:])
 }
 
+// EmailChangeRequestHash is the SHA-256 hex digest of the account and the normalised new email of an
+// email change request, used to tell a retry from another request that reuses the key (HU-AUTH-006,
+// ADR-034). The account is part of it, so another user cannot replay the key. The canonical form is the
+// two values joined by a line feed, which neither an id nor an email contains. Nothing else is stored.
+func EmailChangeRequestHash(userID string, email Email) string {
+	digest := sha256.Sum256([]byte(userID + "\n" + email.String()))
+	return hex.EncodeToString(digest[:])
+}
+
 // PasswordResetRequestHash is the SHA-256 hex digest of the normalised email of a password reset
 // request, used to tell a retry from a request for another address that reuses the key (HU-AUTH-006,
 // ADR-050). The email is already lowercase and trimmed (Email). Nothing else is stored with the key.
