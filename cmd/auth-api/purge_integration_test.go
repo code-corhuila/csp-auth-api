@@ -81,14 +81,14 @@ func TestPurgeEndToEndAgainstTheDatabase(t *testing.T) {
 		}
 	})
 
-	t.Run("an access token of a user is 403", func(t *testing.T) {
+	t.Run("an access token of a user is 401: its audience is csp-api, not csp-internal", func(t *testing.T) {
 		ids := system.UUIDGenerator{}
 		email := "e2e-purge-user-" + ids.NewID() + "@example.com"
 		signUp := fmt.Sprintf(`{"email":%q,"password":%q,"name":"Ada Lovelace","phone":"+573001234567","address":"Calle 1 # 2-3"}`, email, e2ePassword)
 		_, payload := register(t, server.URL, ids.NewID(), signUp)
 		access, _ := payload["accessToken"].(string)
-		if status, body := purgeCall(t, server.URL, access, `{}`); status != http.StatusForbidden {
-			t.Errorf("status = %d, body = %v, want 403", status, body)
+		if status, body := purgeCall(t, server.URL, access, `{}`); status != http.StatusUnauthorized || body["error"] != "UNAUTHORIZED" {
+			t.Errorf("status = %d, body = %v, want 401 UNAUTHORIZED", status, body)
 		}
 	})
 
