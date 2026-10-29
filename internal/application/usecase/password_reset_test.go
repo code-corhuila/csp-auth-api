@@ -98,6 +98,35 @@ func (r *fakeResets) MarkUsed(_ context.Context, reset *model.PasswordReset) err
 	return nil
 }
 
+type fakeResetKeys struct {
+	journal *journal
+	records map[string]out.PasswordResetKeyRecord
+	saveErr error
+	// beforeSave runs when Save is called, to play a concurrent request that commits first.
+	beforeSave func()
+}
+
+func (k *fakeResetKeys) Find(_ context.Context, key model.IdempotencyKey) (out.PasswordResetKeyRecord, bool, error) {
+	k.journal.record("find-key")
+	record, ok := k.records[key.String()]
+	return record, ok, nil
+}
+
+func (k *fakeResetKeys) Save(_ context.Context, key model.IdempotencyKey, record out.PasswordResetKeyRecord) error {
+	k.journal.record("save-key")
+	if k.beforeSave != nil {
+		k.beforeSave()
+	}
+	if k.saveErr != nil {
+		return k.saveErr
+	}
+	if _, exists := k.records[key.String()]; exists {
+		return model.ErrIdempotencyKeyTaken
+	}
+	k.records[key.String()] = record
+	return nil
+}
+
 type fakeResetTokens struct {
 	journal *journal
 	err     error
@@ -180,6 +209,7 @@ type requestResetFixture struct {
 	useCase      *RequestPasswordReset
 	users        *resetUsers
 	resets       *fakeResets
+	keys         *fakeResetKeys
 	tokens       *fakeResetTokens
 	sender       *fakeResetSender
 	transactions *fakeTransactions
@@ -191,20 +221,33 @@ func newRequestResetFixture(user *model.User) *requestResetFixture {
 	f := &requestResetFixture{
 		users:        &resetUsers{journal: j, user: user},
 		resets:       &fakeResets{journal: j},
+		keys:         &fakeResetKeys{journal: j, records: map[string]out.PasswordResetKeyRecord{}},
 		tokens:       &fakeResetTokens{journal: j},
 		sender:       &fakeResetSender{journal: j},
 		transactions: &fakeTransactions{journal: j},
 		journal:      j,
 	}
 	f.useCase = NewRequestPasswordReset(RequestPasswordResetPorts{
-		Users: f.users, Resets: f.resets, Tokens: f.tokens, Sender: f.sender,
+		Users: f.users, Resets: f.resets, Keys: f.keys, Tokens: f.tokens, Sender: f.sender,
 		IDs: &fakeIDs{next: []string{"reset-1"}}, Clock: fakeClock{}, Transactions: f.transactions,
 	})
 	return f
 }
 
+const resetKey = "key-0001-forgot"
+
 func resetRequest() in.RequestPasswordResetCommand {
-	return in.RequestPasswordResetCommand{Email: " Ana@Example.com "}
+	return in.RequestPasswordResetCommand{IdempotencyKey: resetKey, Email: " Ana@Example.com "}
+}
+
+// resetHashOf is the hash the use case must store for the address of resetRequest.
+func resetHashOf(t *testing.T) string {
+	t.Helper()
+	email, err := model.NewEmail(resetRequest().Email)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return model.PasswordResetRequestHash(email)
 }
 
 func TestRequestResetStoresTheTokenInATransactionAndSendsItAfterTheCommit(t *testing.T) {
@@ -215,12 +258,15 @@ func TestRequestResetStoresTheTokenInATransactionAndSendsItAfterTheCommit(t *tes
 	if err != nil {
 		t.Fatalf("RequestReset() error = %v", err)
 	}
-	wantSteps := []string{"find-user", "new-token", "begin", "lock-requests", "count", "supersede", "add", "commit", "send"}
+	wantSteps := []string{"find-user", "new-token", "begin", "find-key", "lock-requests", "count", "supersede", "add", "save-key", "commit", "send"}
 	if !reflect.DeepEqual(f.journal.steps, wantSteps) {
 		t.Errorf("steps = %v, want %v", f.journal.steps, wantSteps)
 	}
 	if len(f.resets.added) != 1 || f.resets.added[0].UserID() != "user-1" || f.resets.added[0].TokenHash() != model.HashOpaqueToken(resetTokenValue) {
 		t.Fatalf("added = %+v, want the request of user-1 holding the digest of the token", f.resets.added)
+	}
+	if want := (out.PasswordResetKeyRecord{RequestHash: resetHashOf(t), PasswordResetID: "reset-1"}); f.keys.records[resetKey] != want {
+		t.Errorf("key = %+v, want %+v: the hash of the address, linked to the stored request", f.keys.records[resetKey], want)
 	}
 	if len(f.sender.deliveries) != 1 {
 		t.Fatalf("deliveries = %d, want 1", len(f.sender.deliveries))
@@ -253,19 +299,19 @@ func TestRequestResetAnswersTheSameAndSendsNothingWhenThereIsNothingToSend(t *te
 	}{
 		"unknown email": {
 			func(*testing.T) *model.User { return nil }, 0, nil,
-			[]string{"find-user", "new-token"},
+			[]string{"find-user", "new-token", "begin", "find-key", "save-key", "commit"},
 		},
 		"locked account": {
 			func(t *testing.T) *model.User { return storedUser(t, model.UserLocked, model.RoleClient) }, 0, nil,
-			[]string{"find-user", "new-token"},
+			[]string{"find-user", "new-token", "begin", "find-key", "save-key", "commit"},
 		},
 		"fourth request in the hour": {
 			func(t *testing.T) *model.User { return storedUser(t, model.UserActive, model.RoleClient) }, 3, nil,
-			[]string{"find-user", "new-token", "begin", "lock-requests", "count", "commit"},
+			[]string{"find-user", "new-token", "begin", "find-key", "lock-requests", "count", "save-key", "commit"},
 		},
 		"account deleted meanwhile": {
 			func(t *testing.T) *model.User { return storedUser(t, model.UserActive, model.RoleClient) }, 0, model.ErrUserNotFound,
-			[]string{"find-user", "new-token", "begin", "lock-requests", "commit"},
+			[]string{"find-user", "new-token", "begin", "find-key", "lock-requests", "save-key", "commit"},
 		},
 	}
 	for name, c := range cases {
@@ -284,14 +330,107 @@ func TestRequestResetAnswersTheSameAndSendsNothingWhenThereIsNothingToSend(t *te
 			if len(f.resets.added) != 0 || len(f.sender.deliveries) != 0 {
 				t.Errorf("added = %d, sent = %d, want nothing created and nothing sent", len(f.resets.added), len(f.sender.deliveries))
 			}
+			if want := (out.PasswordResetKeyRecord{RequestHash: resetHashOf(t)}); f.keys.records[resetKey] != want {
+				t.Errorf("key = %+v, want %+v: recorded alone, with no link, like any other request", f.keys.records[resetKey], want)
+			}
 		})
+	}
+}
+
+func TestRequestResetReplayOfTheSameKeyAndAddressCreatesAndSendsNothingWhateverTheAccountIs(t *testing.T) {
+	cases := map[string]func(*testing.T) *model.User{
+		"active account": func(t *testing.T) *model.User { return storedUser(t, model.UserActive, model.RoleClient) },
+		"unknown email":  func(*testing.T) *model.User { return nil },
+		"locked account": func(t *testing.T) *model.User { return storedUser(t, model.UserLocked, model.RoleClient) },
+	}
+	for name, user := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newRequestResetFixture(user(t))
+			f.keys.records[resetKey] = out.PasswordResetKeyRecord{RequestHash: resetHashOf(t), PasswordResetID: "reset-0"}
+
+			err := f.useCase.RequestReset(context.Background(), resetRequest())
+
+			if err != nil {
+				t.Fatalf("RequestReset() error = %v, want the silent success of the first answer", err)
+			}
+			wantSteps := []string{"find-user", "new-token", "begin", "find-key", "commit"}
+			if !reflect.DeepEqual(f.journal.steps, wantSteps) {
+				t.Errorf("steps = %v, want %v", f.journal.steps, wantSteps)
+			}
+			if len(f.resets.added) != 0 || len(f.sender.deliveries) != 0 {
+				t.Errorf("added = %d, sent = %d, want nothing created and nothing sent", len(f.resets.added), len(f.sender.deliveries))
+			}
+		})
+	}
+}
+
+func TestRequestResetKeyUsedForAnotherAddressIsAConflictWhateverTheAccountIs(t *testing.T) {
+	cases := map[string]func(*testing.T) *model.User{
+		"active account": func(t *testing.T) *model.User { return storedUser(t, model.UserActive, model.RoleClient) },
+		"unknown email":  func(*testing.T) *model.User { return nil },
+	}
+	for name, user := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newRequestResetFixture(user(t))
+			f.keys.records[resetKey] = out.PasswordResetKeyRecord{RequestHash: "another-address-hash"}
+
+			err := f.useCase.RequestReset(context.Background(), resetRequest())
+
+			if !errors.Is(err, model.ErrIdempotencyKeyConflict) || len(f.resets.added) != 0 || len(f.sender.deliveries) != 0 || f.transactions.committed {
+				t.Errorf("error = %v, added = %d, sent = %d, committed = %v, want a conflict, nothing created, nothing sent and a rollback",
+					err, len(f.resets.added), len(f.sender.deliveries), f.transactions.committed)
+			}
+		})
+	}
+}
+
+func TestRequestResetLosingTheRaceOnTheKeyReplaysTheWinnerOnceAndSendsNothing(t *testing.T) {
+	f := newRequestResetFixture(storedUser(t, model.UserActive, model.RoleClient))
+	f.keys.beforeSave = func() {
+		f.keys.records[resetKey] = out.PasswordResetKeyRecord{RequestHash: resetHashOf(t), PasswordResetID: "reset-0"}
+		f.keys.beforeSave = nil
+	}
+
+	err := f.useCase.RequestReset(context.Background(), resetRequest())
+
+	if err != nil || len(f.sender.deliveries) != 0 {
+		t.Fatalf("error = %v, sent = %d, want the replay of the winner and nothing sent", err, len(f.sender.deliveries))
+	}
+	wantTail := []string{"save-key", "rollback", "begin", "find-key", "commit"}
+	if steps := f.journal.steps; !reflect.DeepEqual(steps[len(steps)-len(wantTail):], wantTail) {
+		t.Errorf("steps = %v, want them to end with %v: one retry that finds the winner", steps, wantTail)
+	}
+}
+
+func TestRequestResetLosingTheRaceToAnotherAddressIsAConflict(t *testing.T) {
+	f := newRequestResetFixture(storedUser(t, model.UserActive, model.RoleClient))
+	f.keys.beforeSave = func() {
+		f.keys.records[resetKey] = out.PasswordResetKeyRecord{RequestHash: "another-address-hash"}
+	}
+
+	err := f.useCase.RequestReset(context.Background(), resetRequest())
+
+	if !errors.Is(err, model.ErrIdempotencyKeyConflict) || len(f.sender.deliveries) != 0 {
+		t.Errorf("error = %v, sent = %d, want a conflict and nothing sent", err, len(f.sender.deliveries))
+	}
+}
+
+func TestRequestResetRejectsAMalformedKeyBeforeAnyWork(t *testing.T) {
+	f := newRequestResetFixture(nil)
+	command := resetRequest()
+	command.IdempotencyKey = "short"
+
+	err := f.useCase.RequestReset(context.Background(), command)
+
+	if !errors.Is(err, model.ErrInvalidIdempotencyKey) || len(f.journal.steps) != 0 {
+		t.Errorf("error = %v, steps = %v, want ErrInvalidIdempotencyKey and no work", err, f.journal.steps)
 	}
 }
 
 func TestRequestResetRejectsAMalformedEmailBeforeAnyWork(t *testing.T) {
 	f := newRequestResetFixture(nil)
 
-	err := f.useCase.RequestReset(context.Background(), in.RequestPasswordResetCommand{Email: "nope"})
+	err := f.useCase.RequestReset(context.Background(), in.RequestPasswordResetCommand{IdempotencyKey: resetKey, Email: "nope"})
 
 	if !errors.Is(err, model.ErrInvalidEmail) || len(f.journal.steps) != 0 {
 		t.Errorf("error = %v, steps = %v, want ErrInvalidEmail and no work", err, f.journal.steps)
@@ -329,6 +468,7 @@ func TestRequestResetFailuresOfTheServiceAreErrorsAndSendNothing(t *testing.T) {
 		"token fails":  func(f *requestResetFixture) { f.tokens.err = errors.New("no entropy") },
 		"insert fails": func(f *requestResetFixture) { f.resets.addErr = errors.New("insert failed") },
 		"lock fails":   func(f *requestResetFixture) { f.resets.lockErr = errors.New("lock failed") },
+		"key fails":    func(f *requestResetFixture) { f.keys.saveErr = errors.New("key insert failed") },
 	}
 	for name, arrange := range cases {
 		t.Run(name, func(t *testing.T) {

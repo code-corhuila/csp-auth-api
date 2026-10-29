@@ -20,6 +20,8 @@ func TestForgotPasswordResponsesFulfillTheContract(t *testing.T) {
 		"202 longest email":  {&fakeRequestPasswordReset{}, tracedReset(forgotAttempt(`{"email":"` + addressOfLength(model.MaxEmailLength) + `"}`))},
 		"400 missing email":  {&fakeRequestPasswordReset{}, tracedReset(forgotAttempt(`{}`))},
 		"400 invalid email":  {&fakeRequestPasswordReset{err: model.ErrInvalidEmail}, tracedReset(forgotAttempt(forgotBody))},
+		"400 missing key":    {&fakeRequestPasswordReset{}, withoutKey(tracedReset(forgotAttempt(forgotBody)))},
+		"409 key conflict":   {&fakeRequestPasswordReset{err: model.ErrIdempotencyKeyConflict}, tracedReset(forgotAttempt(forgotBody))},
 		"400 email too long": {&fakeRequestPasswordReset{}, tracedReset(forgotAttempt(`{"email":"` + addressOfLength(model.MaxEmailLength+1) + `"}`))},
 		"400 unreadable":     {&fakeRequestPasswordReset{}, tracedReset(forgotAttempt(`{"email":`))},
 		"400 body too large": {&fakeRequestPasswordReset{}, tracedReset(forgotAttempt(`{"email":"` + strings.Repeat("a", 5000) + `"}`))},
@@ -30,6 +32,27 @@ func TestForgotPasswordResponsesFulfillTheContract(t *testing.T) {
 			captureLog(t)
 			requireContract(t, http.MethodPost, forgotPath, sendPasswordReset(openGates(), c.useCase, &fakeResetPassword{}, c.a))
 		})
+	}
+}
+
+func withoutKey(a resetAttempt) resetAttempt {
+	delete(a.headers, "Idempotency-Key")
+	return a
+}
+
+func TestTheContractRequiresTheIdempotencyKeyOnForgotPasswordOnly(t *testing.T) {
+	doc := contract(t)
+	required := func(path string) bool {
+		for _, parameter := range doc.Paths.Find(path).Post.Parameters {
+			if parameter.Value != nil && parameter.Value.In == "header" && parameter.Value.Name == "Idempotency-Key" {
+				return parameter.Value.Required
+			}
+		}
+		return false
+	}
+
+	if !required("/forgot-password") || required("/reset-password") {
+		t.Errorf("Idempotency-Key required: forgot-password = %v, reset-password = %v, want true and false", required("/forgot-password"), required("/reset-password"))
 	}
 }
 

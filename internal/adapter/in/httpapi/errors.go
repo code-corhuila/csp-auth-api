@@ -75,15 +75,19 @@ func translateRegisterError(w http.ResponseWriter, traceID string, err error) {
 			Error: codeEmailRegistered, Message: "the email is already registered", TraceID: traceID,
 		})
 	case errors.Is(err, model.ErrIdempotencyKeyConflict):
-		writeJSON(w, http.StatusConflict, errorResponse{
-			Error: codeIdempotencyReuse, Message: "the idempotency key was already used with a different request", TraceID: traceID,
-		})
+		writeIdempotencyConflict(w, traceID)
 	default:
 		slog.Error("register user failed", "traceId", traceID, "error", err)
 		writeJSON(w, http.StatusInternalServerError, errorResponse{
 			Error: codeInternal, Message: "an unexpected error occurred", TraceID: traceID,
 		})
 	}
+}
+
+func writeIdempotencyConflict(w http.ResponseWriter, traceID string) {
+	writeJSON(w, http.StatusConflict, errorResponse{
+		Error: codeIdempotencyReuse, Message: "the idempotency key was already used with a different request", TraceID: traceID,
+	})
 }
 
 // translateLoginError is the only place that maps the errors of the login use case to HTTP.
@@ -224,15 +228,21 @@ func translateVerifyEmailChangeError(w http.ResponseWriter, traceID string, err 
 }
 
 // translateRequestPasswordResetError is the only place that maps the errors of the password reset request to HTTP.
-// An unknown or inactive account is not an error of the use case, so nothing here can tell them apart. The
-// cause of an unexpected error goes only to the log, which never sees the address or the token.
+// An unknown or inactive account is not an error of the use case, so nothing here can tell them apart: a key used
+// for another address is a conflict whatever the account is. The cause of an unexpected error goes only to the log,
+// which never sees the address or the token.
 func translateRequestPasswordResetError(w http.ResponseWriter, traceID string, err error) {
-	if errors.Is(err, model.ErrInvalidEmail) {
+	switch {
+	case errors.Is(err, model.ErrInvalidIdempotencyKey):
+		writeValidation(w, traceID, []fieldError{{Field: headerIdempotencyKey, Message: err.Error()}})
+	case errors.Is(err, model.ErrInvalidEmail):
 		writeValidation(w, traceID, []fieldError{{Field: "email", Message: err.Error()}})
-		return
+	case errors.Is(err, model.ErrIdempotencyKeyConflict):
+		writeIdempotencyConflict(w, traceID)
+	default:
+		slog.Error("request password reset failed", "traceId", traceID, "error", err)
+		writeInternal(w, traceID)
 	}
-	slog.Error("request password reset failed", "traceId", traceID, "error", err)
-	writeInternal(w, traceID)
 }
 
 // translateResetPasswordError is the only place that maps the errors of the password reset to HTTP. A token that is

@@ -82,3 +82,27 @@ func TestRegistrationRequestHashChangesWithEveryField(t *testing.T) {
 		}
 	}
 }
+
+func TestPasswordResetRequestHashIsTheSHA256OfTheNormalisedEmail(t *testing.T) {
+	email, err := NewEmail(" Ana@Example.com ")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := PasswordResetRequestHash(email)
+
+	// sha256 of ana@example.com
+	const want = "8e43ca37701228e74983efdbd0cff5c16b3b1e5d4e29a7c05626d4d25a018e11"
+	if got != want {
+		t.Errorf("PasswordResetRequestHash() = %s, want %s", got, want)
+	}
+}
+
+func TestPasswordResetRequestHashChangesWithTheEmail(t *testing.T) {
+	ana, _ := NewEmail("ana@example.com")
+	bea, _ := NewEmail("bea@example.com")
+
+	if PasswordResetRequestHash(ana) == PasswordResetRequestHash(bea) {
+		t.Error("two emails share a hash")
+	}
+}
