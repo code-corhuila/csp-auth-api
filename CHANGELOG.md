@@ -9,6 +9,10 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Changed
 
+- Structured logging with the correlation id (Norma 5.3.9, Annex C): `main` sets the JSON logger as the default one, a handler wrapper
+  (`internal/platform/logging`) adds `traceId` to every record logged with the context of a request, the use cases, the Redis adapters and the mail senders
+  log with `slog.XContext`, and the root wrapper writes one access line per request (`method`, `route`, `status`, `durationMs`, `traceId`) without
+  tokens, `Idempotency-Key`, passwords or addresses. Tests of the handler, the access line and a use case log.
 - Explicit request limits in the composition root (Norma 5.3.10, audit of Annex C): `APP_AUTH_HTTP_REQUEST_TIMEOUT` (10s, at most 60s) gives every
   request a deadline, so a request that waits for a connection of a saturated pool ends with `503 SERVICE_UNAVAILABLE` (envelope, `Retry-After: 1`)
   instead of queueing until the client leaves; `APP_AUTH_HTTP_MAX_HEADER_BYTES` (65536) sets `MaxHeaderBytes` of the server; the body limits
