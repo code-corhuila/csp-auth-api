@@ -541,6 +541,12 @@ APP_AUTH_SMTP_HOST=localhost APP_AUTH_SMTP_PORT=1025 APP_AUTH_SMTP_TLS=none APP_
 Inside the platform network the service uses `APP_AUTH_SMTP_HOST=mailpit` and port `1025`. Mailpit publishes SMTP (1025) and the web UI
 on the loopback only; the message with the code appears at `http://localhost:8025` after `PATCH /me/email`.
 
+To also send the messages through a real provider while developing, use the profile `mail-relay` instead of `mail`: the service `mailpit-relay`
+is the same catcher with a relay (`--smtp-relay-config` and `MAILPIT_RELAY_MATCHING`, the recipients that reach the provider), reachable under the
+same name `mailpit`. The service keeps talking only to Mailpit, so an expired key or a provider that is down fails the relay (an error in the Mailpit
+log) and never the service. The variables and the script that renders the relay file are in `csp-infra-postgres` (README, "The SMTP relay of the
+identity service"). Development only.
+
 ## Branching
 
 Three permanent branches. **None of them accepts a direct commit** — you enter through a child

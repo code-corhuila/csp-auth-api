@@ -132,6 +132,26 @@ services:
     ports: ["127.0.0.1:1025:1025", "127.0.0.1:8025:8025"]
     networks: [platform]
 
+  # The same catcher, but it also relays each message it receives to a real SMTP provider (profile `mail-relay`, development only,
+  # instead of `mail`: both use the same ports). The service keeps pointing at `mailpit:1025`, so the messages are always stored and
+  # shown at http://localhost:8025, and an expired key or a provider that is down only makes the relay fail (Mailpit logs it): the
+  # service never talks to the provider. To change provider or renew the key, change the MAILPIT_RELAY_* variables of the platform
+  # env file and run csp-infra-postgres/scripts/mailpit-relay.sh again.
+  # Only the recipients that match MAILPIT_RELAY_MATCHING (a regular expression) are relayed, so test addresses are not sent to the provider.
+  mailpit-relay:
+    image: axllent/mailpit:v1.21.8
+    profiles: [mail-relay]
+    command: ["--smtp-relay-config=/etc/mailpit/relay.yml"]
+    environment:
+      MP_SMTP_RELAY_MATCHING: ${MAILPIT_RELAY_MATCHING:?set MAILPIT_RELAY_MATCHING (a regular expression of the recipients to relay)}
+    volumes:
+      - ${MAILPIT_RELAY_FILE:?run csp-infra-postgres/scripts/mailpit-relay.sh}:/etc/mailpit/relay.yml:ro
+    expose: ["1025"]
+    ports: ["127.0.0.1:1025:1025", "127.0.0.1:8025:8025"]
+    networks:
+      platform:
+        aliases: [mailpit]
+
 networks:
   platform:
     name: platform
