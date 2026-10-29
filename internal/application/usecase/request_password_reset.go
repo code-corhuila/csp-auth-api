@@ -14,6 +14,7 @@ import (
 type RequestPasswordResetPorts struct {
 	Users        out.UserRepository
 	Resets       out.PasswordResetRepository
+	Keys         out.PasswordResetKeyRepository
 	Tokens       out.ResetTokenGenerator
 	Sender       out.PasswordResetSender
 	IDs          out.IDGenerator
@@ -21,7 +22,7 @@ type RequestPasswordResetPorts struct {
 	Transactions out.TransactionManager
 }
 
-// RequestPasswordReset implements in.RequestPasswordReset (HU-AUTH-006, ADR-050).
+// RequestPasswordReset implements in.RequestPasswordReset (HU-AUTH-006, ADR-050, Norma 5.3.8).
 type RequestPasswordReset struct {
 	ports RequestPasswordResetPorts
 }
@@ -33,41 +34,102 @@ func NewRequestPasswordReset(ports RequestPasswordResetPorts) *RequestPasswordRe
 	return &RequestPasswordReset{ports: ports}
 }
 
+// passwordResetRequest is a validated request: the key, the hash of the address it was made for and the account
+// found for that address, nil when there is none or it is not active.
+type passwordResetRequest struct {
+	key   model.IdempotencyKey
+	hash  string
+	email model.Email
+	user  *model.User
+	token model.ResetToken
+}
+
 // RequestReset looks the account up and draws a token whatever the email is, so an unknown address, an
-// inactive account and a real one do the same work up to there. Only an active account within its
-// limit of requests gets a stored token, in one transaction that supersedes the previous one; the
-// message is handed to the sender after the commit, so neither its latency nor its failure changes the
-// answer (ADR-050).
+// inactive account and a real one do the same work up to there. Then, in one transaction, it looks the
+// idempotency key up: a key used by the same address is a replay that creates and sends nothing, by
+// another address model.ErrIdempotencyKeyConflict, which depends only on the key and the address and
+// never on the account. A new key is saved whatever the account is, linked to the stored token of an
+// active account within its limit that supersedes the previous one, so every outcome leaves the same
+// trace. The message is handed to the sender after the commit, so neither its latency nor its failure
+// changes the answer (ADR-050).
+//
+// A concurrent request with the same key loses on the key: it rolls back and looks the key up once more
+// in a new transaction, which now sees the winner. The retry is bounded to one.
 func (c *RequestPasswordReset) RequestReset(ctx context.Context, command in.RequestPasswordResetCommand) error {
-	email, err := model.NewEmail(command.Email)
+	request, err := c.newRequest(ctx, command)
 	if err != nil {
 		return err
+	}
+	reset, err := c.recordOnce(ctx, request)
+	if errors.Is(err, model.ErrIdempotencyKeyTaken) {
+		reset, err = c.recordOnce(ctx, request)
+	}
+	if err != nil || reset == nil {
+		return err
+	}
+	delivery := out.PasswordResetDelivery{UserID: request.user.ID(), Email: request.email, Token: request.token, ExpiresAt: reset.ExpiresAt()}
+	if err := c.ports.Sender.Send(ctx, delivery); err != nil {
+		slog.Warn("password reset link not sent", "userId", request.user.ID(), "error", err)
+	}
+	return nil
+}
+
+func (c *RequestPasswordReset) newRequest(ctx context.Context, command in.RequestPasswordResetCommand) (passwordResetRequest, error) {
+	key, err := model.NewIdempotencyKey(command.IdempotencyKey)
+	if err != nil {
+		return passwordResetRequest{}, err
+	}
+	email, err := model.NewEmail(command.Email)
+	if err != nil {
+		return passwordResetRequest{}, err
 	}
 	user, err := c.ports.Users.FindByEmail(ctx, email)
 	if errors.Is(err, model.ErrUserNotFound) {
 		user = nil
 	} else if err != nil {
-		return err
+		return passwordResetRequest{}, err
 	}
 	token, err := c.ports.Tokens.NewToken()
 	if err != nil {
-		return err
+		return passwordResetRequest{}, err
 	}
-	if user == nil || user.Status() != model.UserActive {
-		return nil
+	if user != nil && user.Status() != model.UserActive {
+		user = nil
 	}
+	return passwordResetRequest{key: key, hash: model.PasswordResetRequestHash(email), email: email, user: user, token: token}, nil
+}
+
+// recordOnce runs one transaction. It returns the stored request to deliver, or nil when the key is a
+// replay or the request created nothing.
+func (c *RequestPasswordReset) recordOnce(ctx context.Context, request passwordResetRequest) (*model.PasswordReset, error) {
 	var reset *model.PasswordReset
-	err = c.ports.Transactions.WithinTransaction(ctx, func(ctx context.Context) error {
-		var storeErr error
-		reset, storeErr = c.store(ctx, user.ID(), token)
-		return storeErr
+	err := c.ports.Transactions.WithinTransaction(ctx, func(ctx context.Context) error {
+		reset = nil
+		record, found, err := c.ports.Keys.Find(ctx, request.key)
+		if err != nil {
+			return err
+		}
+		if found {
+			return replayOf(record, request.hash)
+		}
+		if request.user != nil {
+			if reset, err = c.store(ctx, request.user.ID(), request.token); err != nil {
+				return err
+			}
+		}
+		record = out.PasswordResetKeyRecord{RequestHash: request.hash}
+		if reset != nil {
+			record.PasswordResetID = reset.ID()
+		}
+		return c.ports.Keys.Save(ctx, request.key, record)
 	})
-	if err != nil || reset == nil {
-		return err
-	}
-	delivery := out.PasswordResetDelivery{UserID: user.ID(), Email: email, Token: token, ExpiresAt: reset.ExpiresAt()}
-	if err := c.ports.Sender.Send(ctx, delivery); err != nil {
-		slog.Warn("password reset link not sent", "userId", user.ID(), "error", err)
+	return reset, err
+}
+
+// replayOf is nil for a key already used by the same request and model.ErrIdempotencyKeyConflict for another.
+func replayOf(record out.PasswordResetKeyRecord, requestHash string) error {
+	if record.RequestHash != requestHash {
+		return model.ErrIdempotencyKeyConflict
 	}
 	return nil
 }

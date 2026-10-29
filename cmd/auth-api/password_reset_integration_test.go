@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/persistence"
+	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/system"
 	"github.com/code-corhuila/csp-auth-api/internal/domain/model"
 )
 
@@ -73,11 +74,19 @@ func (f *fakeSMTP) received(address string) bool {
 
 func callPublic(t *testing.T, baseURL, path, body string) (int, http.Header, string) {
 	t.Helper()
+	return callPublicWith(t, baseURL, path, body, nil)
+}
+
+func callPublicWith(t *testing.T, baseURL, path, body string, headers map[string]string) (int, http.Header, string) {
+	t.Helper()
 	request, err := http.NewRequest(http.MethodPost, baseURL+path, strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
+	for name, value := range headers {
+		request.Header.Set(name, value)
+	}
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatalf("POST %s error = %v", path, err)
@@ -87,9 +96,15 @@ func callPublic(t *testing.T, baseURL, path, body string) (int, http.Header, str
 	return response.StatusCode, response.Header, string(raw)
 }
 
+// forgotPassword asks for a link with a key of its own, so that each call is a new request.
 func forgotPassword(t *testing.T, baseURL, email string) (int, http.Header, string) {
 	t.Helper()
-	return callPublic(t, baseURL, forgotPasswordPath, fmt.Sprintf(`{"email":%q}`, email))
+	return forgotPasswordWithKey(t, baseURL, "e2e-forgot-"+system.UUIDGenerator{}.NewID(), email)
+}
+
+func forgotPasswordWithKey(t *testing.T, baseURL, key, email string) (int, http.Header, string) {
+	t.Helper()
+	return callPublicWith(t, baseURL, forgotPasswordPath, fmt.Sprintf(`{"email":%q}`, email), map[string]string{"Idempotency-Key": key})
 }
 
 func resetPassword(t *testing.T, baseURL, token, password string) (int, string) {
@@ -260,4 +275,53 @@ func TestForgotPasswordDoesNotWaitForASlowRelay(t *testing.T) {
 		t.Errorf("registered took %v and unknown %v with a relay that takes %v, want neither to wait for it", registeredTook, unknownTook, relayDelay)
 	}
 	relay.resetToken(t, email)
+}
+
+// The key of a forgot-password request is replayed or refused over HTTP the same way for every account (Norma 5.3.8,
+// ADR-050): the same key and address is the silent 202 again with no second message, another address is the 409 of
+// register, a missing or short key is a 400 for the header, and nothing tells an account from an unknown address.
+func TestForgotPasswordIdempotencyKeyReplaysConflictsAndIsRequired(t *testing.T) {
+	server, relay, _, databaseURL := startPasswordResetServer(t, 0)
+	email, userID, _, _ := signUpUser(t, server.URL, "e2e-reset-key")
+	unknown := "e2e-nobody-" + userID + "@example.com"
+	for name, address := range map[string]string{"registered": email, "unknown": unknown} {
+		t.Run(name+" address", func(t *testing.T) {
+			key := "e2e-forgot-" + name + "-" + userID
+
+			first, _, firstBody := forgotPasswordWithKey(t, server.URL, key, address)
+			replay, _, replayBody := forgotPasswordWithKey(t, server.URL, key, address)
+			conflict, _, conflictBody := forgotPasswordWithKey(t, server.URL, key, "e2e-other-"+name+"-"+userID+"@example.com")
+
+			if first != http.StatusAccepted || replay != http.StatusAccepted || firstBody != "" || replayBody != "" {
+				t.Fatalf("first = %d %q, replay = %d %q, want the same 202 without body", first, firstBody, replay, replayBody)
+			}
+			if conflict != http.StatusConflict || !strings.Contains(conflictBody, `"error":"IDEMPOTENCY_KEY_CONFLICT"`) {
+				t.Errorf("same key, other address: status = %d, body = %s, want 409 IDEMPOTENCY_KEY_CONFLICT", conflict, conflictBody)
+			}
+		})
+	}
+	relay.resetToken(t, email)
+	relay.mu.Lock()
+	delete(relay.messages, email)
+	relay.mu.Unlock()
+	if status, _, _ := forgotPasswordWithKey(t, server.URL, "e2e-forgot-registered-"+userID, email); status != http.StatusAccepted {
+		t.Fatalf("replay after the message: status = %d, want 202", status)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if relay.received(email) {
+		t.Error("a replay sent a second message")
+	}
+	conn := connect(t, context.Background(), databaseURL)
+	var tokens int
+	if err := conn.QueryRow(context.Background(), `SELECT count(*) FROM auth.password_reset WHERE user_id = $1`, userID).Scan(&tokens); err != nil || tokens != 1 {
+		t.Errorf("password_reset rows = %d, error = %v, want the single one of the first request", tokens, err)
+	}
+	t.Run("a missing or short key is 400 for the header", func(t *testing.T) {
+		for name, headers := range map[string]map[string]string{"missing": nil, "short": {"Idempotency-Key": "short"}} {
+			status, _, body := callPublicWith(t, server.URL, forgotPasswordPath, fmt.Sprintf(`{"email":%q}`, email), headers)
+			if status != http.StatusBadRequest || !strings.Contains(body, `"field":"Idempotency-Key"`) {
+				t.Errorf("%s key: status = %d, body = %s, want 400 for Idempotency-Key", name, status, body)
+			}
+		}
+	})
 }

@@ -47,7 +47,7 @@ func passwordResetRoutes(cfg config.Config, logger *slog.Logger, pool *pgxpool.P
 	users, transactions, clock := persistence.NewUserRepository(pool), persistence.NewTransactionManager(pool), system.Clock{}
 	resets := persistence.NewPasswordResetRepository(pool)
 	request := usecase.NewRequestPasswordReset(usecase.RequestPasswordResetPorts{
-		Users: users, Resets: resets, Tokens: system.ResetTokenGenerator{}, Sender: sender,
+		Users: users, Resets: resets, Keys: persistence.NewPasswordResetKeyRepository(pool), Tokens: system.ResetTokenGenerator{}, Sender: sender,
 		IDs: system.UUIDGenerator{}, Clock: clock, Transactions: transactions,
 	})
 	reset := usecase.NewResetPassword(usecase.ResetPasswordPorts{

@@ -11,7 +11,7 @@ import (
 const maxPasswordResetBodyBytes = 4 << 10
 
 // WithPasswordReset publishes the two steps of the password reset (HU-AUTH-006, ADR-050) at POST /forgot-password and
-// POST /reset-password, public. Neither takes an Idempotency-Key. Each route has its own gate: forgotGate caps the requests
+// POST /reset-password, public. Only forgot-password takes an Idempotency-Key (Norma 5.3.8): reset-password creates nothing. Each route has its own gate: forgotGate caps the requests
 // that reach the database and resetGate the ones that also hash a password, so a flood of one cannot starve the other.
 func WithPasswordReset(request in.RequestPasswordReset, reset in.ResetPassword, forgotGate, resetGate *Bulkhead) Option {
 	return func(mux *http.ServeMux) {
@@ -47,9 +47,10 @@ type resetPasswordRequest struct {
 	Password string `json:"password"`
 }
 
-// forgotPassword answers 202 without a body whatever the account is: the use case judges nothing the client could
-// tell apart. A request that finds no free slot of gate is refused with 429 before the use case runs, which does not
-// depend on the email.
+// forgotPassword answers 202 without a body whatever the account is, and also for a replay of its Idempotency-Key: the
+// use case judges nothing the client could tell apart. The key is required and validated like the email, before the gate.
+// A request that finds no free slot of gate is refused with 429 before the use case runs, which does not depend on the
+// email.
 func forgotPassword(useCase in.RequestPasswordReset, gate *Bulkhead) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		traceID := correlationID(r)
@@ -57,7 +58,8 @@ func forgotPassword(useCase in.RequestPasswordReset, gate *Bulkhead) http.Handle
 		w.Header().Set("Cache-Control", "no-store")
 
 		body, unreadable := decodeBodyWithin[forgotPasswordRequest](w, r, maxPasswordResetBodyBytes)
-		var checks []check
+		key := r.Header.Get(headerIdempotencyKey)
+		checks := []check{{headerIdempotencyKey, errorOf(model.NewIdempotencyKey(key))}}
 		if unreadable == nil {
 			checks = append(checks, check{"email", errorOf(model.NewEmail(body.Email))})
 		}
@@ -72,7 +74,7 @@ func forgotPassword(useCase in.RequestPasswordReset, gate *Bulkhead) http.Handle
 		}
 		defer release()
 
-		if err := useCase.RequestReset(r.Context(), in.RequestPasswordResetCommand{Email: body.Email}); err != nil {
+		if err := useCase.RequestReset(r.Context(), in.RequestPasswordResetCommand{IdempotencyKey: key, Email: body.Email}); err != nil {
 			translateRequestPasswordResetError(w, traceID, err)
 			return
 		}
