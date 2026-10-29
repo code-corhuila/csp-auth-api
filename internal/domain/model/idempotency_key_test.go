@@ -106,3 +106,28 @@ func TestPasswordResetRequestHashChangesWithTheEmail(t *testing.T) {
 		t.Error("two emails share a hash")
 	}
 }
+
+func TestEmailChangeRequestHashIsTheSHA256OfTheAccountAndNormalisedEmail(t *testing.T) {
+	email, err := NewEmail(" Ana@Example.com ")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := EmailChangeRequestHash("user-1", email)
+
+	// sha256 of user-1, a line feed and ana@example.com
+	const want = "4a77ac4e5eb449b7c2fb051a7246493b5cb6569d0db3871abfc29df1566af18a"
+	if got != want {
+		t.Errorf("EmailChangeRequestHash() = %s, want %s", got, want)
+	}
+}
+
+func TestEmailChangeRequestHashChangesWithTheAccountAndWithTheEmail(t *testing.T) {
+	ana, _ := NewEmail("ana@example.com")
+	bea, _ := NewEmail("bea@example.com")
+	base := EmailChangeRequestHash("user-1", ana)
+
+	if EmailChangeRequestHash("user-2", ana) == base || EmailChangeRequestHash("user-1", bea) == base {
+		t.Error("another account or another email keeps the hash: a key could be replayed by another user")
+	}
+}

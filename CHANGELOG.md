@@ -25,6 +25,12 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
   and `POST /login` have a bulkhead (`APP_AUTH_REGISTER_MAX_CONCURRENCY`, `APP_AUTH_LOGIN_MAX_CONCURRENCY`, 8, below the pool, 1s wait): a full one
   answers `429 RATE_LIMITED` with `Retry-After: 1` after the body is validated and before bcrypt. `.env.example`, `deploy/compose.yml` and the README
   table document them. Configuration, handler, wiring and integration tests (pool of one connection).
+- `PATCH /me/email` stores its `Idempotency-Key` (Norma 5.3.8, ADR-034) in `auth.email_change_idempotency_key` with the SHA-256 of the user id and the
+  normalised new email, in the same transaction as the pending request (linked to it) and only when a request is really created: a replay answers `202`
+  again, creates and sends nothing and does not count against the limit of three per hour; the same key with another email or by another user is
+  `409 IDEMPOTENCY_KEY_CONFLICT`; concurrent requests with the same key replay. The purge (ADR-030) also deletes these keys after seven days.
+  HU-AUTH-006, contract 1.14.0; needs the migrations V036 to V040 of `csp-auth-db`. `POST /me/email/verify` still validates the key and does not store it.
+  Domain, use case, adapter, purge, contract, integration and end-to-end tests.
 - `POST /forgot-password` requires `Idempotency-Key` (8 to 128 characters, `400 VALIDATION_ERROR` on the header otherwise) and stores it in
   `auth.password_reset_idempotency_key` with the SHA-256 of the normalised email, in the same transaction as the token (linked to it) and, for the
   cases that create no token, alone: a replay answers the same silent `202` and creates and sends nothing, the same key with another email is
