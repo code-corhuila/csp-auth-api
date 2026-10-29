@@ -9,6 +9,10 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Changed
 
+- One root wrapper in `httpapi.NewHandler` (Norma 5.3.5, 5.3.9, Annex C): the correlation id is decided once per request, returned in `X-Correlation-Id` on
+  every response (health, ready, jwks, 404, 405 and panics included) and stored in the request context; an unknown route answers `404 NOT_FOUND` and a
+  wrong method `405 METHOD_NOT_ALLOWED` with `Allow`, both with the common envelope instead of the plain text of `net/http`; a panic answers
+  `500 INTERNAL_ERROR` with the envelope and the cause only in the log. The existing routes keep their behaviour. Unit tests of each case.
 - `POST /forgot-password` requires `Idempotency-Key` (8 to 128 characters, `400 VALIDATION_ERROR` on the header otherwise) and stores it in
   `auth.password_reset_idempotency_key` with the SHA-256 of the normalised email, in the same transaction as the token (linked to it) and, for the
   cases that create no token, alone: a replay answers the same silent `202` and creates and sends nothing, the same key with another email is
