@@ -69,7 +69,7 @@ func send(useCase in.RegisterUser, a attempt) *httptest.ResponseRecorder {
 		request.Header.Set(name, value)
 	}
 	rec := httptest.NewRecorder()
-	NewHandler(WithRegisterUser(useCase)).ServeHTTP(rec, request)
+	NewHandler(WithRegisterUser(useCase, openGate())).ServeHTTP(rec, request)
 	return rec
 }
 
@@ -235,7 +235,7 @@ func TestRegisterRejectsUnreadableBodies(t *testing.T) {
 		"trailing data":       {body: validBody() + `{}`, key: validKey},
 		"empty body":          {body: ``, key: validKey},
 		"wrong content type":  {body: validBody(), key: validKey, contentType: "text/plain"},
-		"oversized body":      {body: `{"name":"` + strings.Repeat("a", maxBodyBytes) + `"}`, key: validKey},
+		"oversized body":      {body: `{"name":"` + strings.Repeat("a", int(fallbackLimits.MaxBodyBytes)) + `"}`, key: validKey},
 		"wrong property type": {body: `{"phone":3001234567}`, key: validKey},
 	}
 	for name, a := range cases {

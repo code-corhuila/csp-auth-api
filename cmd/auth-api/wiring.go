@@ -27,7 +27,17 @@ import (
 // database.
 type poolOpener func(ctx context.Context, settings persistence.PoolSettings) (*pgxpool.Pool, error)
 
-// newHandler wires the routes and returns the function that releases what they hold open.
+// newHandler wires the routes, gives every request its limits (Norma 5.3.10) and returns the function that releases what the
+// routes hold open.
+func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, open poolOpener) (http.Handler, func(), error) {
+	routes, release, err := newRoutes(ctx, logger, cfg, open)
+	if err != nil {
+		return nil, release, err
+	}
+	return httpapi.WithLimits(routes, limitsOf(cfg)), release, nil
+}
+
+// newRoutes wires the routes and returns the function that releases what they hold open.
 //
 //   - No signing key: health only, exactly as before; with a database URL that is a startup error,
 //     because registration issues tokens.
@@ -50,7 +60,7 @@ type poolOpener func(ctx context.Context, settings persistence.PoolSettings) (*p
 //     login attempt limit of POST /login (HU-AUTH-005), which is off without it.
 //
 // A configured key or database that cannot be used stops the service instead of degrading it.
-func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, open poolOpener) (http.Handler, func(), error) {
+func newRoutes(ctx context.Context, logger *slog.Logger, cfg config.Config, open poolOpener) (http.Handler, func(), error) {
 	noop := func() {}
 	hasKey := cfg.JWTPrivateKey != "" || cfg.JWTPrivateKeyFile != ""
 	if !hasKey {
@@ -82,15 +92,26 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 	if err != nil {
 		return nil, noop, fmt.Errorf("connect to the auth database: %w", err)
 	}
-	options = append(options, httpapi.WithRegisterUser(newRegisterUser(cfg, pool, issuer)))
-	logger.Info("register route enabled")
+	registerGate, err := httpapi.NewBulkhead(cfg.RegisterMaxConcurrency, config.CredentialQueueTimeout)
+	if err != nil {
+		pool.Close()
+		return nil, noop, fmt.Errorf("register limit: %w", err)
+	}
+	options = append(options, httpapi.WithRegisterUser(newRegisterUser(cfg, pool, issuer), registerGate))
+	logger.Info("register route enabled", "maxConcurrency", registerGate.Limit(), "queueTimeout", registerGate.Wait().String())
 	redisState, closeRedis, err := openRedisState(logger, cfg)
 	if err != nil {
 		pool.Close()
 		return nil, noop, err
 	}
-	options = append(options, httpapi.WithLoginUser(newLoginUser(cfg, pool, issuer, redisState.attempts)))
-	logger.Info("login route enabled")
+	loginGate, err := httpapi.NewBulkhead(cfg.LoginMaxConcurrency, config.CredentialQueueTimeout)
+	if err != nil {
+		closeRedis()
+		pool.Close()
+		return nil, noop, fmt.Errorf("login limit: %w", err)
+	}
+	options = append(options, httpapi.WithLoginUser(newLoginUser(cfg, pool, issuer, redisState.attempts), loginGate))
+	logger.Info("login route enabled", "maxConcurrency", loginGate.Limit(), "queueTimeout", loginGate.Wait().String())
 	options = append(options, httpapi.WithRefreshSession(newRefreshSession(cfg, pool, issuer)))
 	logger.Info("refresh route enabled")
 	authorizer := newAuthorizeUser(issuer, redisState.revoked)

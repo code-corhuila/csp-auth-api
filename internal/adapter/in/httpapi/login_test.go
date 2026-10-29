@@ -45,7 +45,7 @@ func sendLogin(useCase in.LoginUser, a attempt) *httptest.ResponseRecorder {
 		request.Header.Set(name, value)
 	}
 	rec := httptest.NewRecorder()
-	NewHandler(WithLoginUser(useCase)).ServeHTTP(rec, request)
+	NewHandler(WithLoginUser(useCase, openGate())).ServeHTTP(rec, request)
 	return rec
 }
 
@@ -151,7 +151,7 @@ func TestLoginRejectsUnreadableBodies(t *testing.T) {
 		"trailing data":      {body: loginBody() + `{}`},
 		"empty body":         {body: ``},
 		"wrong content type": {body: loginBody(), contentType: "text/plain"},
-		"oversized body":     {body: `{"password":"` + strings.Repeat("a", maxBodyBytes) + `"}`},
+		"oversized body":     {body: `{"password":"` + strings.Repeat("a", int(fallbackLimits.MaxBodyBytes)) + `"}`},
 		"email not a string": {body: `{"email":42,"password":"x"}`},
 		"password not text":  {body: `{"email":"maria@example.com","password":["x"]}`},
 	}

@@ -61,6 +61,7 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, listener
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,
+		MaxHeaderBytes:    int(cfg.MaxHeaderBytes),
 		IdleTimeout:       cfg.IdleTimeout,
 	}
 

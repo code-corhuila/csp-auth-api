@@ -52,9 +52,7 @@ func purge(useCase in.PurgeOldRecords) http.HandlerFunc {
 		}
 		if err != nil {
 			slog.Error("purge old records failed", "traceId", traceID, "error", err)
-			writeJSON(w, http.StatusInternalServerError, errorResponse{
-				Error: codeInternal, Message: "an unexpected error occurred", TraceID: traceID,
-			})
+			writeInternal(w, traceID, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, purgeResponse{ProcessedCount: result.ProcessedCount, HasMore: result.HasMore})

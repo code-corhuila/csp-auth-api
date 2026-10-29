@@ -430,6 +430,25 @@ Each route has a bulkhead (Norma 5.3.10): at most `APP_AUTH_PASSWORD_RESET_MAX_C
 `APP_AUTH_PASSWORD_RESET_QUEUE_TIMEOUT` before it is answered `429 RATE_LIMITED` with `Retry-After: 1`, after the body is read and before any
 transaction opens. It does not depend on the email. The retention purge also deletes the password resets that expired more than seven days ago.
 
+## Request limits
+
+Every limit is explicit (Norma 5.3.10) and is read at start; a value out of range stops the service.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `APP_AUTH_HTTP_REQUEST_TIMEOUT` | `10s` | Deadline of every request, at most `60s`. It also ends the wait for a pooled database connection. |
+| `APP_AUTH_DETACHED_DEADLINE` | `10s` | Deadline of the work of logout and role change once started, whatever the client does. At most `60s`. |
+| `APP_AUTH_HTTP_MAX_HEADER_BYTES` | `65536` | Largest request header (1 to 1048576); a larger one answers `431`. |
+| `APP_AUTH_MAX_BODY_BYTES` | `1048576` | Largest request body (1 to 16777216); a larger one answers `400 VALIDATION_ERROR`. |
+| `APP_AUTH_PASSWORD_RESET_MAX_BODY_BYTES` | `4096` | Largest body of `POST /forgot-password` and `POST /reset-password`, at most `APP_AUTH_MAX_BODY_BYTES`. |
+| `APP_AUTH_REGISTER_MAX_CONCURRENCY` | `8` | Bulkhead of `POST /register`. At least 1 and, with a database, below `APP_AUTH_DATABASE_MAX_CONNECTIONS`. |
+| `APP_AUTH_LOGIN_MAX_CONCURRENCY` | `8` | Bulkhead of `POST /login`, same rules. |
+
+A request that exhausts `APP_AUTH_HTTP_REQUEST_TIMEOUT` (for example while it waits for a connection of a saturated pool)
+answers `503 SERVICE_UNAVAILABLE` with the common envelope and `Retry-After: 1`. The register and login bulkheads are taken after the
+body is read and validated and before the bcrypt hash; a request that finds no free slot waits 1 second and then answers
+`429 RATE_LIMITED` with `Retry-After: 1`.
+
 ## Redis
 
 `APP_AUTH_REDIS_URL` (`redis://auth_app:<password>@redis:6379/0`, URL-safe password) points at the Redis of
