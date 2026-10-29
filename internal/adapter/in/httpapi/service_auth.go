@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -29,7 +30,7 @@ func serviceOnly(authorizer in.AuthorizeService, next http.HandlerFunc) http.Han
 			writeForbidden(w, traceID)
 		default:
 			slog.Error("authorize service failed", "traceId", traceID, "error", err)
-			writeInternal(w, traceID)
+			writeInternal(w, traceID, err)
 		}
 	}
 }
@@ -56,7 +57,17 @@ func writeForbidden(w http.ResponseWriter, traceID string) {
 	})
 }
 
-func writeInternal(w http.ResponseWriter, traceID string) {
+// writeInternal answers an unexpected failure. A request that ran out of its deadline (Limits.RequestTimeout), as one that
+// waited too long for a database connection, is a 503 SERVICE_UNAVAILABLE that the client may retry; anything else is a
+// 500 INTERNAL_ERROR. The cause only goes to the log.
+func writeInternal(w http.ResponseWriter, traceID string, err error) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		w.Header().Set("Retry-After", busyRetryAfterSeconds)
+		writeJSON(w, http.StatusServiceUnavailable, errorResponse{
+			Error: codeServiceUnavailable, Message: "A required service or dependency is unavailable", TraceID: traceID,
+		})
+		return
+	}
 	writeJSON(w, http.StatusInternalServerError, errorResponse{
 		Error: codeInternal, Message: "an unexpected error occurred", TraceID: traceID,
 	})
