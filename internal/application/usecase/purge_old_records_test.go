@@ -40,6 +40,7 @@ func (a *agedTable) ExistOlderThan(context.Context, time.Time) (bool, error) {
 type purgeFixture struct {
 	useCase                                           *PurgeOldRecords
 	outbox, refreshTokens, key, verifications, resets *agedTable
+	resetKeys                                         *agedTable
 	calls                                             []string
 }
 
@@ -50,7 +51,8 @@ func newPurgeFixture(outbox, refreshTokens, keys, verifications, resets int) *pu
 	f.key = &agedTable{name: "idempotency keys", eligible: keys, calls: &f.calls}
 	f.verifications = &agedTable{name: "email verifications", eligible: verifications, calls: &f.calls}
 	f.resets = &agedTable{name: "password resets", eligible: resets, calls: &f.calls}
-	f.useCase = NewPurgeOldRecords(f.outbox, f.refreshTokens, f.key, f.verifications, f.resets, fakeClock{})
+	f.resetKeys = &agedTable{name: "password reset keys", calls: &f.calls}
+	f.useCase = NewPurgeOldRecords(f.outbox, f.refreshTokens, f.key, f.verifications, f.resets, f.resetKeys, fakeClock{})
 	return f
 }
 
@@ -58,7 +60,7 @@ func purge(f *purgeFixture, batch int) (in.PurgeOldRecordsResult, error) {
 	return f.useCase.Purge(context.Background(), in.PurgeOldRecordsCommand{BatchSize: batch})
 }
 
-func TestPurgeDeletesOutboxThenRefreshTokensThenIdempotencyKeysThenEmailVerificationsThenPasswordResetsWithTheRetentionOfEachOne(t *testing.T) {
+func TestPurgeDeletesOutboxThenRefreshTokensThenIdempotencyKeysThenEmailVerificationsThenPasswordResetsThenPasswordResetKeysWithTheRetentionOfEachOne(t *testing.T) {
 	f := newPurgeFixture(1, 1, 1, 1, 1)
 
 	result, err := purge(f, 100)
@@ -66,7 +68,7 @@ func TestPurgeDeletesOutboxThenRefreshTokensThenIdempotencyKeysThenEmailVerifica
 	if err != nil || result.ProcessedCount != 5 || result.HasMore {
 		t.Fatalf("result = %+v, error = %v, want 5 deleted and nothing left", result, err)
 	}
-	if want := []string{"outbox", "refresh tokens", "idempotency keys", "email verifications", "password resets"}; !reflect.DeepEqual(f.calls, want) {
+	if want := []string{"outbox", "refresh tokens", "idempotency keys", "email verifications", "password resets", "password reset keys"}; !reflect.DeepEqual(f.calls, want) {
 		t.Errorf("order = %v, want %v", f.calls, want)
 	}
 	day := 24 * time.Hour
@@ -164,5 +166,45 @@ func TestPurgeSurfacesTheFailureOfAnyTable(t *testing.T) {
 		if !errors.Is(err, failure) || !reflect.DeepEqual(result, in.PurgeOldRecordsResult{}) {
 			t.Errorf("%s: result = %+v, error = %v, want an empty result and the failure", name, result, err)
 		}
+	}
+}
+
+func TestPurgeDeletesThePasswordResetKeysLastWithTheRetentionOfTheIdempotencyKeys(t *testing.T) {
+	f := newPurgeFixture(1, 1, 1, 1, 1)
+	f.resetKeys.eligible = 2
+
+	result, err := purge(f, 100)
+
+	if err != nil || result.ProcessedCount != 7 || result.HasMore {
+		t.Fatalf("result = %+v, error = %v, want 7 deleted and nothing left", result, err)
+	}
+	if last := f.calls[len(f.calls)-1]; last != "password reset keys" {
+		t.Errorf("last table = %q, want the password reset keys", last)
+	}
+	if want := registeredAt.Add(-7 * 24 * time.Hour); !f.resetKeys.cutoffs[0].Equal(want) {
+		t.Errorf("cutoff = %v, want %v: now minus 7 days", f.resetKeys.cutoffs[0], want)
+	}
+}
+
+func TestPurgeHasMoreWhenOnlyPasswordResetKeysAreLeft(t *testing.T) {
+	f := newPurgeFixture(0, 0, 0, 0, 0)
+	f.resetKeys.eligible = 4
+
+	result, err := purge(f, 3)
+
+	if err != nil || result.ProcessedCount != 3 || !result.HasMore {
+		t.Errorf("result = %+v, error = %v, want 3 deleted and more left", result, err)
+	}
+}
+
+func TestPurgeSurfacesTheFailureOfThePasswordResetKeys(t *testing.T) {
+	f := newPurgeFixture(0, 0, 0, 0, 0)
+	f.resetKeys.eligible = 1
+	f.resetKeys.err = errors.New("boom")
+
+	result, err := purge(f, 10)
+
+	if err == nil || !reflect.DeepEqual(result, in.PurgeOldRecordsResult{}) {
+		t.Errorf("result = %+v, error = %v, want an empty result and the failure", result, err)
 	}
 }

@@ -19,6 +19,7 @@ const (
 	forgotPath      = BasePath + "/forgot-password"
 	resetPath       = BasePath + "/reset-password"
 	forgotBody      = `{"email":"ana@example.com"}`
+	forgotKey       = "forgot-key-0001"
 	resetTokenText  = "3f2c1b7e-5a9d-4c1e-8b6f-0a1b2c3d4e5f"
 	resetPasswordIn = "NewSecret123"
 	resetBody       = `{"token":"` + resetTokenText + `","password":"` + resetPasswordIn + `"}`
@@ -54,12 +55,17 @@ type resetAttempt struct {
 	headers     map[string]string
 }
 
-func forgotAttempt(body string) resetAttempt { return resetAttempt{path: forgotPath, body: body} }
+func forgotAttempt(body string) resetAttempt {
+	return resetAttempt{path: forgotPath, body: body, headers: map[string]string{"Idempotency-Key": forgotKey}}
+}
 
 func resetPasswordAttempt(body string) resetAttempt { return resetAttempt{path: resetPath, body: body} }
 
 func tracedReset(a resetAttempt) resetAttempt {
-	a.headers = withTrace()
+	if a.headers == nil {
+		a.headers = map[string]string{}
+	}
+	a.headers["X-Correlation-Id"] = traceID
 	return a
 }
 
@@ -116,22 +122,50 @@ func TestForgotPasswordAnswers202WithoutBodyAndWithoutAuthentication(t *testing.
 	if rec.Code != http.StatusAccepted || rec.Body.Len() != 0 || rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("X-Correlation-Id") == "" {
 		t.Fatalf("status = %d, body = %q, headers = %v, want 202, no body, no-store and a correlation id", rec.Code, rec.Body, rec.Header())
 	}
-	if want := (in.RequestPasswordResetCommand{Email: " Ana@Example.com "}); useCase.command != want {
+	if want := (in.RequestPasswordResetCommand{IdempotencyKey: forgotKey, Email: " Ana@Example.com "}); useCase.command != want {
 		t.Errorf("command = %+v, want %+v", useCase.command, want)
 	}
 }
 
-func TestForgotPasswordIgnoresTheIdempotencyKey(t *testing.T) {
-	useCase := &fakeRequestPasswordReset{}
-	a := forgotAttempt(forgotBody)
-	a.headers = map[string]string{"Idempotency-Key": "x"}
+func TestForgotPasswordRequiresAnIdempotencyKeyOf8To128CharactersBeforeTheUseCaseAndTheGate(t *testing.T) {
+	keys := map[string]*string{
+		"missing":   nil,
+		"too short": ptr("1234567"),
+		"too long":  ptr(strings.Repeat("k", 129)),
+	}
+	for name, key := range keys {
+		t.Run(name, func(t *testing.T) {
+			useCase, gates := &fakeRequestPasswordReset{}, openGates()
+			gates.forgot, _ = NewBulkhead(1, time.Millisecond)
+			a := tracedReset(forgotAttempt(forgotBody))
+			delete(a.headers, "Idempotency-Key")
+			if key != nil {
+				a.headers["Idempotency-Key"] = *key
+			}
 
-	rec := sendPasswordReset(openGates(), useCase, &fakeResetPassword{}, a)
+			rec := sendPasswordReset(gates, useCase, &fakeResetPassword{}, a)
 
-	if rec.Code != http.StatusAccepted || useCase.called != 1 {
-		t.Errorf("status = %d, calls = %d, want 202: the route takes no Idempotency-Key", rec.Code, useCase.called)
+			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"field":"Idempotency-Key"`) || useCase.called != 0 {
+				t.Fatalf("status = %d, body = %s, calls = %d, want 400 with a detail for Idempotency-Key and no call", rec.Code, rec.Body, useCase.called)
+			}
+			if _, admitted := gates.forgot.Acquire(context.Background()); !admitted {
+				t.Error("an invalid request took a slot of the gate")
+			}
+		})
 	}
 }
+
+func TestResetPasswordTakesNoIdempotencyKey(t *testing.T) {
+	useCase := &fakeResetPassword{}
+
+	rec := sendPasswordReset(openGates(), &fakeRequestPasswordReset{}, useCase, resetPasswordAttempt(resetBody))
+
+	if rec.Code != http.StatusNoContent || useCase.called != 1 {
+		t.Errorf("status = %d, calls = %d, want 204 without the header", rec.Code, useCase.called)
+	}
+}
+
+func ptr(value string) *string { return &value }
 
 func TestForgotPasswordRejectsAnInvalidBodyBeforeTheUseCaseAndTheGate(t *testing.T) {
 	cases := map[string]resetAttempt{
@@ -139,7 +173,7 @@ func TestForgotPasswordRejectsAnInvalidBodyBeforeTheUseCaseAndTheGate(t *testing
 		"invalid email":    forgotAttempt(`{"email":"not-an-email"}`),
 		"email too long":   forgotAttempt(`{"email":"` + addressOfLength(model.MaxEmailLength+1) + `"}`),
 		"not JSON":         forgotAttempt(`{"email":`),
-		"wrong media type": {path: forgotPath, body: forgotBody, contentType: "text/plain"},
+		"wrong media type": {path: forgotPath, body: forgotBody, contentType: "text/plain", headers: map[string]string{"Idempotency-Key": forgotKey}},
 		"body over 4 KiB":  forgotAttempt(`{"email":"ana@example.com","padding":"` + strings.Repeat("a", 4096) + `"}`),
 	}
 	for name, a := range cases {
@@ -167,6 +201,8 @@ func TestForgotPasswordMapsTheErrorsOfTheUseCase(t *testing.T) {
 		wantError  string
 	}{
 		"invalid email":    {model.ErrInvalidEmail, http.StatusBadRequest, "VALIDATION_ERROR"},
+		"invalid key":      {model.ErrInvalidIdempotencyKey, http.StatusBadRequest, "VALIDATION_ERROR"},
+		"key conflict":     {model.ErrIdempotencyKeyConflict, http.StatusConflict, "IDEMPOTENCY_KEY_CONFLICT"},
 		"unexpected error": {errors.New("driver failure for ana@example.com"), http.StatusInternalServerError, "INTERNAL_ERROR"},
 	}
 	for name, c := range cases {
