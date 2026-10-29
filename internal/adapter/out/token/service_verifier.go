@@ -14,9 +14,9 @@ import (
 // (ADR-020). It implements out.ServiceTokenVerifier with the public keys of the signing key of
 // this service.
 //
-// A service credential is validated like any other token: signature, expiration and a subject.
-// Issuer and audience are not required, because the tokens of the development script carry
-// neither (07-api/authentication.md).
+// A service credential is validated like any other token (signature, expiration and a subject) and
+// must also carry the issuer csp-auth and the audience csp-internal (ADR-056). A token of a user,
+// whose audience is csp-api, is therefore never a service credential.
 type ServiceTokenVerifier struct {
 	keys   []model.PublicKey
 	parser *jwt.Parser
@@ -32,6 +32,8 @@ func NewServiceTokenVerifier(keys []model.PublicKey, clock out.Clock) *ServiceTo
 		parser: jwt.NewParser(
 			jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}),
 			jwt.WithExpirationRequired(),
+			jwt.WithIssuer(issuerName),
+			jwt.WithAudience(serviceAudience),
 			jwt.WithTimeFunc(clock.Now),
 		),
 	}

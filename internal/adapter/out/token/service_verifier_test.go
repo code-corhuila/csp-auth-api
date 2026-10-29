@@ -37,14 +37,23 @@ func newVerifier(keys ...*rsa.PrivateKey) *ServiceTokenVerifier {
 }
 
 func validClaims() jwt.MapClaims {
-	return jwt.MapClaims{"sub": "csp-worker", "iat": verifiedAt.Unix(), "exp": verifiedAt.Add(time.Minute).Unix()}
+	return jwt.MapClaims{
+		"sub": "csp-worker",
+		"iss": "csp-auth",
+		"aud": "csp-internal",
+		"iat": verifiedAt.Unix(),
+		"exp": verifiedAt.Add(time.Minute).Unix(),
+	}
 }
 
 func TestVerifierReturnsTheSubjectOfATokenSignedByTheServiceKey(t *testing.T) {
 	key := generateKey(t, 2048)
+	audienceList := validClaims()
+	audienceList["aud"] = []string{"csp-api", "csp-internal"}
 	cases := map[string]string{
 		"without kid, as dev-token.sh signs it": serviceToken(t, key, jwt.SigningMethodRS256, validClaims(), ""),
 		"with the kid of the key":               serviceToken(t, key, jwt.SigningMethodRS256, validClaims(), thumbprint(&key.PublicKey)),
+		"with an audience list":                 serviceToken(t, key, jwt.SigningMethodRS256, audienceList, ""),
 	}
 	for name, signed := range cases {
 		subject, err := newVerifier(key).VerifyServiceToken(signed)
@@ -54,7 +63,7 @@ func TestVerifierReturnsTheSubjectOfATokenSignedByTheServiceKey(t *testing.T) {
 	}
 }
 
-func TestVerifierAcceptsAnAccessTokenOfTheIssuerAndLeavesAuthorizationToTheUseCase(t *testing.T) {
+func TestVerifierRejectsTheAccessTokenOfAUser(t *testing.T) {
 	key := generateKey(t, 2048)
 	issued, err := newIssuer(t, key, verifiedAt).IssueAccessToken(adminClaims(t))
 	if err != nil {
@@ -63,8 +72,8 @@ func TestVerifierAcceptsAnAccessTokenOfTheIssuerAndLeavesAuthorizationToTheUseCa
 
 	subject, err := newVerifier(key).VerifyServiceToken(issued.Value)
 
-	if err != nil || subject != "550e8400-e29b-41d4-a716-446655440000" {
-		t.Errorf("subject = %q, error = %v, want the user id", subject, err)
+	if !errors.Is(err, model.ErrServiceTokenInvalid) || subject != "" {
+		t.Errorf("subject = %q, error = %v, want ErrServiceTokenInvalid: its audience is csp-api", subject, err)
 	}
 }
 
@@ -78,6 +87,14 @@ func TestVerifierRejectsEveryTokenThatIsNotAValidServiceCredential(t *testing.T)
 	emptySub["sub"] = ""
 	expired := validClaims()
 	expired["exp"] = verifiedAt.Add(-time.Second).Unix()
+	withoutIssuer := validClaims()
+	delete(withoutIssuer, "iss")
+	otherIssuer := validClaims()
+	otherIssuer["iss"] = "csp-catalog"
+	withoutAudience := validClaims()
+	delete(withoutAudience, "aud")
+	otherAudience := validClaims()
+	otherAudience["aud"] = "csp-api"
 	cases := map[string]string{
 		"empty":                   "",
 		"not a token":             "not-a-jwt",
@@ -87,6 +104,10 @@ func TestVerifierRejectsEveryTokenThatIsNotAValidServiceCredential(t *testing.T)
 		"without exp":             serviceToken(t, key, jwt.SigningMethodRS256, withoutExp, ""),
 		"without sub":             serviceToken(t, key, jwt.SigningMethodRS256, withoutSub, ""),
 		"with an empty sub":       serviceToken(t, key, jwt.SigningMethodRS256, emptySub, ""),
+		"without iss":             serviceToken(t, key, jwt.SigningMethodRS256, withoutIssuer, ""),
+		"with another iss":        serviceToken(t, key, jwt.SigningMethodRS256, otherIssuer, ""),
+		"without aud":             serviceToken(t, key, jwt.SigningMethodRS256, withoutAudience, ""),
+		"with another aud":        serviceToken(t, key, jwt.SigningMethodRS256, otherAudience, ""),
 		"signed with RS512":       serviceToken(t, key, jwt.SigningMethodRS512, validClaims(), ""),
 		"alg none":                signedNone(t, validClaims()),
 		"HS256 with a shared key": signedHMAC(t, validClaims()),
