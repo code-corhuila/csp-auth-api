@@ -27,7 +27,7 @@ func NewPurgeBatchSize(value int) (PurgeBatchSize, error) {
 
 // RetentionPolicy is how long each kind of auth record is kept before the purge may delete it
 // (ADR-030): outbox events 30 days, refresh tokens 30 days after they expire or are revoked,
-// idempotency keys and password reset keys 7 days, and email verification requests and password resets 7 days after they expire
+// idempotency keys, password reset keys and email change keys 7 days, and email verification requests and password resets 7 days after they expire
 // (ADR-034, ADR-050).
 type RetentionPolicy struct {
 	OutboxEvents       time.Duration

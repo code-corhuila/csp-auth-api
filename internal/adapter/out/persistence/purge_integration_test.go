@@ -23,7 +23,7 @@ const day = 24 * time.Hour
 // rows first, so the counts of the test are its own.
 type purgeFixture struct {
 	fixture
-	outbox, tokens, keys, verifications, resets, resetKeys *agedRows
+	outbox, tokens, keys, verifications, resets, resetKeys, emailKeys *agedRows
 }
 
 func newPurgeFixture(t *testing.T) purgeFixture {
@@ -48,6 +48,7 @@ func newPurgeFixture(t *testing.T) purgeFixture {
 		verifications: NewEmailVerificationPurger(f.pool).(*agedRows),
 		resets:        NewPasswordResetPurger(f.pool).(*agedRows),
 		resetKeys:     NewPasswordResetKeyPurger(f.pool).(*agedRows),
+		emailKeys:     NewEmailChangeKeyPurger(f.pool).(*agedRows),
 	}
 	p.drain(t)
 	return p
@@ -59,7 +60,7 @@ func (p purgeFixture) drain(t *testing.T) {
 	for _, step := range []struct {
 		records *agedRows
 		cutoff  time.Time
-	}{{p.outbox, now.Add(-30 * day)}, {p.tokens, now.Add(-30 * day)}, {p.keys, now.Add(-7 * day)}, {p.verifications, now.Add(-7 * day)}, {p.resets, now.Add(-7 * day)}, {p.resetKeys, now.Add(-7 * day)}} {
+	}{{p.outbox, now.Add(-30 * day)}, {p.tokens, now.Add(-30 * day)}, {p.keys, now.Add(-7 * day)}, {p.verifications, now.Add(-7 * day)}, {p.resets, now.Add(-7 * day)}, {p.resetKeys, now.Add(-7 * day)}, {p.emailKeys, now.Add(-7 * day)}} {
 		for {
 			deleted, err := step.records.DeleteOlderThan(context.Background(), step.cutoff, 500)
 			if err != nil {
@@ -173,6 +174,19 @@ func (p purgeFixture) seedResetKey(t *testing.T, age time.Duration) string {
 	return key
 }
 
+// seedEmailKey stores an email change key of the given age with no link to a request, as one is
+// left after its request was deleted.
+func (p purgeFixture) seedEmailKey(t *testing.T, age time.Duration) string {
+	t.Helper()
+	key := "purge-" + newUUID(t)
+	if _, err := p.pool.Exec(context.Background(),
+		`INSERT INTO auth.email_change_idempotency_key (key, request_hash, created_at) VALUES ($1, $2, $3)`,
+		key, model.EmailChangeRequestHash(newUUID(t), mustEmail(t, uniqueEmail(t))), time.Now().Add(-age)); err != nil {
+		t.Fatalf("seed an email change key: %v", err)
+	}
+	return key
+}
+
 func (p purgeFixture) present(t *testing.T, table, column, id string) bool {
 	t.Helper()
 	var found bool
@@ -271,7 +285,9 @@ func TestPurgeUseCaseOverTheRealTablesIsBoundedByTheBatchSizeAndFinishesInTwoCal
 	youngReset := p.seedReset(t, 6*day, false)
 	resetKeys := []string{p.seedResetKey(t, 8*day), p.seedResetKey(t, 9*day)}
 	youngResetKey := p.seedResetKey(t, day)
-	purge := usecase.NewPurgeOldRecords(p.outbox, p.tokens, p.keys, p.verifications, p.resets, p.resetKeys, system.Clock{})
+	emailKeys := []string{p.seedEmailKey(t, 8*day), p.seedEmailKey(t, 9*day)}
+	youngEmailKey := p.seedEmailKey(t, day)
+	purge := usecase.NewPurgeOldRecords(p.outbox, p.tokens, p.keys, p.verifications, p.resets, p.resetKeys, p.emailKeys, system.Clock{})
 
 	first, err := purge.Purge(ctx, in.PurgeOldRecordsCommand{BatchSize: 3})
 
@@ -284,7 +300,7 @@ func TestPurgeUseCaseOverTheRealTablesIsBoundedByTheBatchSizeAndFinishesInTwoCal
 		}
 	}
 	second, err := purge.Purge(ctx, in.PurgeOldRecordsCommand{BatchSize: model.MaxPurgeBatchSize})
-	if err != nil || second.ProcessedCount != 9 || second.HasMore {
+	if err != nil || second.ProcessedCount != 11 || second.HasMore {
 		t.Fatalf("second Purge() = %+v, %v, want the 9 left and nothing more", second, err)
 	}
 	third, err := purge.Purge(ctx, in.PurgeOldRecordsCommand{BatchSize: 10})
@@ -328,6 +344,14 @@ func TestPurgeUseCaseOverTheRealTablesIsBoundedByTheBatchSizeAndFinishesInTwoCal
 	if !p.present(t, "auth.password_reset_idempotency_key", "key", youngResetKey) {
 		t.Error("the password reset key of one day was deleted")
 	}
+	for _, key := range emailKeys {
+		if p.present(t, "auth.email_change_idempotency_key", "key", key) {
+			t.Errorf("email change key %s was not deleted", key)
+		}
+	}
+	if !p.present(t, "auth.email_change_idempotency_key", "key", youngEmailKey) {
+		t.Error("the email change key of one day was deleted")
+	}
 }
 
 func TestPasswordResetKeyPurgerDeletesOnlyKeysOlderThanTheCutoffAndOnlyUpToTheLimit(t *testing.T) {
@@ -348,6 +372,27 @@ func TestPasswordResetKeyPurgerDeletesOnlyKeysOlderThanTheCutoffAndOnlyUpToTheLi
 	}
 	if left, _ := p.resetKeys.ExistOlderThan(ctx, cutoff); left || !p.present(t, "auth.password_reset_idempotency_key", "key", young) {
 		t.Errorf("ExistOlderThan() = %v, young key present = %v, want false and true", left, p.present(t, "auth.password_reset_idempotency_key", "key", young))
+	}
+}
+
+func TestEmailChangeKeyPurgerDeletesOnlyKeysOlderThanTheCutoffAndOnlyUpToTheLimit(t *testing.T) {
+	p, ctx := newPurgeFixture(t), context.Background()
+	old := []string{p.seedEmailKey(t, 10*day), p.seedEmailKey(t, 8*day)}
+	young := p.seedEmailKey(t, 6*day)
+	cutoff := time.Now().Add(-7 * day)
+
+	first, err := p.emailKeys.DeleteOlderThan(ctx, cutoff, 1)
+	if err != nil || first != 1 || p.present(t, "auth.email_change_idempotency_key", "key", old[0]) || !p.present(t, "auth.email_change_idempotency_key", "key", old[1]) {
+		t.Fatalf("DeleteOlderThan(limit 1) = %d, %v, want only the oldest key to go", first, err)
+	}
+	if left, _ := p.emailKeys.ExistOlderThan(ctx, cutoff); !left {
+		t.Error("ExistOlderThan() = false, want true: one old key is left")
+	}
+	if rest, err := p.emailKeys.DeleteOlderThan(ctx, cutoff, 5); err != nil || rest != 1 {
+		t.Fatalf("second DeleteOlderThan(limit 5) = %d, %v, want the 1 left", rest, err)
+	}
+	if left, _ := p.emailKeys.ExistOlderThan(ctx, cutoff); left || !p.present(t, "auth.email_change_idempotency_key", "key", young) {
+		t.Errorf("ExistOlderThan() = %v, young key present = %v, want false and true", left, p.present(t, "auth.email_change_idempotency_key", "key", young))
 	}
 }
 

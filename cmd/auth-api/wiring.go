@@ -339,6 +339,7 @@ func newPurgeOldRecords(pool *pgxpool.Pool) *usecase.PurgeOldRecords {
 		persistence.NewEmailVerificationPurger(pool),
 		persistence.NewPasswordResetPurger(pool),
 		persistence.NewPasswordResetKeyPurger(pool),
+		persistence.NewEmailChangeKeyPurger(pool),
 		system.Clock{},
 	)
 }
@@ -355,6 +356,7 @@ func newRequestEmailChange(cfg config.Config, logger *slog.Logger, pool *pgxpool
 	return usecase.NewRequestEmailChange(usecase.RequestEmailChangePorts{
 		Users:        persistence.NewUserRepository(pool),
 		Requests:     persistence.NewEmailVerificationRepository(pool),
+		Keys:         persistence.NewEmailChangeKeyRepository(pool),
 		Codes:        system.NewVerificationCodeGenerator(),
 		Sender:       sender,
 		IDs:          system.UUIDGenerator{},

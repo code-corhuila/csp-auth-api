@@ -49,6 +49,12 @@ func NewPasswordResetKeyPurger(pool *pgxpool.Pool) out.PurgeableRecords {
 	return &agedRows{pool: pool, table: "auth.password_reset_idempotency_key", key: "key", eligible: "created_at < $1", orderBy: "created_at, key"}
 }
 
+// NewEmailChangeKeyPurger purges auth.email_change_idempotency_key rows created before the cutoff
+// (ADR-030, ADR-034). A key is never kept past the retention whether or not its request still exists.
+func NewEmailChangeKeyPurger(pool *pgxpool.Pool) out.PurgeableRecords {
+	return &agedRows{pool: pool, table: "auth.email_change_idempotency_key", key: "key", eligible: "created_at < $1", orderBy: "created_at, key"}
+}
+
 // NewEmailVerificationPurger purges auth.email_verification rows that expired before the cutoff,
 // whether they were verified or not (ADR-030). The code is stored in clear, so the rows are
 // not kept past the retention.
