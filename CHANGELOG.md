@@ -9,6 +9,7 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Changed
 
+- The delivery test of the password reset sender no longer depends on the speed of the machine (HU-AUTH-006, issue [#173](https://github.com/code-corhuila/csp-auth-api/issues/173)): `TestSendReturnsAtOnceAndTheMessageIsDeliveredAfterwards` failed under load because it polled the fake relay for only 5 seconds, less than the 10 seconds the sender allows a delivery. The polling guard is now 30 seconds and ends as soon as the message arrives; the assertions are unchanged.
 - `POST /forgot-password` requires `Idempotency-Key` (8 to 128 characters, `400 VALIDATION_ERROR` on the header otherwise) and stores it in
   `auth.password_reset_idempotency_key` with the SHA-256 of the normalised email, in the same transaction as the token (linked to it) and, for the
   cases that create no token, alone: a replay answers the same silent `202` and creates and sends nothing, the same key with another email is
