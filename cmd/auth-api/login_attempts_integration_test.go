@@ -48,8 +48,8 @@ func TestLoginAttemptLimitEndToEndAgainstTheDatabaseAndRedis(t *testing.T) {
 
 		status, header, payload := loginFromAddress(t, server.URL, address, right)
 
-		if status != http.StatusTooManyRequests || payload["error"] != "RATE_LIMITED" {
-			t.Fatalf("status = %d, body = %v, want 429 RATE_LIMITED", status, payload)
+		if status != http.StatusTooManyRequests || payload["error"] != "TOO_MANY_REQUESTS" {
+			t.Fatalf("status = %d, body = %v, want 429 TOO_MANY_REQUESTS", status, payload)
 		}
 		if seconds, err := strconv.Atoi(header.Get("Retry-After")); err != nil || seconds < 1 || seconds > 2 {
 			t.Errorf("Retry-After = %q, want 1 or 2 seconds", header.Get("Retry-After"))

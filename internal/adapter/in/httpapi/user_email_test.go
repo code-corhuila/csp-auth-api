@@ -155,7 +155,7 @@ func TestRequestEmailChangeMapsTheErrorsOfTheUseCase(t *testing.T) {
 		"invalid email":    {model.ErrInvalidEmail, http.StatusBadRequest, "VALIDATION_ERROR"},
 		"email registered": {model.ErrEmailAlreadyRegistered, http.StatusConflict, "EMAIL_ALREADY_REGISTERED"},
 		"key conflict":     {model.ErrIdempotencyKeyConflict, http.StatusConflict, "IDEMPOTENCY_KEY_CONFLICT"},
-		"too many":         {model.ErrTooManyEmailChangeRequests, http.StatusTooManyRequests, "RATE_LIMITED"},
+		"too many":         {model.ErrTooManyEmailChangeRequests, http.StatusTooManyRequests, "TOO_MANY_REQUESTS"},
 		"unexpected":       {errors.New("driver failure: password=hunter2"), http.StatusInternalServerError, "INTERNAL_ERROR"},
 	}
 	for name, c := range cases {

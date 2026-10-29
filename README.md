@@ -131,7 +131,7 @@ It requires a JSON body of at most 1 MiB with `email` and `password`, and answer
 (`Cache-Control: no-store`). A missing or empty field is `400`; an unknown or malformed email and a wrong password get
 the same `401` (`INVALID_CREDENTIALS`), and a locked account gets `423` (`ACCOUNT_LOCKED`) only when the password is
 right. With Redis, 10 failed logins from the same client address in 5 minutes lock that address for 5 minutes (HU-AUTH-005, ADR-040):
-the next attempt is `429` (`RATE_LIMITED`) with `Retry-After` set to the seconds left, **whether or not the credentials are right**, and
+the next attempt is `429` (`TOO_MANY_REQUESTS`) with `Retry-After` set to the seconds left, **whether or not the credentials are right**, and
 after the cooldown the right credentials authenticate normally. See "Login attempt limit".
 
 `POST /api/v1/auth/refresh` (HU-AUTH-002) is enabled by the same two settings and renews a session:
@@ -224,7 +224,7 @@ curl -i -X POST http://localhost:8081/api/v1/auth/me/email/verify -H "Authorizat
 
 The request normalizes the address to lower case and answers `202` with no body: the code is never in the response. An invalid address
 is `400`, an address used by any active account (the own one included) is `409 EMAIL_ALREADY_REGISTERED`, and the fourth request of a
-user in a rolling hour (superseded ones count) is `429 RATE_LIMITED` with `Retry-After: 3600`; `429` with `Retry-After: 1` also means
+user in a rolling hour (superseded ones count) is `429 TOO_MANY_REQUESTS` with `Retry-After: 3600`; `429` with `Retry-After: 1` also means
 that the service is busy sending other codes (bulkhead, see [Email delivery](#email-delivery-smtp)). A new request with a new key replaces the
 pending one.
 
@@ -369,7 +369,7 @@ of an account that is gone or locked is `401`.
 
 Guessing the current password with a stolen token is bounded per **user** (the id in the token): with Redis, `APP_AUTH_PASSWORD_CHANGE_MAX_ATTEMPTS`
 wrong current passwords inside `APP_AUTH_PASSWORD_CHANGE_WINDOW` write the lock (`APP_AUTH_PASSWORD_CHANGE_LOCK`) and the next attempt is
-`429 RATE_LIMITED` with `Retry-After` set to the remaining seconds (rounded up, at least 1), **before** the password is verified, so even the
+`429 TOO_MANY_REQUESTS` with `Retry-After` set to the remaining seconds (rounded up, at least 1), **before** the password is verified, so even the
 correct one is refused and no bcrypt work is done. Only wrong current passwords count; validation errors, the equal-password error and `500` do
 not, and a success drops the counter. The keys are `attempts:pwd:{userId}` and `locked:pwd:{userId}`, inside the prefixes the ACL of the auth
 Redis already grants. If the limit store cannot be consulted the limit **fails open** with a `WARN` that carries neither the password nor the
@@ -427,7 +427,7 @@ same bcrypt check as the login, only after the token proved valid, so the `401` 
 works with another password. Previous passwords are not remembered: only the current one is refused. Access tokens already issued last until they expire (at most one hour).
 
 Each route has a bulkhead (Norma 5.3.10): at most `APP_AUTH_PASSWORD_RESET_MAX_CONCURRENCY` requests run at once and the next one waits at most
-`APP_AUTH_PASSWORD_RESET_QUEUE_TIMEOUT` before it is answered `429 RATE_LIMITED` with `Retry-After: 1`, after the body is read and before any
+`APP_AUTH_PASSWORD_RESET_QUEUE_TIMEOUT` before it is answered `429 TOO_MANY_REQUESTS` with `Retry-After: 1`, after the body is read and before any
 transaction opens. It does not depend on the email. The retention purge also deletes the password resets that expired more than seven days ago.
 
 ## Request limits
@@ -447,7 +447,7 @@ Every limit is explicit (Norma 5.3.10) and is read at start; a value out of rang
 A request that exhausts `APP_AUTH_HTTP_REQUEST_TIMEOUT` (for example while it waits for a connection of a saturated pool)
 answers `503 SERVICE_UNAVAILABLE` with the common envelope and `Retry-After: 1`. The register and login bulkheads are taken after the
 body is read and validated and before the bcrypt hash; a request that finds no free slot waits 1 second and then answers
-`429 RATE_LIMITED` with `Retry-After: 1`.
+`429 TOO_MANY_REQUESTS` with `Retry-After: 1`.
 
 ## Redis
 
@@ -528,7 +528,7 @@ fails is a `500` with a `WARN` that carries the user id and the class of the err
 `canceled`...); the code, the address and the credentials are never logged. The SMTP call runs inside the database transaction, so a slow
 relay holds a connection for up to the timeout. That is why `PATCH /me/email` has a bulkhead (Norma 5.3.10): when
 `APP_AUTH_EMAIL_CHANGE_MAX_CONCURRENCY` requests are in flight, the next one waits at most `APP_AUTH_EMAIL_CHANGE_QUEUE_TIMEOUT` and is
-then answered `429 RATE_LIMITED` with `Retry-After: 1` **before a transaction is opened**, with a `WARN` (`email change request refused:
+then answered `429 TOO_MANY_REQUESTS` with `Retry-After: 1` **before a transaction is opened**, with a `WARN` (`email change request refused:
 no free slot`, the limit and the wait, never the address). `POST /me/email/verify` sends nothing and is not limited.
 
 To try it locally with Mailpit (a catcher that keeps the messages, never use it outside a developer machine):

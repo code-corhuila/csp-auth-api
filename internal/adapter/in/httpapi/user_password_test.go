@@ -179,8 +179,8 @@ func TestPasswordChangeAnswers429WithTheSecondsLeftOfTheLockRoundedUp(t *testing
 		t.Run(name, func(t *testing.T) {
 			rec := sendPasswordChange(openPasswordGate(), &fakeUserAuthorizer{}, &fakeChangePassword{err: c.err}, passwordAttempt{body: passwordBody})
 
-			if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != c.want || !strings.Contains(rec.Body.String(), "RATE_LIMITED") {
-				t.Errorf("status = %d, Retry-After = %q, body = %s, want 429 RATE_LIMITED with %s", rec.Code, rec.Header().Get("Retry-After"), rec.Body, c.want)
+			if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != c.want || !strings.Contains(rec.Body.String(), "TOO_MANY_REQUESTS") {
+				t.Errorf("status = %d, Retry-After = %q, body = %s, want 429 TOO_MANY_REQUESTS with %s", rec.Code, rec.Header().Get("Retry-After"), rec.Body, c.want)
 			}
 		})
 	}

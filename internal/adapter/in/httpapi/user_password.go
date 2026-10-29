@@ -89,7 +89,7 @@ func translateChangePasswordError(w http.ResponseWriter, traceID string, err err
 	case errors.Is(err, model.ErrTooManyPasswordChangeAttempts):
 		w.Header().Set("Retry-After", passwordChangeRetryAfterSeconds(err))
 		writeJSON(w, http.StatusTooManyRequests, errorResponse{
-			Error: codeRateLimited, Message: "Too many wrong passwords, try again later", TraceID: traceID,
+			Error: codeTooManyRequests, Message: "Too many wrong passwords, try again later", TraceID: traceID,
 		})
 	case errors.Is(err, model.ErrUserNotFound), errors.Is(err, model.ErrUserLocked):
 		slog.Warn("password change refused: the account of the token is not active", "traceId", traceID)
