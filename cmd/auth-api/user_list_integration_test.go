@@ -75,18 +75,18 @@ func TestListUsersEndToEndAgainstTheDatabase(t *testing.T) {
 		t.Fatalf("status = %d, body = %v, want 200, one item of two users and two pages", status, payload)
 	}
 	first, _ := data[0].(map[string]any)
-	if first["id"] != adminID || first["email"] != adminEmail {
-		t.Errorf("first item = %v, want the administrator (email order)", first)
+	if first["id"] != targetID || first["roles"] == nil {
+		t.Errorf("first item = %v, want the user registered last (newest first)", first)
 	}
 	if _, leaked := first["permissions"]; leaked {
 		t.Errorf("first item = %v, want no permissions", first)
 	}
-	if roles, _ := first["roles"].([]any); len(roles) != 2 {
-		t.Errorf("roles = %v, want ADMIN and CLIENT", first["roles"])
+	if roles, _ := first["roles"].([]any); len(roles) != 1 {
+		t.Errorf("roles = %v, want CLIENT only", first["roles"])
 	}
 
-	if _, payload := listUsers(t, server.URL, adminToken, "?page=2&limit=1&email="+prefix); fmt.Sprint(payload["data"]) == "[]" || !strings.Contains(fmt.Sprint(payload["data"]), targetID) {
-		t.Errorf("page 2 = %v, want the second user %s", payload, targetID)
+	if _, payload := listUsers(t, server.URL, adminToken, "?page=2&limit=1&email="+prefix); fmt.Sprint(payload["data"]) == "[]" || !strings.Contains(fmt.Sprint(payload["data"]), adminID) {
+		t.Errorf("page 2 = %v, want the older user %s", payload, adminID)
 	}
 	if status, payload := listUsers(t, server.URL, adminToken, "?email="); status != http.StatusBadRequest || payload["error"] != "VALIDATION_ERROR" {
 		t.Errorf("empty prefix: status = %d, body = %v, want 400 VALIDATION_ERROR", status, payload)
