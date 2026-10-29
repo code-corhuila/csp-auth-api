@@ -36,7 +36,7 @@ func TestNewHandlerServesThePasswordResetRoutesOnlyWithTheDatabaseTheSMTPHostAnd
 		wantBody   string
 		logLine    string
 	}{
-		"key and link without database":    {keyAndLink, http.StatusNotFound, "404 page not found", ""},
+		"key and link without database":    {keyAndLink, http.StatusNotFound, `"error":"NOT_FOUND"`, ""},
 		"database and key, no SMTP host":   {withDatabase, http.StatusNotFound, `"error":"NOT_FOUND"`, "APP_AUTH_SMTP_HOST is not set: the password reset is not enabled"},
 		"database, SMTP host, no link":     {withHost, http.StatusNotFound, `"error":"NOT_FOUND"`, "APP_AUTH_PASSWORD_RESET_URL is not set: the password reset is not enabled"},
 		"database, SMTP host and the link": {withLink, http.StatusBadRequest, `"error":"VALIDATION_ERROR"`, "password reset routes enabled"},
