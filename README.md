@@ -261,7 +261,7 @@ and not replaced without `-force`. Stdout stays empty; one line on stderr record
 Internal operations (ADR-020) accept a **service credential**: an RS256 token signed with the key of this service,
 with `exp` and a `sub` and sent as `Authorization: Bearer`. A missing or invalid token gets `401 UNAUTHORIZED` and a
 valid token whose `sub` is not in `SERVICE_SUBJECTS` (comma-separated, empty by default so that no service is allowed)
-gets `403 FORBIDDEN`. Issuer and audience are not required. The service has no endpoint that issues these tokens: the
+gets `403 FORBIDDEN`. The token must also carry `iss` `csp-auth` and an `aud` that contains `csp-internal` (ADR-056); a user's access token (`aud` `csp-api`) is refused with `401`. The service has no endpoint that issues these tokens: the
 owner issues them with `auth-token` (above) and loads them as environment secrets, and `csp-infra-postgres/scripts/dev-token.sh <sub> <minutes>` writes one for
 development. The first internal operation is the purge of old rows.
 
