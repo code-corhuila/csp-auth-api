@@ -13,7 +13,8 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 - Development only: the profile `mail-relay` of `deploy/compose.yml`, a Mailpit (`mailpit-relay`, reachable as `mailpit`) that stores every message and relays
   those whose recipient matches `MAILPIT_RELAY_MATCHING` to a real SMTP provider, configured by `MAILPIT_RELAY_FILE` (rendered by `csp-infra-postgres`). The
-  service keeps talking to Mailpit only, so an expired key or a provider that is down only fails the relay. No change in the Go code.
+  service keeps talking to Mailpit only, so an expired key only fails the relay; a provider that is unreachable or slow keeps Mailpit waiting inside the
+  SMTP session and the synchronous email change answers `500` (measured, see the README), while the password reset is not affected. No change in the Go code.
 
 ### Changed
 

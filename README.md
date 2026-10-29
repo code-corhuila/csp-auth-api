@@ -543,9 +543,13 @@ on the loopback only; the message with the code appears at `http://localhost:802
 
 To also send the messages through a real provider while developing, use the profile `mail-relay` instead of `mail`: the service `mailpit-relay`
 is the same catcher with a relay (`--smtp-relay-config` and `MAILPIT_RELAY_MATCHING`, the recipients that reach the provider), reachable under the
-same name `mailpit`. The service keeps talking only to Mailpit, so an expired key or a provider that is down fails the relay (an error in the Mailpit
-log) and never the service. The variables and the script that renders the relay file are in `csp-infra-postgres` (README, "The SMTP relay of the
-identity service"). Development only.
+same name `mailpit`. The service keeps talking only to Mailpit. An expired key (the provider answers with an error) fails the relay, which is an error in
+the Mailpit log, and not the service (checked: the email change answered `202` in 1.2 s with `APP_AUTH_SMTP_TIMEOUT=15s`). A provider that is unreachable
+or slow is different: Mailpit relays inside the SMTP session, so it keeps the service waiting (about 20 s when the provider is unreachable) and the email
+change, which sends its code synchronously, answers `500` when `APP_AUTH_SMTP_TIMEOUT` (5 s by default, 15 s advised here) or the request deadline
+(`APP_AUTH_HTTP_REQUEST_TIMEOUT`, 10 s) expires, although Mailpit stores the message afterwards; the password reset is queued and answers `202` at once
+(checked). If the provider is down, use the profile `mail` instead. The variables and the script that renders the relay file are in `csp-infra-postgres`
+(README, "The SMTP relay of the identity service"). Development only.
 
 ## Branching
 

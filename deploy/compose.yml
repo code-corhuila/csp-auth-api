@@ -133,10 +133,14 @@ services:
     networks: [platform]
 
   # The same catcher, but it also relays each message it receives to a real SMTP provider (profile `mail-relay`, development only,
-  # instead of `mail`: both use the same ports). The service keeps pointing at `mailpit:1025`, so the messages are always stored and
-  # shown at http://localhost:8025, and an expired key or a provider that is down only makes the relay fail (Mailpit logs it): the
-  # service never talks to the provider. To change provider or renew the key, change the MAILPIT_RELAY_* variables of the platform
-  # env file and run csp-infra-postgres/scripts/mailpit-relay.sh again.
+  # instead of `mail`: both use the same ports). The service keeps pointing at `mailpit:1025` and never talks to the provider, so the
+  # messages are shown at http://localhost:8025 and an expired key (the provider answers with an error) only makes the relay fail,
+  # which Mailpit logs. The relay runs inside the SMTP session of Mailpit: a provider that is unreachable or slow keeps the sender
+  # waiting (about 20 s when it is unreachable) and the synchronous email change of the service answers 500 when its timeout
+  # (APP_AUTH_SMTP_TIMEOUT, 5 s by default, 15 s advised here) or the request deadline (10 s) expires, although Mailpit stores the
+  # message afterwards. The password reset is queued and is not affected. If the provider is down, use the profile `mail` instead.
+  # To change provider or renew the key, change the MAILPIT_RELAY_* variables of the platform env file and run
+  # csp-infra-postgres/scripts/mailpit-relay.sh again.
   # Only the recipients that match MAILPIT_RELAY_MATCHING (a regular expression) are relayed, so test addresses are not sent to the provider.
   mailpit-relay:
     image: axllent/mailpit:v1.21.8
