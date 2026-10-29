@@ -98,6 +98,10 @@ and a signing key (`APP_AUTH_JWT_PRIVATE_KEY` or `APP_AUTH_JWT_PRIVATE_KEY_FILE`
 service starts as before (health, and `/jwks` when a key is set). A database URL without a signing key, an invalid pool
 setting or a database that does not answer stops the service at startup. The pool is closed on shutdown.
 
+`GET /api/v1/auth/jwks` publishes the public key that verifies the tokens, with the `kid` of their header. The services do not read it: they
+receive the key as configuration (`JWT_PUBLIC_KEY`, norm 5.3.7). The response carries `Cache-Control: public, max-age=300`, so whoever caches
+it holds a stale key for at most five minutes after a rotation (runbook of the auth service, section 4; ADR-053).
+
 To run it with the database:
 
 1. Start the PostgreSQL instance of `csp-infra-postgres` and apply the migrations with the executor of `csp-auth-db`
@@ -105,7 +109,7 @@ To run it with the database:
    The service connects as `auth_app`, never as the executor user.
 2. Export the variables (names only here, see `.env.example`; never commit values):
    `APP_AUTH_DATABASE_URL` (login `auth_app`, `search_path=auth`), `APP_AUTH_JWT_PRIVATE_KEY_FILE` (RSA key, PEM)
-   and, optionally, `APP_AUTH_BCRYPT_ROUNDS`, `APP_AUTH_JWT_EXPIRY`, `APP_AUTH_REFRESH_TOKEN_EXPIRY`, `APP_AUTH_REFRESH_REUSE_GRACE` and the
+   and, optionally, `APP_AUTH_BCRYPT_ROUNDS`, `APP_AUTH_JWT_EXPIRY` (default 900 seconds, 15 minutes, ADR-054), `APP_AUTH_REFRESH_TOKEN_EXPIRY`, `APP_AUTH_REFRESH_REUSE_GRACE` and the
    `APP_AUTH_DATABASE_*` pool limits.
 3. `go run ./cmd/auth-api` and register:
 
@@ -233,11 +237,24 @@ and the count is committed although the answer is `400`; the fifth one retires t
 another account took the address meanwhile the answer is `409 EMAIL_ALREADY_REGISTERED`, the request is invalidated and no event is
 written. No session is revoked by the change. The tables are those of `csp-auth-db` V024 and V025.
 
+### Issuing a service credential (`cmd/auth-token`, ADR-052)
+
+The credential of a service is issued by this service's own offline command, not by an endpoint. The owner of the environment runs it where the
+private key already is, with the same variables as the service (`APP_AUTH_JWT_PRIVATE_KEY` or `APP_AUTH_JWT_PRIVATE_KEY_FILE`):
+
+```bash
+docker run --rm --entrypoint auth-token -e APP_AUTH_JWT_PRIVATE_KEY_FILE=/keys/jwt-private.pem   -v "$PWD/keys:/keys:ro" -v "$PWD/out:/out" csp-auth-api -subject csp-worker -lifetime 2160h -out /out/token.txt
+```
+
+The subject must be `csp-worker`, `booking-service` or `csp-workflow` (never a user id); the lifetime is at most 2160h (90 days, the default). The token
+(`sub`, `iss` `csp-auth`, `aud` `csp-internal`, `iat`, `exp`, `jti`, and the `kid` in the header) is written only to the file, created with mode `0600`
+and not replaced without `-force`. Stdout stays empty; one line on stderr records the subject, the `jti`, the expiry and the file, never the token or the key.
+
 Internal operations (ADR-020) accept a **service credential**: an RS256 token signed with the key of this service,
 with `exp` and a `sub` and sent as `Authorization: Bearer`. A missing or invalid token gets `401 UNAUTHORIZED` and a
 valid token whose `sub` is not in `SERVICE_SUBJECTS` (comma-separated, empty by default so that no service is allowed)
 gets `403 FORBIDDEN`. Issuer and audience are not required. The service has no endpoint that issues these tokens: the
-deployment secret manager provides them, and `csp-infra-postgres/scripts/dev-token.sh <sub> <minutes>` writes one for
+owner issues them with `auth-token` (above) and loads them as environment secrets, and `csp-infra-postgres/scripts/dev-token.sh <sub> <minutes>` writes one for
 development. The first internal operation is the purge of old rows.
 
 The purge of old rows (ADR-030) deletes, in this order, outbox events older than 30 days, refresh tokens that expired

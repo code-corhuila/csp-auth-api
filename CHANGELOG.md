@@ -7,7 +7,23 @@ All notable changes of `csp-auth-api` are recorded here. The format follows
 
 Everything below is in `develop`; it is promoted to `qa` and `main` only when it is ordered.
 
+### Changed
+
+- The access token lives 15 minutes by default: `APP_AUTH_JWT_EXPIRY` defaults to 900 seconds (it was 3600; the range 1 to 3600 stays), so `expiresIn` is 900
+  and a signed-out user or a demoted administrator keeps a valid token in the other services for at most 15 minutes (ADR-054, contract 1.12.0).
+  `.env.example` and the README say so. Configuration test of the default.
+
 ### Added
+
+- `cmd/auth-token` (ADR-052), the offline command that issues the credential of a service: subject from the closed list `csp-worker`,
+  `booking-service`, `csp-workflow`; lifetime at most 90 days; key from `APP_AUTH_JWT_PRIVATE_KEY(_FILE)` kept in memory; token written only to a
+  file of mode `0600` (not replaced without `-force`), never printed; one audit line on stderr (subject, `jti`, expiry, file). Claims `sub`, `iss`,
+  `aud` `csp-internal`, `iat`, `exp`, `jti` and the `kid` header. It ships in the image as `auth-token`. Domain, issuer and command tests.
+- The `ADMIN` role holds `concessions:inventory:read`, the permission that `GET /stock/movements` of `concessions-service.yaml` requires (HU-CONCESSIONS-007);
+  the token of an `ADMIN` carries it in `permissions` after the next login or refresh. Test of the permissions of each role.
+- `GET /api/v1/auth/jwks` answers `Cache-Control: public, max-age=300` (contract 1.11.0, ADR-053): the key changes only in a coordinated
+  rotation, so a copy kept by a browser, a proxy or a tool is stale for at most five minutes. Handler test and contract test (the contract
+  declares the header and the test checks that the response carries it).
 
 - HU-AUTH-007, change of the own password (ADR-051), the endpoint: `POST /api/v1/auth/me/password` (`profile:update:self`, no
   `Idempotency-Key`, body at most 4 KiB with no unknown property) answers `200` with the `AuthResponse` of a fresh session. A wrong current
