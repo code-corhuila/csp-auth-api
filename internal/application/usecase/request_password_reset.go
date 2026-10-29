@@ -110,7 +110,7 @@ func (c *RequestPasswordReset) recordOnce(ctx context.Context, request passwordR
 			return err
 		}
 		if found {
-			return replayOf(record, request.hash)
+			return replayOf(record.RequestHash, request.hash)
 		}
 		if request.user != nil {
 			if reset, err = c.store(ctx, request.user.ID(), request.token); err != nil {
@@ -127,8 +127,8 @@ func (c *RequestPasswordReset) recordOnce(ctx context.Context, request passwordR
 }
 
 // replayOf is nil for a key already used by the same request and model.ErrIdempotencyKeyConflict for another.
-func replayOf(record out.PasswordResetKeyRecord, requestHash string) error {
-	if record.RequestHash != requestHash {
+func replayOf(recordedHash, requestHash string) error {
+	if recordedHash != requestHash {
 		return model.ErrIdempotencyKeyConflict
 	}
 	return nil
