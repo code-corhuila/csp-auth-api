@@ -10,20 +10,21 @@ import (
 
 // Error codes of the ErrorResponse envelope (_shared.yaml, Annex C).
 const (
-	codeValidation       = "VALIDATION_ERROR"
-	codeEmailRegistered  = "EMAIL_ALREADY_REGISTERED"
-	codeIdempotencyReuse = "IDEMPOTENCY_KEY_CONFLICT"
-	codeInternal         = "INTERNAL_ERROR"
-	codeBadCredentials   = "INVALID_CREDENTIALS"
-	codeAccountLocked    = "ACCOUNT_LOCKED"
-	codeBadRefreshToken  = "INVALID_REFRESH_TOKEN"
-	codeUnauthorized     = "UNAUTHORIZED"
-	codeForbidden        = "FORBIDDEN"
-	codeNotFound         = "NOT_FOUND"
-	codeLastAdmin        = "LAST_ADMIN"
-	codeNoRoles          = "USER_WITHOUT_ROLES"
-	codeRateLimited      = "RATE_LIMITED"
-	codeInvalidToken     = "INVALID_TOKEN"
+	codeValidation         = "VALIDATION_ERROR"
+	codeEmailRegistered    = "EMAIL_ALREADY_REGISTERED"
+	codeIdempotencyReuse   = "IDEMPOTENCY_KEY_CONFLICT"
+	codeInternal           = "INTERNAL_ERROR"
+	codeServiceUnavailable = "SERVICE_UNAVAILABLE"
+	codeBadCredentials     = "INVALID_CREDENTIALS"
+	codeAccountLocked      = "ACCOUNT_LOCKED"
+	codeBadRefreshToken    = "INVALID_REFRESH_TOKEN"
+	codeUnauthorized       = "UNAUTHORIZED"
+	codeForbidden          = "FORBIDDEN"
+	codeNotFound           = "NOT_FOUND"
+	codeLastAdmin          = "LAST_ADMIN"
+	codeNoRoles            = "USER_WITHOUT_ROLES"
+	codeRateLimited        = "RATE_LIMITED"
+	codeInvalidToken       = "INVALID_TOKEN"
 )
 
 // fieldError names one invalid input: a body property or a header.
@@ -78,9 +79,7 @@ func translateRegisterError(w http.ResponseWriter, traceID string, err error) {
 		writeIdempotencyConflict(w, traceID)
 	default:
 		slog.Error("register user failed", "traceId", traceID, "error", err)
-		writeJSON(w, http.StatusInternalServerError, errorResponse{
-			Error: codeInternal, Message: "an unexpected error occurred", TraceID: traceID,
-		})
+		writeInternal(w, traceID, err)
 	}
 }
 
@@ -110,9 +109,7 @@ func translateLoginError(w http.ResponseWriter, traceID string, err error) {
 		})
 	default:
 		slog.Error("login user failed", "traceId", traceID, "error", err)
-		writeJSON(w, http.StatusInternalServerError, errorResponse{
-			Error: codeInternal, Message: "an unexpected error occurred", TraceID: traceID,
-		})
+		writeInternal(w, traceID, err)
 	}
 }
 
@@ -132,9 +129,7 @@ func translateRefreshError(w http.ResponseWriter, traceID string, err error) {
 		})
 	default:
 		slog.Error("refresh session failed", "traceId", traceID, "error", err)
-		writeJSON(w, http.StatusInternalServerError, errorResponse{
-			Error: codeInternal, Message: "an unexpected error occurred", TraceID: traceID,
-		})
+		writeInternal(w, traceID, err)
 	}
 }
 
@@ -158,7 +153,7 @@ func translateChangeRoleError(w http.ResponseWriter, traceID string, err error) 
 		})
 	default:
 		slog.Error("change user role failed", "traceId", traceID, "error", err)
-		writeInternal(w, traceID)
+		writeInternal(w, traceID, err)
 	}
 }
 
@@ -175,14 +170,14 @@ func translateListUsersError(w http.ResponseWriter, traceID string, err error) {
 		}
 	}
 	slog.Error("list users failed", "traceId", traceID, "error", err)
-	writeInternal(w, traceID)
+	writeInternal(w, traceID, err)
 }
 
 // translateLogoutError is the only place that maps the errors of the logout use case to HTTP. The
 // cause goes only to the log, which never sees the tokens; the client repeats the call (idempotent).
 func translateLogoutError(w http.ResponseWriter, traceID string, err error) {
 	slog.Error("logout failed", "traceId", traceID, "error", err)
-	writeInternal(w, traceID)
+	writeInternal(w, traceID, err)
 }
 
 // translateRequestEmailChangeError is the only place that maps the errors of the email change request
@@ -208,7 +203,7 @@ func translateRequestEmailChangeError(w http.ResponseWriter, traceID string, err
 		})
 	default:
 		slog.Error("request email change failed", "traceId", traceID, "error", err)
-		writeInternal(w, traceID)
+		writeInternal(w, traceID, err)
 	}
 }
 
@@ -225,7 +220,7 @@ func translateVerifyEmailChangeError(w http.ResponseWriter, traceID string, err 
 		})
 	default:
 		slog.Error("verify email change failed", "traceId", traceID, "error", err)
-		writeInternal(w, traceID)
+		writeInternal(w, traceID, err)
 	}
 }
 
@@ -243,7 +238,7 @@ func translateRequestPasswordResetError(w http.ResponseWriter, traceID string, e
 		writeIdempotencyConflict(w, traceID)
 	default:
 		slog.Error("request password reset failed", "traceId", traceID, "error", err)
-		writeInternal(w, traceID)
+		writeInternal(w, traceID, err)
 	}
 }
 
@@ -264,6 +259,6 @@ func translateResetPasswordError(w http.ResponseWriter, traceID string, err erro
 		})
 	default:
 		slog.Error("reset password failed", "traceId", traceID, "error", err)
-		writeInternal(w, traceID)
+		writeInternal(w, traceID, err)
 	}
 }

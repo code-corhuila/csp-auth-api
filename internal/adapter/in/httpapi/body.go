@@ -9,14 +9,11 @@ import (
 	"net/http"
 )
 
-// maxBodyBytes is the explicit limit of the request body (Norma 5.3.10).
-const maxBodyBytes = 1 << 20
-
-// decodeBody reads the JSON body into a T within the size limit. Unknown properties are ignored,
+// decodeBody reads the JSON body into a T within the size limit of the configuration (Limits.MaxBodyBytes). Unknown properties are ignored,
 // so the contract can grow with optional fields without breaking clients (API guidelines).
 // It returns the problems that prevented reading the body, if any.
 func decodeBody[T any](w http.ResponseWriter, r *http.Request) (T, []fieldError) {
-	return decodeBodyWithin[T](w, r, maxBodyBytes)
+	return decodeBodyWithin[T](w, r, limitsOf(r.Context()).MaxBodyBytes)
 }
 
 // decodeBodyWithin is decodeBody with the limit of the route, for the routes whose contract sets a smaller one.

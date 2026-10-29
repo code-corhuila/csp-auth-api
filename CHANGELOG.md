@@ -9,6 +9,14 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Changed
 
+- Explicit request limits in the composition root (Norma 5.3.10, audit of Annex C): `APP_AUTH_HTTP_REQUEST_TIMEOUT` (10s, at most 60s) gives every
+  request a deadline, so a request that waits for a connection of a saturated pool ends with `503 SERVICE_UNAVAILABLE` (envelope, `Retry-After: 1`)
+  instead of queueing until the client leaves; `APP_AUTH_HTTP_MAX_HEADER_BYTES` (65536) sets `MaxHeaderBytes` of the server; the body limits
+  (`APP_AUTH_MAX_BODY_BYTES` 1048576, `APP_AUTH_PASSWORD_RESET_MAX_BODY_BYTES` 4096) and the detached deadline of logout and role change
+  (`APP_AUTH_DETACHED_DEADLINE` 10s) moved from constants into `internal/config`, with the same defaults, validated at start. `POST /register`
+  and `POST /login` have a bulkhead (`APP_AUTH_REGISTER_MAX_CONCURRENCY`, `APP_AUTH_LOGIN_MAX_CONCURRENCY`, 8, below the pool, 1s wait): a full one
+  answers `429 RATE_LIMITED` with `Retry-After: 1` after the body is validated and before bcrypt. `.env.example`, `deploy/compose.yml` and the README
+  table document them. Configuration, handler, wiring and integration tests (pool of one connection).
 - `PATCH /me/email` stores its `Idempotency-Key` (Norma 5.3.8, ADR-034) in `auth.email_change_idempotency_key` with the SHA-256 of the user id and the
   normalised new email, in the same transaction as the pending request (linked to it) and only when a request is really created: a replay answers `202`
   again, creates and sends nothing and does not count against the limit of three per hour; the same key with another email or by another user is
