@@ -25,6 +25,7 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- Integration test of `GET /me` through the real handler stack: `alg none`, HS256 signed with the public key (PEM and DER), expired, signed with another key, malformed and missing tokens are `401 UNAUTHORIZED` with the common envelope, a traceId and `WWW-Authenticate: Bearer` (Norma 5.3.7, Annex C). Tests only.
 - `cmd/auth-token` (ADR-052), the offline command that issues the credential of a service: subject from the closed list `csp-worker`,
   `booking-service`, `csp-workflow`; lifetime at most 90 days; key from `APP_AUTH_JWT_PRIVATE_KEY(_FILE)` kept in memory; token written only to a
   file of mode `0600` (not replaced without `-force`), never printed; one audit line on stderr (subject, `jti`, expiry, file). Claims `sub`, `iss`,
