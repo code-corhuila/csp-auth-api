@@ -49,8 +49,10 @@ func (s *scriptedAttempts) run(ctx context.Context) error {
 func (s *scriptedAttempts) LockedFor(ctx context.Context, _ string) (time.Duration, error) {
 	return s.locked, s.run(ctx)
 }
-func (s *scriptedAttempts) RecordFailure(ctx context.Context, _ string) error { return s.run(ctx) }
-func (s *scriptedAttempts) Clear(ctx context.Context, _ string) error         { return s.run(ctx) }
+func (s *scriptedAttempts) RecordFailure(ctx context.Context, _ string) (model.LoginFailureOutcome, error) {
+	return model.LoginFailureOutcome{}, s.run(ctx)
+}
+func (s *scriptedAttempts) Clear(ctx context.Context, _ string) error { return s.run(ctx) }
 
 func (s *scriptedAttempts) callCount() int {
 	s.mu.Lock()
@@ -86,7 +88,7 @@ func TestWhileTheStoreAnswersTheDecoratorIsTransparent(t *testing.T) {
 	if locked, err := bounded.LockedFor(ctx, "203.0.113.7"); err != nil || locked != 90*time.Second {
 		t.Errorf("LockedFor() = %v, %v; want 90s, nil", locked, err)
 	}
-	if err := bounded.RecordFailure(ctx, "203.0.113.7"); err != nil {
+	if _, err := bounded.RecordFailure(ctx, "203.0.113.7"); err != nil {
 		t.Errorf("RecordFailure() error = %v", err)
 	}
 	if err := bounded.Clear(ctx, "203.0.113.7"); err != nil {
@@ -125,7 +127,7 @@ func TestAfterAFailureTheStoreIsNotCalledDuringThePause(t *testing.T) {
 		t.Fatalf("first call: error = %v, want the failure of the store", err)
 	}
 	_, lockErr := bounded.LockedFor(ctx, "203.0.113.7")
-	failErr := bounded.RecordFailure(ctx, "203.0.113.7")
+	_, failErr := bounded.RecordFailure(ctx, "203.0.113.7")
 	clearErr := bounded.Clear(ctx, "203.0.113.7")
 
 	for name, err := range map[string]error{"LockedFor": lockErr, "RecordFailure": failErr, "Clear": clearErr} {
@@ -143,15 +145,15 @@ func TestWhenThePauseEndsTheStoreIsTriedAgainAndTheLimitComesBack(t *testing.T) 
 	bounded, clock := newBounded(inner)
 	captureLog(t)
 	ctx := context.Background()
-	_ = bounded.RecordFailure(ctx, "203.0.113.7")
+	_, _ = bounded.RecordFailure(ctx, "203.0.113.7")
 
 	clock.now = clock.now.Add(testPause - time.Millisecond)
-	if err := bounded.RecordFailure(ctx, "203.0.113.7"); !errors.Is(err, out.ErrLoginAttemptsPaused) {
+	if _, err := bounded.RecordFailure(ctx, "203.0.113.7"); !errors.Is(err, out.ErrLoginAttemptsPaused) {
 		t.Errorf("just before the end: error = %v, want still paused", err)
 	}
 	clock.now = clock.now.Add(time.Millisecond)
 	inner.set(nil, false)
-	if err := bounded.RecordFailure(ctx, "203.0.113.7"); err != nil {
+	if _, err := bounded.RecordFailure(ctx, "203.0.113.7"); err != nil {
 		t.Errorf("after the pause: error = %v, want the store to answer again", err)
 	}
 	if err := bounded.Clear(ctx, "203.0.113.7"); err != nil {
@@ -186,7 +188,7 @@ func TestTheWarnIsWrittenOncePerOpenedPauseWithoutTheAddress(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
-		_ = bounded.RecordFailure(ctx, "203.0.113.7")
+		_, _ = bounded.RecordFailure(ctx, "203.0.113.7")
 	}
 	if got := strings.Count(logs.String(), "level=WARN"); got != 1 {
 		t.Fatalf("WARN lines = %d, want 1 for the whole pause:\n%s", got, logs.String())
@@ -195,7 +197,7 @@ func TestTheWarnIsWrittenOncePerOpenedPauseWithoutTheAddress(t *testing.T) {
 		t.Errorf("the log has the client address: %s", logs.String())
 	}
 	clock.now = clock.now.Add(testPause)
-	_ = bounded.RecordFailure(ctx, "203.0.113.7")
+	_, _ = bounded.RecordFailure(ctx, "203.0.113.7")
 	if got := strings.Count(logs.String(), "level=WARN"); got != 2 {
 		t.Errorf("WARN lines = %d, want a second one for the second pause", got)
 	}
@@ -244,7 +246,7 @@ func TestARedisThatHangsIsGivenUpOnAtTheLimiterTimeoutNotTheClientTimeout(t *tes
 	started := time.Now()
 	_, firstErr := bounded.LockedFor(context.Background(), "203.0.113.7")
 	first := time.Since(started)
-	secondErr := bounded.RecordFailure(context.Background(), "203.0.113.7")
+	_, secondErr := bounded.RecordFailure(context.Background(), "203.0.113.7")
 
 	if firstErr == nil || first >= 1900*time.Millisecond {
 		t.Errorf("first call: %v in %v, want a failure at the limiter timeout (200ms) and not at the 2s of the client", firstErr, first)

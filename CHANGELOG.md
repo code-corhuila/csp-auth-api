@@ -9,6 +9,13 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- Audit of the lock of the login (STRIDE S, code-corhuila/csp-docs#280): the failed login that locks a client address writes one `WARN`
+  record with `audit: login_locked`, the SHA-256 hash of the address (`clientHash`), the number of `attempts`, `lockedAt`, `lockSeconds` and
+  the `traceId`; never the address, the email or the password. A rejected attempt of an address that is already locked is not a new lock, and
+  a failure of the audit never changes the answer of the login. `out.LoginAttempts.RecordFailure` now returns the count and the lock of the
+  failure it counted, and the new port `out.LoginLockAudit` has the log adapter `internal/adapter/out/audit`. The negative test
+  `TestAuthzLoginRejectsTheEleventhFailedAttemptFromTheSameAddressEvenWithValidCredentials` is added to the unit tests. Unit tests of the event,
+  the use case and the log line; integration test of the outcome against Redis.
 - Development only: the profile `mail-relay` of `deploy/compose.yml`, a Mailpit (`mailpit-relay`, reachable as `mailpit`) that stores every message and relays
   those whose recipient matches `MAILPIT_RELAY_MATCHING` to a real SMTP provider, configured by `MAILPIT_RELAY_FILE` (rendered by `csp-infra-postgres`). The
   service keeps talking to Mailpit only, so an expired key only fails the relay; a provider that is unreachable or slow keeps Mailpit waiting inside the
