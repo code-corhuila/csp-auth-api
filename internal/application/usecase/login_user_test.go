@@ -43,12 +43,15 @@ func (u *loginUsers) FindByEmail(_ context.Context, email model.Email) (*model.U
 }
 
 // loginHasher accepts rightPass for storedHash and records every comparison.
-type loginHasher struct{ checked []string }
+type loginHasher struct {
+	checked []string
+	err     error
+}
 
 func (h *loginHasher) Hash(model.Password) (string, error) { return storedHash, nil }
-func (h *loginHasher) Verify(hash, password string) bool {
+func (h *loginHasher) Verify(hash, password string) (bool, error) {
 	h.checked = append(h.checked, hash)
-	return hash == storedHash && password == rightPass
+	return hash == storedHash && password == rightPass, h.err
 }
 
 type loginTokens struct{ err error }

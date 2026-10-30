@@ -16,6 +16,12 @@ import (
 	"github.com/code-corhuila/csp-auth-api/internal/domain/model"
 )
 
+// passwordMatches reports whether password is the one behind the bcrypt hash.
+func passwordMatches(hash, password string) bool {
+	ok, err := security.NewBcryptHasher(4).Verify(hash, password)
+	return ok && err == nil
+}
+
 // countingAttempts is an out.PasswordChangeAttempts that only counts what the use case tells it.
 type countingAttempts struct{ failures, cleared int }
 
@@ -84,7 +90,7 @@ func TestChangePasswordReplacesTheHashRevokesEverySessionAndOpensOneInTheSameTra
 	if err != nil {
 		t.Fatalf("Change() error = %v", err)
 	}
-	if !security.NewBcryptHasher(4).Verify(f.passwordHash(t, ctx, user.ID()), resetPassword) {
+	if !passwordMatches(f.passwordHash(t, ctx, user.ID()), resetPassword) {
 		t.Error("the stored hash does not match the new password")
 	}
 	if active := f.activeSessions(t, ctx, user.ID()); active != 1 || session.RefreshToken == "" || session.AccessToken == "" {
@@ -203,7 +209,7 @@ func TestChangePasswordStillWorksWhenTheLimitStoreCannotBeReached(t *testing.T) 
 
 	_, err := f.changePassword(unreachableAttempts{}, f.realSessions()).Change(ctx, changeFor(user, currentPassword, resetPassword))
 
-	if err != nil || !security.NewBcryptHasher(4).Verify(f.passwordHash(t, ctx, user.ID()), resetPassword) || f.activeSessions(t, ctx, user.ID()) != 1 {
+	if err != nil || !passwordMatches(f.passwordHash(t, ctx, user.ID()), resetPassword) || f.activeSessions(t, ctx, user.ID()) != 1 {
 		t.Errorf("error = %v, active sessions = %d, want the change to go on without the limit (fail open)", err, f.activeSessions(t, ctx, user.ID()))
 	}
 }

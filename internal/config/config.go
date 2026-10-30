@@ -58,6 +58,8 @@ type Config struct {
 	DatabaseConnectTimeout time.Duration
 	DatabaseQueryTimeout   time.Duration
 	BcryptRounds           int
+	BcryptMaxConcurrent    int
+	BcryptQueueTimeout     time.Duration
 	JWTPrivateKey          string
 	JWTPrivateKeyFile      string
 	AccessTokenTTL         time.Duration
@@ -130,6 +132,9 @@ func Load(lookup Lookup) (Config, error) {
 		return Config{}, fmt.Errorf("APP_AUTH_BCRYPT_ROUNDS %d is out of range %d-%d", rounds, minBcryptRounds, maxBcryptRounds)
 	}
 	cfg.BcryptRounds = rounds
+	if err := loadBcryptBound(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
 	if err := loadTokens(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
@@ -205,6 +210,31 @@ func loadRedis(lookup Lookup, cfg *Config) error {
 	var err error
 	cfg.RedisTimeout, err = durationValue(lookup, "APP_AUTH_REDIS_TIMEOUT", 2*time.Second)
 	return err
+}
+
+// Bounds of the limit on concurrent password hashes: at most 64 at once, and a refusal that comes in under 200 ms (STRIDE D).
+const (
+	maxBcryptConcurrent   = 64
+	maxBcryptQueueTimeout = 150 * time.Millisecond
+)
+
+// loadBcryptBound reads how many password hashes or comparisons may run at once, whatever the route, and how long a request
+// waits for a free slot before it is refused with 503 (Norma 5.3.10, code-corhuila/csp-docs#281).
+func loadBcryptBound(lookup Lookup, cfg *Config) error {
+	var err error
+	if cfg.BcryptMaxConcurrent, err = intValue(lookup, "APP_AUTH_BCRYPT_MAX_CONCURRENT", 4); err != nil {
+		return err
+	}
+	if cfg.BcryptMaxConcurrent < 1 || cfg.BcryptMaxConcurrent > maxBcryptConcurrent {
+		return fmt.Errorf("APP_AUTH_BCRYPT_MAX_CONCURRENT %d is out of range 1-%d", cfg.BcryptMaxConcurrent, maxBcryptConcurrent)
+	}
+	if cfg.BcryptQueueTimeout, err = durationValue(lookup, "APP_AUTH_BCRYPT_QUEUE_TIMEOUT", 100*time.Millisecond); err != nil {
+		return err
+	}
+	if cfg.BcryptQueueTimeout > maxBcryptQueueTimeout {
+		return fmt.Errorf("APP_AUTH_BCRYPT_QUEUE_TIMEOUT %v is above the maximum %v", cfg.BcryptQueueTimeout, maxBcryptQueueTimeout)
+	}
+	return nil
 }
 
 // maxLoginAttempts bounds APP_AUTH_LOGIN_MAX_ATTEMPTS: a larger number is not a limit anymore.
