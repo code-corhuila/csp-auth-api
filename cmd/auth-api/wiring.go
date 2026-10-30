@@ -62,12 +62,13 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 // A configured key or database that cannot be used stops the service instead of degrading it.
 func newRoutes(ctx context.Context, logger *slog.Logger, cfg config.Config, open poolOpener) (http.Handler, func(), error) {
 	noop := func() {}
+	build := newRouter(cfg)
 	hasKey := cfg.JWTPrivateKey != "" || cfg.JWTPrivateKeyFile != ""
 	if !hasKey {
 		if cfg.DatabaseURL != "" {
 			return nil, noop, errors.New("APP_AUTH_DATABASE_URL needs a signing key (APP_AUTH_JWT_PRIVATE_KEY or APP_AUTH_JWT_PRIVATE_KEY_FILE): registration issues tokens")
 		}
-		return httpapi.NewHandler(), noop, nil
+		return build(), noop, nil
 	}
 	key, err := token.LoadPrivateKey(cfg.JWTPrivateKey, cfg.JWTPrivateKeyFile)
 	if err != nil {
@@ -79,7 +80,7 @@ func newRoutes(ctx context.Context, logger *slog.Logger, cfg config.Config, open
 	}
 	options := []httpapi.Option{httpapi.WithPublicKeys(issuer)}
 	if cfg.DatabaseURL == "" {
-		return httpapi.NewHandler(options...), noop, nil
+		return build(options...), noop, nil
 	}
 
 	pool, err := open(ctx, persistence.PoolSettings{
@@ -166,7 +167,7 @@ func newRoutes(ctx context.Context, logger *slog.Logger, cfg config.Config, open
 		options = append(options, httpapi.WithLogout(authorizer, newLogout(pool, redisState.revoked)))
 		logger.Info("logout route enabled")
 	}
-	return httpapi.NewHandler(options...), func() {
+	return build(options...), func() {
 		closePasswordReset()
 		closeRedis()
 		pool.Close()

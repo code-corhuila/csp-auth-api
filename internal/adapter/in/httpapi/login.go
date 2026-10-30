@@ -73,6 +73,8 @@ func waitOutSlowdown(ctx context.Context, err error) {
 	if !errors.As(err, &slowed) {
 		return
 	}
+	started := time.Now()
+	defer func() { noteWait(ctx, time.Since(started)) }()
 	timer := time.NewTimer(slowed.Delay)
 	defer timer.Stop()
 	select {
