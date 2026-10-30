@@ -21,7 +21,7 @@ import (
 type fixedHasher struct{}
 
 func (fixedHasher) Hash(model.Password) (string, error) { return bcryptHash, nil }
-func (fixedHasher) Verify(string, string) bool          { return false }
+func (fixedHasher) Verify(string, string) (bool, error) { return false, nil }
 
 type fixedTokens struct{}
 

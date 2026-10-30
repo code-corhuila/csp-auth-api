@@ -256,7 +256,7 @@ func TestResetChangesTheHashConsumesTheTokenAndRevokesEverySessionOfTheUserOnly(
 	}
 
 	hash := f.passwordHash(t, ctx, user.ID())
-	if hash == bcryptHash || !security.NewBcryptHasher(4).Verify(hash, resetPassword) {
+	if hash == bcryptHash || !passwordMatches(hash, resetPassword) {
 		t.Errorf("password hash = %q, want the bcrypt hash of the new password", hash)
 	}
 	if rows := f.resetRows(t, ctx, user.ID()); len(rows) != 1 || !rows[0].used || pendingResets(rows) != 0 {

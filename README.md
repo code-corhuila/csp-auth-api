@@ -443,6 +443,8 @@ Every limit is explicit (Norma 5.3.10) and is read at start; a value out of rang
 | `APP_AUTH_PASSWORD_RESET_MAX_BODY_BYTES` | `4096` | Largest body of `POST /forgot-password` and `POST /reset-password`, at most `APP_AUTH_MAX_BODY_BYTES`. |
 | `APP_AUTH_REGISTER_MAX_CONCURRENCY` | `8` | Bulkhead of `POST /register`. At least 1 and, with a database, below `APP_AUTH_DATABASE_MAX_CONNECTIONS`. |
 | `APP_AUTH_LOGIN_MAX_CONCURRENCY` | `8` | Bulkhead of `POST /login`, same rules. |
+| `APP_AUTH_BCRYPT_MAX_CONCURRENT` | `4` | Password hashes or comparisons that run at once, all routes together (login, register, password change, password reset), 1 to 64. It is inside the bulkheads above: they protect the database pool per route, this protects the CPU. |
+| `APP_AUTH_BCRYPT_QUEUE_TIMEOUT` | `100ms` | Longest a request waits for a free hash slot (positive Go duration, at most `150ms`). Past it the answer is `503 SERVICE_UNAVAILABLE` with `Retry-After: 1` and one `WARN` with the `traceId`; a refusal is not a failed login and is not counted by the address limit or by the slowdown per account. |
 
 A request that exhausts `APP_AUTH_HTTP_REQUEST_TIMEOUT` (for example while it waits for a connection of a saturated pool)
 answers `503 SERVICE_UNAVAILABLE` with the common envelope and `Retry-After: 1`. The register and login bulkheads are taken after the
