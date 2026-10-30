@@ -9,6 +9,13 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- Metrics of the routes (STRIDE D, code-corhuila/csp-docs#281, technical issue #210): `GET /metrics` in the Prometheus text format, on the port of the service,
+  outside the contract and not routed by the gateway, with `auth_http_requests_total{route,method,outcome}` and `auth_http_request_duration_seconds{route,method}`
+  (buckets 0.05, 0.1, 0.25, 0.5, 1 and 2.5 seconds, the ones of the metric catalog of the week 11 workshop). `route` is the pattern of the route, `unmatched` when
+  none matched, so the series never grow with the paths; there is no email, address or user id in any label. The wait of the slowdown per account (ADR-059) is
+  not latency and is left out. `APP_AUTH_METRICS_ENABLED` (default `true`) turns it off. Written with the standard library (`internal/platform/metrics`), observed by the
+  root step through `httpapi.WithObserver`. Unit tests of the metrics, of the observation (route, unmatched, panic, the excluded wait) and of the wiring; end-to-end test
+  that logs in and registers and reads the scrape.
 - Bound on the concurrent password hashes (STRIDE D, code-corhuila/csp-docs#281, technical issue #209): `APP_AUTH_BCRYPT_MAX_CONCURRENT` (4, 1 to
   64) hashes or comparisons run at once, all routes together, and `APP_AUTH_BCRYPT_QUEUE_TIMEOUT` (100ms, at most 150ms) is the longest a request waits
   for a slot. A request that finds none answers `503 SERVICE_UNAVAILABLE` with `Retry-After: 1` and one `WARN` with the `traceId`, from `POST /login`,

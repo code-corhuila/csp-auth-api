@@ -60,6 +60,7 @@ type Config struct {
 	BcryptRounds           int
 	BcryptMaxConcurrent    int
 	BcryptQueueTimeout     time.Duration
+	MetricsEnabled         bool
 	JWTPrivateKey          string
 	JWTPrivateKeyFile      string
 	AccessTokenTTL         time.Duration
@@ -133,6 +134,9 @@ func Load(lookup Lookup) (Config, error) {
 	}
 	cfg.BcryptRounds = rounds
 	if err := loadBcryptBound(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
+	if cfg.MetricsEnabled, err = boolValue(lookup, "APP_AUTH_METRICS_ENABLED", true); err != nil {
 		return Config{}, err
 	}
 	if err := loadTokens(lookup, &cfg); err != nil {
@@ -444,6 +448,19 @@ func listValue(lookup Lookup, key string) []string {
 		}
 	}
 	return items
+}
+
+// boolValue reads true or false (any form strconv.ParseBool accepts); an empty value is the default.
+func boolValue(lookup Lookup, key string, def bool) (bool, error) {
+	raw, ok := lookup(key)
+	if !ok || raw == "" {
+		return def, nil
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("%s must be true or false: %w", key, err)
+	}
+	return value, nil
 }
 
 func intValue(lookup Lookup, key string, def int) (int, error) {

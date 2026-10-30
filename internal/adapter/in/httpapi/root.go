@@ -39,6 +39,7 @@ func root(mux *http.ServeMux) http.Handler {
 		guarded := &startTracker{ResponseWriter: w, status: http.StatusOK}
 		started := time.Now()
 		_, pattern := mux.Handler(r)
+		noteRoute(r.Context(), pattern)
 		defer logAccess(r, guarded, routeOf(r, pattern), started)
 		defer recoverToEnvelope(guarded, id)
 
