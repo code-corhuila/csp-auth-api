@@ -11,6 +11,13 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- Slowdown per account (STRIDE S, code-corhuila/csp-docs#280): a second counter, `attempts:account:{sha256(email)}` in Redis (`INCR` and `EXPIRE`
+  only, inside the `attempts:*` pattern of ADR-028, so the ACL does not change), counts the failed logins of one email from any address, known
+  or not. After `APP_AUTH_LOGIN_ACCOUNT_SLOW_AFTER` (20) failures inside `APP_AUTH_LOGIN_ACCOUNT_WINDOW` (1h) every further failed login waits
+  `APP_AUTH_LOGIN_ACCOUNT_DELAY` (1s) and answers the usual `401`; the account is never locked. The wait happens after the bulkhead slot is
+  given back, ends if the client leaves, and a Redis that fails slows nobody (same timeout and pause as the address counter, ADR-048). Unit tests of
+  the policy, the use case, the handler and the counter; integration tests of the counter and an end-to-end test with 25 failures for one email from 25
+  addresses whose 26th answer takes at least one second.
 - Audit of the lock of the login (STRIDE S, code-corhuila/csp-docs#280): the failed login that locks a client address writes one `WARN`
   record with `audit: login_locked`, the SHA-256 hash of the address (`clientHash`), the number of `attempts`, `lockedAt`, `lockSeconds` and
   the `traceId`; never the address, the email or the password. A rejected attempt of an address that is already locked is not a new lock, and
