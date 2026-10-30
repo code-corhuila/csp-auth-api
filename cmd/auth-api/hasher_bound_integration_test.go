@@ -61,8 +61,11 @@ func TestAuthzLoginAnswers503WhenTheBoundOnConcurrentHashesIsFull(t *testing.T) 
 			if o.code != "SERVICE_UNAVAILABLE" || o.retryAfter != "1" {
 				t.Errorf("refusal %d: code = %v, Retry-After = %q, want SERVICE_UNAVAILABLE and 1", i, o.code, o.retryAfter)
 			}
-			if o.elapsed >= 200*time.Millisecond+cfg.BcryptQueueTimeout {
-				t.Errorf("refusal %d took %v, want it in under 200 ms", i, o.elapsed)
+			// The 200 ms of the story is checked on the hasher itself (security package), without a client, a database and
+			// seven bcrypt at cost 12 sharing the CPU of this process. Here a refusal only has to come far sooner than the queue
+			// of answers it did not wait for (seven comparisons of about 250 ms each).
+			if o.elapsed >= time.Second {
+				t.Errorf("refusal %d took %v, want it far sooner than waiting behind the other hashes", i, o.elapsed)
 			}
 		case http.StatusUnauthorized:
 			answered++
