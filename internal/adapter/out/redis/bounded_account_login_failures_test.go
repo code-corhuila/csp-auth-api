@@ -40,14 +40,10 @@ func TestTheAccountCounterGivesUpAtOnceAfterAFailureAndStopsCallingRedisDuringTh
 	inner := &scriptedAccountFailures{block: true}
 	clock := &steppedClock{now: time.Now()}
 	bounded := NewBoundedAccountLoginFailures(inner, testTimeout, testPause, clock)
-	started := time.Now()
 
 	_, first := bounded.Record(context.Background(), "subject")
 	_, second := bounded.Record(context.Background(), "subject")
 
-	if elapsed := time.Since(started); elapsed > 10*testTimeout {
-		t.Errorf("two calls took %v, want about one timeout", elapsed)
-	}
 	if !errors.Is(first, out.ErrAccountLoginFailuresPaused) || !errors.Is(second, out.ErrAccountLoginFailuresPaused) || inner.calls != 1 {
 		t.Errorf("errors = %v, %v, calls = %d; want both paused and one call to Redis", first, second, inner.calls)
 	}

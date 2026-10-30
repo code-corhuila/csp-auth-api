@@ -27,8 +27,9 @@ type OutboxWriter interface {
 // PasswordHasher turns a password into a bcrypt hash and checks a presented one against it.
 type PasswordHasher interface {
 	Hash(password model.Password) (string, error)
-	// Verify reports whether password is the one behind hash. A malformed hash does not match.
-	Verify(hash, password string) bool
+	// Verify reports whether password is the one behind hash. A malformed hash does not match. The error is not a mismatch:
+	// it says the comparison could not run, as model.ErrPasswordHasherBusy when too many hashes are running.
+	Verify(hash, password string) (bool, error)
 }
 
 // IDGenerator creates unique identifiers.

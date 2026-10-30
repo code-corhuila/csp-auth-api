@@ -15,7 +15,6 @@ import (
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/mail"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/persistence"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/redis"
-	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/security"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/system"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/token"
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/out"
@@ -93,12 +92,18 @@ func newRoutes(ctx context.Context, logger *slog.Logger, cfg config.Config, open
 	if err != nil {
 		return nil, noop, fmt.Errorf("connect to the auth database: %w", err)
 	}
+	if err := checkHasherBound(cfg); err != nil {
+		pool.Close()
+		return nil, noop, err
+	}
+	hasher := newPasswordHasher(cfg)
+	logger.Info("password hashing bounded", "maxConcurrent", cfg.BcryptMaxConcurrent, "queueTimeout", cfg.BcryptQueueTimeout.String())
 	registerGate, err := httpapi.NewBulkhead(cfg.RegisterMaxConcurrency, config.CredentialQueueTimeout)
 	if err != nil {
 		pool.Close()
 		return nil, noop, fmt.Errorf("register limit: %w", err)
 	}
-	options = append(options, httpapi.WithRegisterUser(newRegisterUser(cfg, pool, issuer), registerGate))
+	options = append(options, httpapi.WithRegisterUser(newRegisterUser(cfg, pool, issuer, hasher), registerGate))
 	logger.Info("register route enabled", "maxConcurrency", registerGate.Limit(), "queueTimeout", registerGate.Wait().String())
 	redisState, closeRedis, err := openRedisState(logger, cfg)
 	if err != nil {
@@ -111,7 +116,7 @@ func newRoutes(ctx context.Context, logger *slog.Logger, cfg config.Config, open
 		pool.Close()
 		return nil, noop, fmt.Errorf("login limit: %w", err)
 	}
-	options = append(options, httpapi.WithLoginUser(newLoginUser(cfg, pool, issuer, redisState), loginGate))
+	options = append(options, httpapi.WithLoginUser(newLoginUser(cfg, pool, issuer, hasher, redisState), loginGate))
 	logger.Info("login route enabled", "maxConcurrency", loginGate.Limit(), "queueTimeout", loginGate.Wait().String())
 	options = append(options, httpapi.WithRefreshSession(newRefreshSession(cfg, pool, issuer)))
 	logger.Info("refresh route enabled")
@@ -128,7 +133,7 @@ func newRoutes(ctx context.Context, logger *slog.Logger, cfg config.Config, open
 		pool.Close()
 		return nil, noop, fmt.Errorf("password change limit: %w", err)
 	}
-	options = append(options, httpapi.WithPasswordChange(authorizer, newChangePassword(cfg, pool, issuer, redisState.passwordChanges), passwordGate))
+	options = append(options, httpapi.WithPasswordChange(authorizer, newChangePassword(cfg, pool, issuer, hasher, redisState.passwordChanges), passwordGate))
 	logger.Info("password change route enabled", "maxConcurrency", passwordGate.Limit(), "queueTimeout", passwordGate.Wait().String())
 	if cfg.SMTPHost != "" {
 		requestEmailChange, err := newRequestEmailChange(cfg, logger, pool)
@@ -148,7 +153,7 @@ func newRoutes(ctx context.Context, logger *slog.Logger, cfg config.Config, open
 	} else {
 		logger.Info("APP_AUTH_SMTP_HOST is not set: the email change is not enabled")
 	}
-	passwordReset, closePasswordReset, err := passwordResetRoutes(cfg, logger, pool)
+	passwordReset, closePasswordReset, err := passwordResetRoutes(cfg, logger, pool, hasher)
 	if err != nil {
 		closeRedis()
 		pool.Close()
@@ -248,13 +253,13 @@ func (noPasswordChangeAttempts) RecordFailure(context.Context, string) error { r
 
 func (noPasswordChangeAttempts) Clear(context.Context, string) error { return nil }
 
-func newRegisterUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer) *usecase.RegisterUser {
+func newRegisterUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer, hasher out.PasswordHasher) *usecase.RegisterUser {
 	clock, ids := system.Clock{}, system.UUIDGenerator{}
 	return usecase.NewRegisterUser(usecase.RegisterUserPorts{
 		Users:        persistence.NewUserRepository(pool),
 		Keys:         persistence.NewIdempotencyKeyRepository(pool),
 		Outbox:       persistence.NewOutboxWriter(pool),
-		Hasher:       security.NewBcryptHasher(cfg.BcryptRounds),
+		Hasher:       hasher,
 		IDs:          ids,
 		Clock:        clock,
 		Transactions: persistence.NewTransactionManager(pool),
@@ -263,7 +268,7 @@ func newRegisterUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer
 	})
 }
 
-func newLoginUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer, state redisState) *usecase.LoginUser {
+func newLoginUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer, hasher out.PasswordHasher, state redisState) *usecase.LoginUser {
 	clock, ids := system.Clock{}, system.UUIDGenerator{}
 	var options []usecase.LoginOption
 	if state.accountFailures != nil {
@@ -271,7 +276,7 @@ func newLoginUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer, s
 	}
 	return usecase.NewLoginUser(
 		persistence.NewUserRepository(pool),
-		security.NewBcryptHasher(cfg.BcryptRounds),
+		hasher,
 		issuer,
 		usecase.NewIssueRefreshToken(persistence.NewRefreshTokenRepository(pool), ids, clock, cfg.RefreshTokenTTL),
 		clock,
@@ -328,7 +333,7 @@ func newOwnProfile(authorizer *usecase.AuthorizeUser, pool *pgxpool.Pool) httpap
 		usecase.NewUpdateProfile(users, users, system.Clock{}, persistence.NewTransactionManager(pool)))
 }
 
-func newChangePassword(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer, attempts out.PasswordChangeAttempts) *usecase.ChangePassword {
+func newChangePassword(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer, hasher out.PasswordHasher, attempts out.PasswordChangeAttempts) *usecase.ChangePassword {
 	clock, ids := system.Clock{}, system.UUIDGenerator{}
 	users, tokens := persistence.NewUserRepository(pool), persistence.NewRefreshTokenRepository(pool)
 	return usecase.NewChangePassword(usecase.ChangePasswordPorts{
@@ -336,7 +341,7 @@ func newChangePassword(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issu
 		Hashes:       users,
 		Passwords:    users,
 		Sessions:     tokens,
-		Hasher:       security.NewBcryptHasher(cfg.BcryptRounds),
+		Hasher:       hasher,
 		Attempts:     attempts,
 		Tokens:       issuer,
 		Refresh:      usecase.NewIssueRefreshToken(tokens, ids, clock, cfg.RefreshTokenTTL),

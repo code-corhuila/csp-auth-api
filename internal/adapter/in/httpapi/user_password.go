@@ -94,6 +94,8 @@ func translateChangePasswordError(w http.ResponseWriter, traceID string, err err
 	case errors.Is(err, model.ErrUserNotFound), errors.Is(err, model.ErrUserLocked):
 		slog.Warn("password change refused: the account of the token is not active", "traceId", traceID)
 		writeUnauthorized(w, traceID)
+	case errors.Is(err, model.ErrPasswordHasherBusy):
+		writeHasherBusy(w, traceID)
 	default:
 		slog.Error("change password failed", "traceId", traceID, "error", err)
 		writeInternal(w, traceID, err)
