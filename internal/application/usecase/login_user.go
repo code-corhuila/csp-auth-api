@@ -25,13 +25,14 @@ type LoginUser struct {
 	hasher   out.PasswordHasher
 	session  sessionIssuer
 	attempts out.LoginAttempts
+	audit    out.LoginLockAudit
 }
 
 var _ in.LoginUser = (*LoginUser)(nil)
 
 // NewLoginUser wires the use case with the ports it needs.
-func NewLoginUser(users out.UserRepository, hasher out.PasswordHasher, tokens out.TokenIssuer, sessions in.IssueRefreshToken, clock out.Clock, attempts out.LoginAttempts) *LoginUser {
-	return &LoginUser{users: users, hasher: hasher, session: sessionIssuer{accessTokens: tokens, sessions: sessions, clock: clock}, attempts: attempts}
+func NewLoginUser(users out.UserRepository, hasher out.PasswordHasher, tokens out.TokenIssuer, sessions in.IssueRefreshToken, clock out.Clock, attempts out.LoginAttempts, audit out.LoginLockAudit) *LoginUser {
+	return &LoginUser{users: users, hasher: hasher, session: sessionIssuer{accessTokens: tokens, sessions: sessions, clock: clock}, attempts: attempts, audit: audit}
 }
 
 // Login checks the credentials and issues an access token and a refresh token.
@@ -79,8 +80,22 @@ func (l *LoginUser) recordFailure(ctx context.Context, client string) {
 	if client == "" {
 		return
 	}
-	if err := l.attempts.RecordFailure(ctx, client); err != nil {
+	outcome, err := l.attempts.RecordFailure(ctx, client)
+	if err != nil {
 		warnUnlessPaused(ctx, "failed login could not be counted", err)
+		return
+	}
+	if outcome.Locked() {
+		l.auditLock(ctx, client, outcome)
+	}
+}
+
+// auditLock writes the event of the failure that locked the client. A failure of the audit is logged and does not
+// change the answer of the login, which is still the failed credentials.
+func (l *LoginUser) auditLock(ctx context.Context, client string, outcome model.LoginFailureOutcome) {
+	event := model.NewLoginLocked(client, outcome.Attempts, l.session.clock.Now(), outcome.LockedFor)
+	if err := l.audit.RecordLoginLocked(ctx, event); err != nil {
+		slog.WarnContext(ctx, "login lock could not be recorded", "error", err)
 	}
 }
 

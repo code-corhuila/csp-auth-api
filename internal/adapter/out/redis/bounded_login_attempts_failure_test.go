@@ -17,7 +17,7 @@ func TestTheFailingCallIsAnsweredAsPausedAndKeepsItsCause(t *testing.T) {
 	bounded, _ := newBounded(inner)
 	captureLog(t)
 
-	err := bounded.RecordFailure(context.Background(), "203.0.113.7")
+	_, err := bounded.RecordFailure(context.Background(), "203.0.113.7")
 
 	if !errors.Is(err, out.ErrLoginAttemptsPaused) {
 		t.Errorf("error = %v, want it to be ErrLoginAttemptsPaused so the use case stays silent", err)
