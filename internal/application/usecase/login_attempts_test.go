@@ -29,15 +29,17 @@ func (a *loginAttempts) LockedFor(_ context.Context, client string) (time.Durati
 	return a.locked[client], a.err
 }
 
-func (a *loginAttempts) RecordFailure(_ context.Context, client string) error {
+func (a *loginAttempts) RecordFailure(_ context.Context, client string) (model.LoginFailureOutcome, error) {
 	if a.err != nil {
-		return a.err
+		return model.LoginFailureOutcome{}, a.err
 	}
 	a.failures[client]++
+	outcome := model.LoginFailureOutcome{Attempts: a.failures[client]}
 	if a.policy.Reached(a.failures[client]) {
 		a.locked[client] = a.policy.Lock
+		outcome.LockedFor = a.policy.Lock
 	}
-	return nil
+	return outcome, nil
 }
 
 func (a *loginAttempts) Clear(_ context.Context, client string) error {

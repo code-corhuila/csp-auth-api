@@ -31,14 +31,14 @@ func TestTheClientIsLockedOnTheFailureThatReachesTheMaximum(t *testing.T) {
 	address := newClientAddress(t)
 
 	for i := 1; i <= 2; i++ {
-		if err := store.RecordFailure(ctx, address); err != nil {
+		if _, err := store.RecordFailure(ctx, address); err != nil {
 			t.Fatalf("RecordFailure() #%d error = %v", i, err)
 		}
 		if locked, err := store.LockedFor(ctx, address); err != nil || locked != 0 {
 			t.Fatalf("LockedFor() after %d failures = %v, %v; want 0, nil", i, locked, err)
 		}
 	}
-	if err := store.RecordFailure(ctx, address); err != nil {
+	if _, err := store.RecordFailure(ctx, address); err != nil {
 		t.Fatalf("RecordFailure() #3 error = %v", err)
 	}
 
@@ -57,7 +57,7 @@ func TestTheCounterLivesForTheWindowOnly(t *testing.T) {
 	ctx := context.Background()
 	address := newClientAddress(t)
 
-	if err := store.RecordFailure(ctx, address); err != nil {
+	if _, err := store.RecordFailure(ctx, address); err != nil {
 		t.Fatalf("RecordFailure() error = %v", err)
 	}
 	ttl, err := client.TTL(ctx, "attempts:"+address).Result()
@@ -66,7 +66,7 @@ func TestTheCounterLivesForTheWindowOnly(t *testing.T) {
 	}
 	time.Sleep(1200 * time.Millisecond)
 	for i := 0; i < 2; i++ {
-		if err := store.RecordFailure(ctx, address); err != nil {
+		if _, err := store.RecordFailure(ctx, address); err != nil {
 			t.Fatalf("RecordFailure() error = %v", err)
 		}
 	}
@@ -81,7 +81,7 @@ func TestTheLockEndsWhenItsTimeHasPassed(t *testing.T) {
 	ctx := context.Background()
 	address := newClientAddress(t)
 
-	if err := store.RecordFailure(ctx, address); err != nil {
+	if _, err := store.RecordFailure(ctx, address); err != nil {
 		t.Fatalf("RecordFailure() error = %v", err)
 	}
 	if locked, _ := store.LockedFor(ctx, address); locked <= 0 {
@@ -100,7 +100,7 @@ func TestClearForgetsTheFailuresOfOneClientOnly(t *testing.T) {
 	ctx := context.Background()
 	mine, other := newClientAddress(t), newClientAddress(t)
 	for _, address := range []string{mine, other} {
-		if err := store.RecordFailure(ctx, address); err != nil {
+		if _, err := store.RecordFailure(ctx, address); err != nil {
 			t.Fatalf("RecordFailure() error = %v", err)
 		}
 	}
@@ -129,7 +129,7 @@ func TestAnUnreachableRedisIsAnErrorOfTheLoginAttempts(t *testing.T) {
 	if _, err := store.LockedFor(ctx, "203.0.113.7"); err == nil {
 		t.Error("LockedFor() error = nil, want an error")
 	}
-	if err := store.RecordFailure(ctx, "203.0.113.7"); err == nil {
+	if _, err := store.RecordFailure(ctx, "203.0.113.7"); err == nil {
 		t.Error("RecordFailure() error = nil, want an error")
 	}
 	if err := store.Clear(ctx, "203.0.113.7"); err == nil {

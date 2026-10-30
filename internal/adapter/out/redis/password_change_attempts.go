@@ -36,7 +36,8 @@ func (a *PasswordChangeAttempts) Locked(ctx context.Context, userID string) (tim
 
 // RecordFailure counts one wrong current password and writes the lock when the policy is reached.
 func (a *PasswordChangeAttempts) RecordFailure(ctx context.Context, userID string) error {
-	return a.limit.RecordFailure(ctx, userID)
+	_, err := a.limit.RecordFailure(ctx, userID)
+	return err
 }
 
 // Clear is one DEL of the counter.
