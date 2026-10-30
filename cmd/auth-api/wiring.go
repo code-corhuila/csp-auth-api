@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/in/httpapi"
+	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/audit"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/mail"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/persistence"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/redis"
@@ -223,7 +224,9 @@ type noLoginAttempts struct{}
 
 func (noLoginAttempts) LockedFor(context.Context, string) (time.Duration, error) { return 0, nil }
 
-func (noLoginAttempts) RecordFailure(context.Context, string) error { return nil }
+func (noLoginAttempts) RecordFailure(context.Context, string) (model.LoginFailureOutcome, error) {
+	return model.LoginFailureOutcome{}, nil
+}
 
 func (noLoginAttempts) Clear(context.Context, string) error { return nil }
 
@@ -260,6 +263,7 @@ func newLoginUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer, a
 		usecase.NewIssueRefreshToken(persistence.NewRefreshTokenRepository(pool), ids, clock, cfg.RefreshTokenTTL),
 		clock,
 		attempts,
+		audit.NewLoginLockLog(slog.Default()),
 	)
 }
 

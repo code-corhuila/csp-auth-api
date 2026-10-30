@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/out"
+	"github.com/code-corhuila/csp-auth-api/internal/domain/model"
 )
 
 // BoundedLoginAttempts decorates an out.LoginAttempts so that a Redis that fails or hangs costs a login almost
@@ -34,8 +35,13 @@ func (b *BoundedLoginAttempts) LockedFor(ctx context.Context, clientAddress stri
 	return remaining, err
 }
 
-func (b *BoundedLoginAttempts) RecordFailure(ctx context.Context, clientAddress string) error {
-	return b.breaker.call(ctx, func(bounded context.Context) error { return b.inner.RecordFailure(bounded, clientAddress) })
+func (b *BoundedLoginAttempts) RecordFailure(ctx context.Context, clientAddress string) (model.LoginFailureOutcome, error) {
+	var outcome model.LoginFailureOutcome
+	err := b.breaker.call(ctx, func(bounded context.Context) (err error) {
+		outcome, err = b.inner.RecordFailure(bounded, clientAddress)
+		return err
+	})
+	return outcome, err
 }
 
 func (b *BoundedLoginAttempts) Clear(ctx context.Context, clientAddress string) error {
