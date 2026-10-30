@@ -1,9 +1,13 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"net/http"
+	"time"
 
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/in"
+	"github.com/code-corhuila/csp-auth-api/internal/domain/model"
 )
 
 // WithLoginUser publishes the use case at POST /login (HU-AUTH-002), public. The route compares with bcrypt, so gate caps
@@ -47,6 +51,8 @@ func login(useCase in.LoginUser, gate *Bulkhead) http.HandlerFunc {
 			ClientIP:  clientAddress(r),
 		})
 		if err != nil {
+			release()
+			waitOutSlowdown(r.Context(), err)
 			translateLoginError(w, traceID, err)
 			return
 		}
@@ -56,6 +62,22 @@ func login(useCase in.LoginUser, gate *Bulkhead) http.HandlerFunc {
 			ExpiresIn:    result.ExpiresIn,
 			User:         toUserSummary(result.User),
 		})
+	}
+}
+
+// waitOutSlowdown holds the answer of a failed login of an account that has too many failures (model.LoginSlowedError)
+// for the delay of the policy. The caller gave its bulkhead slot back first, so a flood of slowed requests cannot fill the
+// slots of the route, and a client that leaves ends the wait.
+func waitOutSlowdown(ctx context.Context, err error) {
+	var slowed *model.LoginSlowedError
+	if !errors.As(err, &slowed) {
+		return
+	}
+	timer := time.NewTimer(slowed.Delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
 	}
 }
 
