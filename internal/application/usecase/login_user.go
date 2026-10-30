@@ -25,13 +25,31 @@ type LoginUser struct {
 	hasher   out.PasswordHasher
 	session  sessionIssuer
 	attempts out.LoginAttempts
+	audit    out.LoginLockAudit
+
+	// accountFailures and accountPolicy slow the failed logins of one email; both are zero when the slowdown is not enabled.
+	accountFailures out.AccountLoginFailures
+	accountPolicy   model.AccountFailurePolicy
+}
+
+// LoginOption enables an optional protection of the login.
+type LoginOption func(*LoginUser)
+
+// WithAccountSlowdown delays the answer of a failed login once the email has more failures than policy allows, counting them
+// in counter whatever the address (HU-AUTH-005, STRIDE S). It never locks the account.
+func WithAccountSlowdown(counter out.AccountLoginFailures, policy model.AccountFailurePolicy) LoginOption {
+	return func(l *LoginUser) { l.accountFailures, l.accountPolicy = counter, policy }
 }
 
 var _ in.LoginUser = (*LoginUser)(nil)
 
 // NewLoginUser wires the use case with the ports it needs.
-func NewLoginUser(users out.UserRepository, hasher out.PasswordHasher, tokens out.TokenIssuer, sessions in.IssueRefreshToken, clock out.Clock, attempts out.LoginAttempts) *LoginUser {
-	return &LoginUser{users: users, hasher: hasher, session: sessionIssuer{accessTokens: tokens, sessions: sessions, clock: clock}, attempts: attempts}
+func NewLoginUser(users out.UserRepository, hasher out.PasswordHasher, tokens out.TokenIssuer, sessions in.IssueRefreshToken, clock out.Clock, attempts out.LoginAttempts, audit out.LoginLockAudit, options ...LoginOption) *LoginUser {
+	useCase := &LoginUser{users: users, hasher: hasher, session: sessionIssuer{accessTokens: tokens, sessions: sessions, clock: clock}, attempts: attempts, audit: audit}
+	for _, option := range options {
+		option(useCase)
+	}
+	return useCase
 }
 
 // Login checks the credentials and issues an access token and a refresh token.
@@ -51,6 +69,7 @@ func (l *LoginUser) Login(ctx context.Context, command in.LoginUserCommand) (in.
 	if err != nil {
 		if errors.Is(err, model.ErrInvalidCredentials) {
 			l.recordFailure(ctx, command.ClientIP)
+			err = l.slowAccount(ctx, command.Email, err)
 		}
 		return in.LoginUserResult{}, err
 	}
@@ -79,9 +98,45 @@ func (l *LoginUser) recordFailure(ctx context.Context, client string) {
 	if client == "" {
 		return
 	}
-	if err := l.attempts.RecordFailure(ctx, client); err != nil {
+	outcome, err := l.attempts.RecordFailure(ctx, client)
+	if err != nil {
 		warnUnlessPaused(ctx, "failed login could not be counted", err)
+		return
 	}
+	if outcome.Locked() {
+		l.auditLock(ctx, client, outcome)
+	}
+}
+
+// auditLock writes the event of the failure that locked the client. A failure of the audit is logged and does not
+// change the answer of the login, which is still the failed credentials.
+func (l *LoginUser) auditLock(ctx context.Context, client string, outcome model.LoginFailureOutcome) {
+	event := model.NewLoginLocked(client, outcome.Attempts, l.session.clock.Now(), outcome.LockedFor)
+	if err := l.audit.RecordLoginLocked(ctx, event); err != nil {
+		slog.WarnContext(ctx, "login lock could not be recorded", "error", err)
+	}
+}
+
+// slowAccount counts the failure against the email and, when the email has more failures than the policy allows, returns the
+// bad credentials with the delay to wait. Any address counts for the same email, so an attacker that changes address does not
+// escape it. A malformed email has no account to protect and is not counted; a store that cannot be reached slows nobody.
+func (l *LoginUser) slowAccount(ctx context.Context, rawEmail string, failure error) error {
+	if l.accountFailures == nil {
+		return failure
+	}
+	email, err := model.NewEmail(rawEmail)
+	if err != nil {
+		return failure
+	}
+	failures, err := l.accountFailures.Record(ctx, model.AccountSubject(email))
+	if err != nil {
+		warnUnlessPaused(ctx, "failed login could not be counted against the account", err)
+		return failure
+	}
+	if l.accountPolicy.Slows(failures) {
+		return &model.LoginSlowedError{Delay: l.accountPolicy.Delay}
+	}
+	return failure
 }
 
 func (l *LoginUser) forgetFailures(ctx context.Context, client string) {
@@ -97,7 +152,7 @@ func (l *LoginUser) forgetFailures(ctx context.Context, client string) {
 // (ADR-048) already wrote the WARN of the pause when it opened, so its answers are not logged again, or an outage would write
 // two lines per request.
 func warnUnlessPaused(ctx context.Context, message string, err error) {
-	if errors.Is(err, out.ErrLoginAttemptsPaused) || errors.Is(err, out.ErrPasswordChangeAttemptsPaused) {
+	if errors.Is(err, out.ErrLoginAttemptsPaused) || errors.Is(err, out.ErrPasswordChangeAttemptsPaused) || errors.Is(err, out.ErrAccountLoginFailuresPaused) {
 		return
 	}
 	slog.WarnContext(ctx, message, "error", err)
@@ -106,24 +161,35 @@ func warnUnlessPaused(ctx context.Context, message string, err error) {
 func (l *LoginUser) authenticate(ctx context.Context, command in.LoginUserCommand) (*model.User, error) {
 	email, err := model.NewEmail(command.Email)
 	if err != nil {
-		l.hasher.Verify(absentUserHash, command.Password)
-		return nil, model.ErrInvalidCredentials
+		return nil, l.compareWithAbsentUser(command.Password)
 	}
 	user, err := l.users.FindByEmail(ctx, email)
 	if errors.Is(err, model.ErrUserNotFound) {
-		l.hasher.Verify(absentUserHash, command.Password)
-		return nil, model.ErrInvalidCredentials
+		return nil, l.compareWithAbsentUser(command.Password)
 	}
 	if err != nil {
 		return nil, err
 	}
-	if !l.hasher.Verify(user.PasswordHash(), command.Password) {
+	matches, err := l.hasher.Verify(user.PasswordHash(), command.Password)
+	if err != nil {
+		return nil, err
+	}
+	if !matches {
 		return nil, model.ErrInvalidCredentials
 	}
 	if err := user.EnsureCanAuthenticate(); err != nil {
 		return nil, err
 	}
 	return user, nil
+}
+
+// compareWithAbsentUser spends the time of a comparison when the email has no account, so the answer does not reveal which
+// emails exist. It answers the bad credentials, unless the hasher is saturated: that refusal is not a failed login.
+func (l *LoginUser) compareWithAbsentUser(password string) error {
+	if _, err := l.hasher.Verify(absentUserHash, password); err != nil {
+		return err
+	}
+	return model.ErrInvalidCredentials
 }
 
 func boundUserAgent(userAgent string) string {

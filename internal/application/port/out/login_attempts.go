@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/code-corhuila/csp-auth-api/internal/domain/model"
 )
 
 // ErrLoginAttemptsPaused is what a LoginAttempts answers while it is paused after a failure of its store (ADR-048):
@@ -17,8 +19,9 @@ var ErrLoginAttemptsPaused = errors.New("the login attempt limit is paused after
 type LoginAttempts interface {
 	// LockedFor returns how long the client stays locked, or zero when it is not locked.
 	LockedFor(ctx context.Context, client string) (time.Duration, error)
-	// RecordFailure counts one failed login and locks the client when the policy is reached.
-	RecordFailure(ctx context.Context, client string) error
+	// RecordFailure counts one failed login and locks the client when the policy is reached. The outcome says how many
+	// failures the client has and whether this one locked it.
+	RecordFailure(ctx context.Context, client string) (model.LoginFailureOutcome, error)
 	// Clear forgets the failures of the client after a successful login.
 	Clear(ctx context.Context, client string) error
 }

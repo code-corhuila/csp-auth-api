@@ -443,6 +443,9 @@ Every limit is explicit (Norma 5.3.10) and is read at start; a value out of rang
 | `APP_AUTH_PASSWORD_RESET_MAX_BODY_BYTES` | `4096` | Largest body of `POST /forgot-password` and `POST /reset-password`, at most `APP_AUTH_MAX_BODY_BYTES`. |
 | `APP_AUTH_REGISTER_MAX_CONCURRENCY` | `8` | Bulkhead of `POST /register`. At least 1 and, with a database, below `APP_AUTH_DATABASE_MAX_CONNECTIONS`. |
 | `APP_AUTH_LOGIN_MAX_CONCURRENCY` | `8` | Bulkhead of `POST /login`, same rules. |
+| `APP_AUTH_BCRYPT_MAX_CONCURRENT` | `4` | Password hashes or comparisons that run at once, all routes together (login, register, password change, password reset), 1 to 64. It is inside the bulkheads above: they protect the database pool per route, this protects the CPU. |
+| `APP_AUTH_METRICS_ENABLED` | `true` | Publishes `GET /metrics` (Prometheus text format 0.0.4) on the port of the service: `auth_http_requests_total{route,method,outcome}` and `auth_http_request_duration_seconds{route,method}` (buckets 0.05, 0.1, 0.25, 0.5, 1 and 2.5 s). `route` is the pattern of the route (`unmatched` when none matched), the wait of the slowdown per account is not counted as latency, and no email, address or user id is ever a label. It is outside the contract: the gateway does not route it, so it is reachable on the `platform` network only (ADR-061). |
+| `APP_AUTH_BCRYPT_QUEUE_TIMEOUT` | `100ms` | Longest a request waits for a free hash slot (positive Go duration, at most `150ms`). Past it the answer is `503 SERVICE_UNAVAILABLE` with `Retry-After: 1` and one `WARN` with the `traceId`; a refusal is not a failed login and is not counted by the address limit or by the slowdown per account. |
 
 A request that exhausts `APP_AUTH_HTTP_REQUEST_TIMEOUT` (for example while it waits for a connection of a saturated pool)
 answers `503 SERVICE_UNAVAILABLE` with the common envelope and `Retry-After: 1`. The register and login bulkheads are taken after the
@@ -490,6 +493,9 @@ password, so a locked address costs no bcrypt.
 | `APP_AUTH_LOGIN_MAX_ATTEMPTS` | `10` | Failures inside the window that lock the address (1 to 1000) |
 | `APP_AUTH_LOGIN_WINDOW` | `5m` | Window in which the failures are counted (Go duration) |
 | `APP_AUTH_LOGIN_LOCK` | `5m` | How long a locked address is rejected with `429` (Go duration) |
+| `APP_AUTH_LOGIN_ACCOUNT_SLOW_AFTER` | `20` | Failed logins of one email, from any address, after which each further failed one is delayed (1 to 1000) |
+| `APP_AUTH_LOGIN_ACCOUNT_WINDOW` | `1h` | Window in which the failures of one email are counted (positive Go duration, at most `24h`) |
+| `APP_AUTH_LOGIN_ACCOUNT_DELAY` | `1s` | Wait before a delayed failed login answers `401` (positive Go duration, at most `5s`) |
 | `APP_AUTH_LOGIN_LIMIT_TIMEOUT` | `300ms` | Most one call of the limiter waits for Redis (positive Go duration, at most `5s`); the revoked token list keeps `APP_AUTH_REDIS_TIMEOUT` |
 | `APP_AUTH_LOGIN_LIMIT_PAUSE` | `10s` | How long the limiter is not called after a failure (positive Go duration, at most `5m`) |
 
@@ -498,6 +504,14 @@ active. The wait is bounded (ADR-048): each call of the limiter gives up after `
 limiter is not called for `APP_AUTH_LOGIN_LIMIT_PAUSE`, so only the first login of an outage waits (one timeout at most) and the
 `WARN` is written once per pause. When the pause ends the next login tries Redis again. Without `APP_AUTH_REDIS_URL` the login is not
 limited (INFO line at start).
+
+**Review of the locks and slowdown per account (ADR-059).** The failure that locks an address writes one `WARN` record with
+`audit: login_locked`, `clientHash` (SHA-256 of the address, never the address), `attempts`, `lockedAt`, `lockSeconds` and the `traceId`; it
+carries no email or password. A second counter, `attempts:account:{sha256(email)}` (only `INCR` and `EXPIRE`, under the `attempts:*`
+pattern of the ACL), counts the failed logins of one email whatever the address, whether the email has an account or not. From the
+`APP_AUTH_LOGIN_ACCOUNT_SLOW_AFTER`+1 failure on, the answer waits `APP_AUTH_LOGIN_ACCOUNT_DELAY` and is still the usual `401`; the account is
+never locked and the right password still opens a session. The wait happens after the slot of the login bulkhead is given back. A Redis that
+does not answer slows nobody and is bounded by `APP_AUTH_LOGIN_LIMIT_TIMEOUT` and `APP_AUTH_LOGIN_LIMIT_PAUSE`, as the address counter.
 ## Email delivery (SMTP)
 
 The code of the email change goes to the SMTP relay of the platform (`net/smtp`, ADR-034). All the settings are domain variables,

@@ -31,6 +31,6 @@ func (h BcryptHasher) Hash(password model.Password) (string, error) {
 
 // Verify reports whether password matches the bcrypt hash. Any failure, including a malformed
 // hash, is a mismatch; the cause is not exposed.
-func (h BcryptHasher) Verify(hash, password string) bool {
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+func (h BcryptHasher) Verify(hash, password string) (bool, error) {
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil, nil
 }

@@ -85,7 +85,11 @@ func (c *ResetPassword) refuseCurrentPassword(ctx context.Context, userID string
 	if err != nil {
 		return err
 	}
-	if c.ports.Hasher.Verify(current, password.Reveal()) {
+	unchanged, err := c.ports.Hasher.Verify(current, password.Reveal())
+	if err != nil {
+		return err
+	}
+	if unchanged {
 		return model.ErrPasswordUnchanged
 	}
 	return nil

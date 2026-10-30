@@ -11,10 +11,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/in/httpapi"
+	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/audit"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/mail"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/persistence"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/redis"
-	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/security"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/system"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/token"
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/out"
@@ -62,12 +62,13 @@ func newHandler(ctx context.Context, logger *slog.Logger, cfg config.Config, ope
 // A configured key or database that cannot be used stops the service instead of degrading it.
 func newRoutes(ctx context.Context, logger *slog.Logger, cfg config.Config, open poolOpener) (http.Handler, func(), error) {
 	noop := func() {}
+	build := newRouter(cfg)
 	hasKey := cfg.JWTPrivateKey != "" || cfg.JWTPrivateKeyFile != ""
 	if !hasKey {
 		if cfg.DatabaseURL != "" {
 			return nil, noop, errors.New("APP_AUTH_DATABASE_URL needs a signing key (APP_AUTH_JWT_PRIVATE_KEY or APP_AUTH_JWT_PRIVATE_KEY_FILE): registration issues tokens")
 		}
-		return httpapi.NewHandler(), noop, nil
+		return build(), noop, nil
 	}
 	key, err := token.LoadPrivateKey(cfg.JWTPrivateKey, cfg.JWTPrivateKeyFile)
 	if err != nil {
@@ -79,7 +80,7 @@ func newRoutes(ctx context.Context, logger *slog.Logger, cfg config.Config, open
 	}
 	options := []httpapi.Option{httpapi.WithPublicKeys(issuer)}
 	if cfg.DatabaseURL == "" {
-		return httpapi.NewHandler(options...), noop, nil
+		return build(options...), noop, nil
 	}
 
 	pool, err := open(ctx, persistence.PoolSettings{
@@ -92,12 +93,18 @@ func newRoutes(ctx context.Context, logger *slog.Logger, cfg config.Config, open
 	if err != nil {
 		return nil, noop, fmt.Errorf("connect to the auth database: %w", err)
 	}
+	if err := checkHasherBound(cfg); err != nil {
+		pool.Close()
+		return nil, noop, err
+	}
+	hasher := newPasswordHasher(cfg)
+	logger.Info("password hashing bounded", "maxConcurrent", cfg.BcryptMaxConcurrent, "queueTimeout", cfg.BcryptQueueTimeout.String())
 	registerGate, err := httpapi.NewBulkhead(cfg.RegisterMaxConcurrency, config.CredentialQueueTimeout)
 	if err != nil {
 		pool.Close()
 		return nil, noop, fmt.Errorf("register limit: %w", err)
 	}
-	options = append(options, httpapi.WithRegisterUser(newRegisterUser(cfg, pool, issuer), registerGate))
+	options = append(options, httpapi.WithRegisterUser(newRegisterUser(cfg, pool, issuer, hasher), registerGate))
 	logger.Info("register route enabled", "maxConcurrency", registerGate.Limit(), "queueTimeout", registerGate.Wait().String())
 	redisState, closeRedis, err := openRedisState(logger, cfg)
 	if err != nil {
@@ -110,7 +117,7 @@ func newRoutes(ctx context.Context, logger *slog.Logger, cfg config.Config, open
 		pool.Close()
 		return nil, noop, fmt.Errorf("login limit: %w", err)
 	}
-	options = append(options, httpapi.WithLoginUser(newLoginUser(cfg, pool, issuer, redisState.attempts), loginGate))
+	options = append(options, httpapi.WithLoginUser(newLoginUser(cfg, pool, issuer, hasher, redisState), loginGate))
 	logger.Info("login route enabled", "maxConcurrency", loginGate.Limit(), "queueTimeout", loginGate.Wait().String())
 	options = append(options, httpapi.WithRefreshSession(newRefreshSession(cfg, pool, issuer)))
 	logger.Info("refresh route enabled")
@@ -127,7 +134,7 @@ func newRoutes(ctx context.Context, logger *slog.Logger, cfg config.Config, open
 		pool.Close()
 		return nil, noop, fmt.Errorf("password change limit: %w", err)
 	}
-	options = append(options, httpapi.WithPasswordChange(authorizer, newChangePassword(cfg, pool, issuer, redisState.passwordChanges), passwordGate))
+	options = append(options, httpapi.WithPasswordChange(authorizer, newChangePassword(cfg, pool, issuer, hasher, redisState.passwordChanges), passwordGate))
 	logger.Info("password change route enabled", "maxConcurrency", passwordGate.Limit(), "queueTimeout", passwordGate.Wait().String())
 	if cfg.SMTPHost != "" {
 		requestEmailChange, err := newRequestEmailChange(cfg, logger, pool)
@@ -147,7 +154,7 @@ func newRoutes(ctx context.Context, logger *slog.Logger, cfg config.Config, open
 	} else {
 		logger.Info("APP_AUTH_SMTP_HOST is not set: the email change is not enabled")
 	}
-	passwordReset, closePasswordReset, err := passwordResetRoutes(cfg, logger, pool)
+	passwordReset, closePasswordReset, err := passwordResetRoutes(cfg, logger, pool, hasher)
 	if err != nil {
 		closeRedis()
 		pool.Close()
@@ -160,7 +167,7 @@ func newRoutes(ctx context.Context, logger *slog.Logger, cfg config.Config, open
 		options = append(options, httpapi.WithLogout(authorizer, newLogout(pool, redisState.revoked)))
 		logger.Info("logout route enabled")
 	}
-	return httpapi.NewHandler(options...), func() {
+	return build(options...), func() {
 		closePasswordReset()
 		closeRedis()
 		pool.Close()
@@ -174,6 +181,10 @@ type redisState struct {
 	revoked         out.RevokedTokens
 	attempts        out.LoginAttempts
 	passwordChanges out.PasswordChangeAttempts
+
+	// accountFailures slows the failed logins of one email (HU-AUTH-005); nil when there is no Redis.
+	accountFailures out.AccountLoginFailures
+	accountPolicy   model.AccountFailurePolicy
 }
 
 // openRedisState connects the Redis of the auth state when APP_AUTH_REDIS_URL is set (the client does not
@@ -192,6 +203,10 @@ func openRedisState(logger *slog.Logger, cfg config.Config) (redisState, func(),
 	if err != nil {
 		return redisState{}, nil, fmt.Errorf("password change limit: %w", err)
 	}
+	accountPolicy, err := model.NewAccountFailurePolicy(cfg.LoginAccountSlowAfter, cfg.LoginAccountWindow, cfg.LoginAccountDelay)
+	if err != nil {
+		return redisState{}, nil, fmt.Errorf("login account slowdown: %w", err)
+	}
 	if cfg.LoginLimitTimeout <= 0 || cfg.LoginLimitPause <= 0 {
 		return redisState{}, nil, errors.New("login attempt limit: the timeout and the pause must be positive")
 	}
@@ -201,7 +216,8 @@ func openRedisState(logger *slog.Logger, cfg config.Config) (redisState, func(),
 	}
 	attempts := redis.NewBoundedLoginAttempts(redis.NewLoginAttempts(client, policy), cfg.LoginLimitTimeout, cfg.LoginLimitPause, system.Clock{})
 	passwordChanges := redis.NewBoundedPasswordChangeAttempts(redis.NewPasswordChangeAttempts(client, passwordPolicy), cfg.LoginLimitTimeout, cfg.LoginLimitPause, system.Clock{})
-	state := redisState{revoked: redis.NewRevokedTokens(client), attempts: attempts, passwordChanges: passwordChanges}
+	accountFailures := redis.NewBoundedAccountLoginFailures(redis.NewAccountLoginFailures(client, accountPolicy.Window), cfg.LoginLimitTimeout, cfg.LoginLimitPause, system.Clock{})
+	state := redisState{revoked: redis.NewRevokedTokens(client), attempts: attempts, passwordChanges: passwordChanges, accountFailures: accountFailures, accountPolicy: accountPolicy}
 	return state, func() { _ = client.Close() }, nil
 }
 
@@ -223,7 +239,9 @@ type noLoginAttempts struct{}
 
 func (noLoginAttempts) LockedFor(context.Context, string) (time.Duration, error) { return 0, nil }
 
-func (noLoginAttempts) RecordFailure(context.Context, string) error { return nil }
+func (noLoginAttempts) RecordFailure(context.Context, string) (model.LoginFailureOutcome, error) {
+	return model.LoginFailureOutcome{}, nil
+}
 
 func (noLoginAttempts) Clear(context.Context, string) error { return nil }
 
@@ -236,13 +254,13 @@ func (noPasswordChangeAttempts) RecordFailure(context.Context, string) error { r
 
 func (noPasswordChangeAttempts) Clear(context.Context, string) error { return nil }
 
-func newRegisterUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer) *usecase.RegisterUser {
+func newRegisterUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer, hasher out.PasswordHasher) *usecase.RegisterUser {
 	clock, ids := system.Clock{}, system.UUIDGenerator{}
 	return usecase.NewRegisterUser(usecase.RegisterUserPorts{
 		Users:        persistence.NewUserRepository(pool),
 		Keys:         persistence.NewIdempotencyKeyRepository(pool),
 		Outbox:       persistence.NewOutboxWriter(pool),
-		Hasher:       security.NewBcryptHasher(cfg.BcryptRounds),
+		Hasher:       hasher,
 		IDs:          ids,
 		Clock:        clock,
 		Transactions: persistence.NewTransactionManager(pool),
@@ -251,15 +269,21 @@ func newRegisterUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer
 	})
 }
 
-func newLoginUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer, attempts out.LoginAttempts) *usecase.LoginUser {
+func newLoginUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer, hasher out.PasswordHasher, state redisState) *usecase.LoginUser {
 	clock, ids := system.Clock{}, system.UUIDGenerator{}
+	var options []usecase.LoginOption
+	if state.accountFailures != nil {
+		options = append(options, usecase.WithAccountSlowdown(state.accountFailures, state.accountPolicy))
+	}
 	return usecase.NewLoginUser(
 		persistence.NewUserRepository(pool),
-		security.NewBcryptHasher(cfg.BcryptRounds),
+		hasher,
 		issuer,
 		usecase.NewIssueRefreshToken(persistence.NewRefreshTokenRepository(pool), ids, clock, cfg.RefreshTokenTTL),
 		clock,
-		attempts,
+		state.attempts,
+		audit.NewLoginLockLog(slog.Default()),
+		options...,
 	)
 }
 
@@ -310,7 +334,7 @@ func newOwnProfile(authorizer *usecase.AuthorizeUser, pool *pgxpool.Pool) httpap
 		usecase.NewUpdateProfile(users, users, system.Clock{}, persistence.NewTransactionManager(pool)))
 }
 
-func newChangePassword(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer, attempts out.PasswordChangeAttempts) *usecase.ChangePassword {
+func newChangePassword(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer, hasher out.PasswordHasher, attempts out.PasswordChangeAttempts) *usecase.ChangePassword {
 	clock, ids := system.Clock{}, system.UUIDGenerator{}
 	users, tokens := persistence.NewUserRepository(pool), persistence.NewRefreshTokenRepository(pool)
 	return usecase.NewChangePassword(usecase.ChangePasswordPorts{
@@ -318,7 +342,7 @@ func newChangePassword(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issu
 		Hashes:       users,
 		Passwords:    users,
 		Sessions:     tokens,
-		Hasher:       security.NewBcryptHasher(cfg.BcryptRounds),
+		Hasher:       hasher,
 		Attempts:     attempts,
 		Tokens:       issuer,
 		Refresh:      usecase.NewIssueRefreshToken(tokens, ids, clock, cfg.RefreshTokenTTL),

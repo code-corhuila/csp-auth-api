@@ -9,6 +9,34 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- Metrics of the routes (STRIDE D, code-corhuila/csp-docs#281, technical issue #210): `GET /metrics` in the Prometheus text format, on the port of the service,
+  outside the contract and not routed by the gateway, with `auth_http_requests_total{route,method,outcome}` and `auth_http_request_duration_seconds{route,method}`
+  (buckets 0.05, 0.1, 0.25, 0.5, 1 and 2.5 seconds, the ones of the metric catalog of the week 11 workshop). `route` is the pattern of the route, `unmatched` when
+  none matched, so the series never grow with the paths; there is no email, address or user id in any label. The wait of the slowdown per account (ADR-059) is
+  not latency and is left out. `APP_AUTH_METRICS_ENABLED` (default `true`) turns it off. Written with the standard library (`internal/platform/metrics`), observed by the
+  root step through `httpapi.WithObserver`. Unit tests of the metrics, of the observation (route, unmatched, panic, the excluded wait) and of the wiring; end-to-end test
+  that logs in and registers and reads the scrape.
+- Bound on the concurrent password hashes (STRIDE D, code-corhuila/csp-docs#281, technical issue #209): `APP_AUTH_BCRYPT_MAX_CONCURRENT` (4, 1 to
+  64) hashes or comparisons run at once, all routes together, and `APP_AUTH_BCRYPT_QUEUE_TIMEOUT` (100ms, at most 150ms) is the longest a request waits
+  for a slot. A request that finds none answers `503 SERVICE_UNAVAILABLE` with `Retry-After: 1` and one `WARN` with the `traceId`, from `POST /login`,
+  `POST /register`, `POST /me/password` and `POST /reset-password`. A refusal is not a failed login: the address counter, the lock audit and the slowdown
+  per account do not see it. `out.PasswordHasher.Verify` now returns `(bool, error)` so a comparison that could not run is not read as a mismatch;
+  the decorator is `security.BoundedPasswordHasher` and the composition root builds one hasher for every route. Unit tests with a hasher that blocks, of
+  every use case and of the mapping to 503 in the four routes; an end-to-end test where a burst of logins with one slot gets `401` and `503`.
+- Slowdown per account (STRIDE S, code-corhuila/csp-docs#280): a second counter, `attempts:account:{sha256(email)}` in Redis (`INCR` and `EXPIRE`
+  only, inside the `attempts:*` pattern of ADR-028, so the ACL does not change), counts the failed logins of one email from any address, known
+  or not. After `APP_AUTH_LOGIN_ACCOUNT_SLOW_AFTER` (20) failures inside `APP_AUTH_LOGIN_ACCOUNT_WINDOW` (1h) every further failed login waits
+  `APP_AUTH_LOGIN_ACCOUNT_DELAY` (1s) and answers the usual `401`; the account is never locked. The wait happens after the bulkhead slot is
+  given back, ends if the client leaves, and a Redis that fails slows nobody (same timeout and pause as the address counter, ADR-048). Unit tests of
+  the policy, the use case, the handler and the counter; integration tests of the counter and an end-to-end test with 25 failures for one email from 25
+  addresses whose 26th answer takes at least one second.
+- Audit of the lock of the login (STRIDE S, code-corhuila/csp-docs#280): the failed login that locks a client address writes one `WARN`
+  record with `audit: login_locked`, the SHA-256 hash of the address (`clientHash`), the number of `attempts`, `lockedAt`, `lockSeconds` and
+  the `traceId`; never the address, the email or the password. A rejected attempt of an address that is already locked is not a new lock, and
+  a failure of the audit never changes the answer of the login. `out.LoginAttempts.RecordFailure` now returns the count and the lock of the
+  failure it counted, and the new port `out.LoginLockAudit` has the log adapter `internal/adapter/out/audit`. The negative test
+  `TestAuthzLoginRejectsTheEleventhFailedAttemptFromTheSameAddressEvenWithValidCredentials` is added to the unit tests. Unit tests of the event,
+  the use case and the log line; integration test of the outcome against Redis.
 - Development only: the profile `mail-relay` of `deploy/compose.yml`, a Mailpit (`mailpit-relay`, reachable as `mailpit`) that stores every message and relays
   those whose recipient matches `MAILPIT_RELAY_MATCHING` to a real SMTP provider, configured by `MAILPIT_RELAY_FILE` (rendered by `csp-infra-postgres`). The
   service keeps talking to Mailpit only, so an expired key only fails the relay; a provider that is unreachable or slow keeps Mailpit waiting inside the

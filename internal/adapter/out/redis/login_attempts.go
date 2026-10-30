@@ -59,28 +59,31 @@ func (a *LoginAttempts) LockedFor(ctx context.Context, clientAddress string) (ti
 }
 
 // RecordFailure counts one failure. The first one of a window starts the window; the one that reaches
-// the policy writes the lock and drops the counter, so the next window starts clean after the lock.
-func (a *LoginAttempts) RecordFailure(ctx context.Context, clientAddress string) error {
+// the policy writes the lock and drops the counter, so the next window starts clean after the lock. The outcome carries
+// the count and, for the failure that locked, the length of the lock.
+func (a *LoginAttempts) RecordFailure(ctx context.Context, clientAddress string) (model.LoginFailureOutcome, error) {
 	counterKey := a.counterPrefix + clientAddress
 	failures, err := a.client.Incr(ctx, counterKey).Result()
 	if err != nil {
-		return fmt.Errorf("count failed attempt in redis: %w", err)
+		return model.LoginFailureOutcome{}, fmt.Errorf("count failed attempt in redis: %w", err)
 	}
 	if failures == 1 {
 		if err := a.client.Expire(ctx, counterKey, a.policy.Window).Err(); err != nil {
-			return fmt.Errorf("start attempt window in redis: %w", err)
+			return model.LoginFailureOutcome{}, fmt.Errorf("start attempt window in redis: %w", err)
 		}
 	}
+	outcome := model.LoginFailureOutcome{Attempts: int(failures)}
 	if !a.policy.Reached(int(failures)) {
-		return nil
+		return outcome, nil
 	}
 	if err := a.client.Set(ctx, a.lockPrefix+clientAddress, "1", a.policy.Lock).Err(); err != nil {
-		return fmt.Errorf("lock subject in redis: %w", err)
+		return model.LoginFailureOutcome{}, fmt.Errorf("lock subject in redis: %w", err)
 	}
 	if err := a.client.Del(ctx, counterKey).Err(); err != nil {
-		return fmt.Errorf("drop attempt counter in redis: %w", err)
+		return model.LoginFailureOutcome{}, fmt.Errorf("drop attempt counter in redis: %w", err)
 	}
-	return nil
+	outcome.LockedFor = a.policy.Lock
+	return outcome, nil
 }
 
 // Clear is one DEL of the counter; a lock is not cleared because a locked client never gets to log in.

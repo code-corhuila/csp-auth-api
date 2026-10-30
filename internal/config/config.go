@@ -58,6 +58,9 @@ type Config struct {
 	DatabaseConnectTimeout time.Duration
 	DatabaseQueryTimeout   time.Duration
 	BcryptRounds           int
+	BcryptMaxConcurrent    int
+	BcryptQueueTimeout     time.Duration
+	MetricsEnabled         bool
 	JWTPrivateKey          string
 	JWTPrivateKeyFile      string
 	AccessTokenTTL         time.Duration
@@ -69,6 +72,9 @@ type Config struct {
 	LoginMaxAttempts       int
 	LoginWindow            time.Duration
 	LoginLock              time.Duration
+	LoginAccountSlowAfter  int
+	LoginAccountWindow     time.Duration
+	LoginAccountDelay      time.Duration
 	LoginLimitTimeout      time.Duration
 	LoginLimitPause        time.Duration
 	SMTPHost               string
@@ -127,6 +133,12 @@ func Load(lookup Lookup) (Config, error) {
 		return Config{}, fmt.Errorf("APP_AUTH_BCRYPT_ROUNDS %d is out of range %d-%d", rounds, minBcryptRounds, maxBcryptRounds)
 	}
 	cfg.BcryptRounds = rounds
+	if err := loadBcryptBound(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
+	if cfg.MetricsEnabled, err = boolValue(lookup, "APP_AUTH_METRICS_ENABLED", true); err != nil {
+		return Config{}, err
+	}
 	if err := loadTokens(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
@@ -204,6 +216,31 @@ func loadRedis(lookup Lookup, cfg *Config) error {
 	return err
 }
 
+// Bounds of the limit on concurrent password hashes: at most 64 at once, and a refusal that comes in under 200 ms (STRIDE D).
+const (
+	maxBcryptConcurrent   = 64
+	maxBcryptQueueTimeout = 150 * time.Millisecond
+)
+
+// loadBcryptBound reads how many password hashes or comparisons may run at once, whatever the route, and how long a request
+// waits for a free slot before it is refused with 503 (Norma 5.3.10, code-corhuila/csp-docs#281).
+func loadBcryptBound(lookup Lookup, cfg *Config) error {
+	var err error
+	if cfg.BcryptMaxConcurrent, err = intValue(lookup, "APP_AUTH_BCRYPT_MAX_CONCURRENT", 4); err != nil {
+		return err
+	}
+	if cfg.BcryptMaxConcurrent < 1 || cfg.BcryptMaxConcurrent > maxBcryptConcurrent {
+		return fmt.Errorf("APP_AUTH_BCRYPT_MAX_CONCURRENT %d is out of range 1-%d", cfg.BcryptMaxConcurrent, maxBcryptConcurrent)
+	}
+	if cfg.BcryptQueueTimeout, err = durationValue(lookup, "APP_AUTH_BCRYPT_QUEUE_TIMEOUT", 100*time.Millisecond); err != nil {
+		return err
+	}
+	if cfg.BcryptQueueTimeout > maxBcryptQueueTimeout {
+		return fmt.Errorf("APP_AUTH_BCRYPT_QUEUE_TIMEOUT %v is above the maximum %v", cfg.BcryptQueueTimeout, maxBcryptQueueTimeout)
+	}
+	return nil
+}
+
 // maxLoginAttempts bounds APP_AUTH_LOGIN_MAX_ATTEMPTS: a larger number is not a limit anymore.
 const maxLoginAttempts = 1000
 
@@ -224,7 +261,43 @@ func loadLoginLimit(lookup Lookup, cfg *Config) error {
 	if err != nil {
 		return err
 	}
+	if err := loadLoginAccountSlowdown(lookup, cfg); err != nil {
+		return err
+	}
 	return loadLoginLimiterBounds(lookup, cfg)
+}
+
+// Bounds of the account slowdown: a delay longer than this would outlast the request deadline, and a window longer than a day
+// is not a rate any more.
+const (
+	maxLoginAccountSlowAfter = 1000
+	maxLoginAccountWindow    = 24 * time.Hour
+	maxLoginAccountDelay     = 5 * time.Second
+)
+
+// loadLoginAccountSlowdown reads the counter per email that slows the failed logins without locking the account
+// (HU-AUTH-005, STRIDE S). It only takes effect with Redis.
+func loadLoginAccountSlowdown(lookup Lookup, cfg *Config) error {
+	var err error
+	if cfg.LoginAccountSlowAfter, err = intValue(lookup, "APP_AUTH_LOGIN_ACCOUNT_SLOW_AFTER", 20); err != nil {
+		return err
+	}
+	if cfg.LoginAccountSlowAfter < 1 || cfg.LoginAccountSlowAfter > maxLoginAccountSlowAfter {
+		return fmt.Errorf("APP_AUTH_LOGIN_ACCOUNT_SLOW_AFTER %d is out of range 1-%d", cfg.LoginAccountSlowAfter, maxLoginAccountSlowAfter)
+	}
+	if cfg.LoginAccountWindow, err = durationValue(lookup, "APP_AUTH_LOGIN_ACCOUNT_WINDOW", time.Hour); err != nil {
+		return err
+	}
+	if cfg.LoginAccountWindow > maxLoginAccountWindow {
+		return fmt.Errorf("APP_AUTH_LOGIN_ACCOUNT_WINDOW %v is above the maximum %v", cfg.LoginAccountWindow, maxLoginAccountWindow)
+	}
+	if cfg.LoginAccountDelay, err = durationValue(lookup, "APP_AUTH_LOGIN_ACCOUNT_DELAY", time.Second); err != nil {
+		return err
+	}
+	if cfg.LoginAccountDelay > maxLoginAccountDelay {
+		return fmt.Errorf("APP_AUTH_LOGIN_ACCOUNT_DELAY %v is above the maximum %v", cfg.LoginAccountDelay, maxLoginAccountDelay)
+	}
+	return nil
 }
 
 // Bounds of the login limiter against Redis (ADR-048): the longest one call may wait and the longest pause after a failure.
@@ -375,6 +448,19 @@ func listValue(lookup Lookup, key string) []string {
 		}
 	}
 	return items
+}
+
+// boolValue reads true or false (any form strconv.ParseBool accepts); an empty value is the default.
+func boolValue(lookup Lookup, key string, def bool) (bool, error) {
+	raw, ok := lookup(key)
+	if !ok || raw == "" {
+		return def, nil
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("%s must be true or false: %w", key, err)
+	}
+	return value, nil
 }
 
 func intValue(lookup Lookup, key string, def int) (int, error) {
