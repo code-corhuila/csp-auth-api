@@ -11,6 +11,13 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- Bound on the concurrent password hashes (STRIDE D, code-corhuila/csp-docs#281, technical issue #209): `APP_AUTH_BCRYPT_MAX_CONCURRENT` (4, 1 to
+  64) hashes or comparisons run at once, all routes together, and `APP_AUTH_BCRYPT_QUEUE_TIMEOUT` (100ms, at most 150ms) is the longest a request waits
+  for a slot. A request that finds none answers `503 SERVICE_UNAVAILABLE` with `Retry-After: 1` and one `WARN` with the `traceId`, from `POST /login`,
+  `POST /register`, `POST /me/password` and `POST /reset-password`. A refusal is not a failed login: the address counter, the lock audit and the slowdown
+  per account do not see it. `out.PasswordHasher.Verify` now returns `(bool, error)` so a comparison that could not run is not read as a mismatch;
+  the decorator is `security.BoundedPasswordHasher` and the composition root builds one hasher for every route. Unit tests with a hasher that blocks, of
+  every use case and of the mapping to 503 in the four routes; an end-to-end test where a burst of logins with one slot gets `401` and `503`.
 - Slowdown per account (STRIDE S, code-corhuila/csp-docs#280): a second counter, `attempts:account:{sha256(email)}` in Redis (`INCR` and `EXPIRE`
   only, inside the `attempts:*` pattern of ADR-028, so the ACL does not change), counts the failed logins of one email from any address, known
   or not. After `APP_AUTH_LOGIN_ACCOUNT_SLOW_AFTER` (20) failures inside `APP_AUTH_LOGIN_ACCOUNT_WINDOW` (1h) every further failed login waits

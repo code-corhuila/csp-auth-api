@@ -151,9 +151,10 @@ func (s *fakeResetSender) Send(_ context.Context, delivery out.PasswordResetDeli
 }
 
 type resetHasher struct {
-	journal *journal
-	hashed  []string
-	err     error
+	journal   *journal
+	hashed    []string
+	err       error
+	verifyErr error
 }
 
 type fakeCurrentPassword struct {
@@ -175,9 +176,9 @@ func (h *resetHasher) Hash(password model.Password) (string, error) {
 }
 
 // Verify behaves like bcrypt for the one account of the fixture: only currentPassword matches currentHash.
-func (h *resetHasher) Verify(hash, password string) bool {
+func (h *resetHasher) Verify(hash, password string) (bool, error) {
 	h.journal.record("verify")
-	return hash == currentHash && password == currentPassword
+	return hash == currentHash && password == currentPassword, h.verifyErr
 }
 
 type fakePasswordUpdater struct {

@@ -37,4 +37,5 @@ var (
 	ErrServiceNotAllowed        = errors.New("the subject of the token is not an allowed service")
 	ErrInvalidLoginPolicy       = errors.New("login attempt policy needs at least one attempt and a positive window and lock")
 	ErrTooManyLoginAttempts     = errors.New("too many failed login attempts from this client")
+	ErrPasswordHasherBusy       = errors.New("too many passwords are being hashed at once")
 )

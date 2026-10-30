@@ -115,7 +115,7 @@ func (h *fakeHasher) Hash(password model.Password) (string, error) {
 	return hashedPassword, h.err
 }
 
-func (h *fakeHasher) Verify(string, string) bool { return false }
+func (h *fakeHasher) Verify(string, string) (bool, error) { return false, nil }
 
 type fakeIDs struct{ next []string }
 

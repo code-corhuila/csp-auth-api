@@ -53,16 +53,19 @@ func TestVerifyAcceptsOnlyThePasswordBehindTheHash(t *testing.T) {
 	hasher := NewBcryptHasher(bcrypt.MinCost)
 	hash, _ := hasher.Hash(mustPassword(t, "Secret123"))
 
-	if !hasher.Verify(hash, "Secret123") {
-		t.Error("Verify() = false for the right password")
+	if ok, err := hasher.Verify(hash, "Secret123"); !ok || err != nil {
+		t.Errorf("Verify() = %v, %v for the right password, want true, nil", ok, err)
 	}
-	if hasher.Verify(hash, "secret123") || hasher.Verify(hash, "") {
+	if ok, _ := hasher.Verify(hash, "secret123"); ok {
 		t.Error("Verify() = true for a wrong password")
+	}
+	if ok, _ := hasher.Verify(hash, ""); ok {
+		t.Error("Verify() = true for an empty password")
 	}
 }
 
 func TestVerifyTreatsAMalformedHashAsAMismatch(t *testing.T) {
-	if NewBcryptHasher(bcrypt.MinCost).Verify("not-a-hash", "Secret123") {
-		t.Error("Verify() = true for a malformed hash")
+	if ok, err := NewBcryptHasher(bcrypt.MinCost).Verify("not-a-hash", "Secret123"); ok || err != nil {
+		t.Errorf("Verify() = %v, %v for a malformed hash, want a plain mismatch (false, nil)", ok, err)
 	}
 }

@@ -161,24 +161,35 @@ func warnUnlessPaused(ctx context.Context, message string, err error) {
 func (l *LoginUser) authenticate(ctx context.Context, command in.LoginUserCommand) (*model.User, error) {
 	email, err := model.NewEmail(command.Email)
 	if err != nil {
-		l.hasher.Verify(absentUserHash, command.Password)
-		return nil, model.ErrInvalidCredentials
+		return nil, l.compareWithAbsentUser(command.Password)
 	}
 	user, err := l.users.FindByEmail(ctx, email)
 	if errors.Is(err, model.ErrUserNotFound) {
-		l.hasher.Verify(absentUserHash, command.Password)
-		return nil, model.ErrInvalidCredentials
+		return nil, l.compareWithAbsentUser(command.Password)
 	}
 	if err != nil {
 		return nil, err
 	}
-	if !l.hasher.Verify(user.PasswordHash(), command.Password) {
+	matches, err := l.hasher.Verify(user.PasswordHash(), command.Password)
+	if err != nil {
+		return nil, err
+	}
+	if !matches {
 		return nil, model.ErrInvalidCredentials
 	}
 	if err := user.EnsureCanAuthenticate(); err != nil {
 		return nil, err
 	}
 	return user, nil
+}
+
+// compareWithAbsentUser spends the time of a comparison when the email has no account, so the answer does not reveal which
+// emails exist. It answers the bad credentials, unless the hasher is saturated: that refusal is not a failed login.
+func (l *LoginUser) compareWithAbsentUser(password string) error {
+	if _, err := l.hasher.Verify(absentUserHash, password); err != nil {
+		return err
+	}
+	return model.ErrInvalidCredentials
 }
 
 func boundUserAgent(userAgent string) string {

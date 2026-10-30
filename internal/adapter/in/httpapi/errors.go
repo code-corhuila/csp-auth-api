@@ -77,6 +77,8 @@ func translateRegisterError(w http.ResponseWriter, traceID string, err error) {
 		})
 	case errors.Is(err, model.ErrIdempotencyKeyConflict):
 		writeIdempotencyConflict(w, traceID)
+	case errors.Is(err, model.ErrPasswordHasherBusy):
+		writeHasherBusy(w, traceID)
 	default:
 		slog.Error("register user failed", "traceId", traceID, "error", err)
 		writeInternal(w, traceID, err)
@@ -107,6 +109,8 @@ func translateLoginError(w http.ResponseWriter, traceID string, err error) {
 		writeJSON(w, http.StatusTooManyRequests, errorResponse{
 			Error: codeTooManyRequests, Message: "Too many failed login attempts, try again later", TraceID: traceID,
 		})
+	case errors.Is(err, model.ErrPasswordHasherBusy):
+		writeHasherBusy(w, traceID)
 	default:
 		slog.Error("login user failed", "traceId", traceID, "error", err)
 		writeInternal(w, traceID, err)
@@ -257,6 +261,8 @@ func translateResetPasswordError(w http.ResponseWriter, traceID string, err erro
 		writeJSON(w, http.StatusUnauthorized, errorResponse{
 			Error: codeInvalidToken, Message: "Reset token is invalid or expired", TraceID: traceID,
 		})
+	case errors.Is(err, model.ErrPasswordHasherBusy):
+		writeHasherBusy(w, traceID)
 	default:
 		slog.Error("reset password failed", "traceId", traceID, "error", err)
 		writeInternal(w, traceID, err)

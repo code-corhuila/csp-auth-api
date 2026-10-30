@@ -9,8 +9,8 @@ import (
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/in/httpapi"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/mail"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/persistence"
-	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/security"
 	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/system"
+	"github.com/code-corhuila/csp-auth-api/internal/application/port/out"
 	"github.com/code-corhuila/csp-auth-api/internal/application/usecase"
 	"github.com/code-corhuila/csp-auth-api/internal/config"
 )
@@ -18,7 +18,7 @@ import (
 // passwordResetRoutes publishes POST /forgot-password and POST /reset-password (HU-AUTH-006, ADR-050) when the SMTP relay
 // and the link of the portal are configured: the link is sent through that relay after the commit, by a queue the
 // returned function stops. Without either, the two routes answer the 404 of the contract and the log says why, once.
-func passwordResetRoutes(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool) (httpapi.Option, func(), error) {
+func passwordResetRoutes(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, hasher out.PasswordHasher) (httpapi.Option, func(), error) {
 	notEnabled := func(reason string) (httpapi.Option, func(), error) {
 		logger.Info(reason + ": the password reset is not enabled")
 		return httpapi.WithPasswordResetNotEnabled(), func() {}, nil
@@ -51,7 +51,7 @@ func passwordResetRoutes(cfg config.Config, logger *slog.Logger, pool *pgxpool.P
 		IDs: system.UUIDGenerator{}, Clock: clock, Transactions: transactions,
 	})
 	reset := usecase.NewResetPassword(usecase.ResetPasswordPorts{
-		Resets: resets, Hasher: security.NewBcryptHasher(cfg.BcryptRounds), Current: users, Passwords: users,
+		Resets: resets, Hasher: hasher, Current: users, Passwords: users,
 		Sessions: persistence.NewRefreshTokenRepository(pool), Clock: clock, Transactions: transactions,
 	})
 	logger.Info("password reset routes enabled", "maxConcurrency", forgotGate.Limit(), "queueTimeout", forgotGate.Wait().String())

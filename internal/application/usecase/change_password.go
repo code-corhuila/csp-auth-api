@@ -81,10 +81,18 @@ func (c *ChangePassword) replace(ctx context.Context, command in.ChangePasswordC
 	if err := user.EnsureCanAuthenticate(); err != nil {
 		return in.LoginUserResult{}, err
 	}
-	if !c.ports.Hasher.Verify(hash, command.CurrentPassword) {
+	matches, err := c.ports.Hasher.Verify(hash, command.CurrentPassword)
+	if err != nil {
+		return in.LoginUserResult{}, err
+	}
+	if !matches {
 		return in.LoginUserResult{}, model.ErrWrongCurrentPassword
 	}
-	if c.ports.Hasher.Verify(hash, replacement.Reveal()) {
+	unchanged, err := c.ports.Hasher.Verify(hash, replacement.Reveal())
+	if err != nil {
+		return in.LoginUserResult{}, err
+	}
+	if unchanged {
 		return in.LoginUserResult{}, model.ErrPasswordUnchanged
 	}
 	newHash, err := c.ports.Hasher.Hash(replacement)

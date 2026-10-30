@@ -57,6 +57,16 @@ func writeForbidden(w http.ResponseWriter, traceID string) {
 	})
 }
 
+// writeHasherBusy answers a request that the bound on concurrent password hashes refused (model.ErrPasswordHasherBusy): a 503
+// SERVICE_UNAVAILABLE that the client may retry at once, and one WARN with the trace id that carries no email, address or password.
+func writeHasherBusy(w http.ResponseWriter, traceID string) {
+	slog.Warn("password hashing refused: too many hashes at once", "traceId", traceID)
+	w.Header().Set("Retry-After", busyRetryAfterSeconds)
+	writeJSON(w, http.StatusServiceUnavailable, errorResponse{
+		Error: codeServiceUnavailable, Message: "A required service or dependency is unavailable", TraceID: traceID,
+	})
+}
+
 // writeInternal answers an unexpected failure. A request that ran out of its deadline (Limits.RequestTimeout), as one that
 // waited too long for a database connection, is a 503 SERVICE_UNAVAILABLE that the client may retry; anything else is a
 // 500 INTERNAL_ERROR. The cause only goes to the log.
