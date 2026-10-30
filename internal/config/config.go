@@ -69,6 +69,9 @@ type Config struct {
 	LoginMaxAttempts       int
 	LoginWindow            time.Duration
 	LoginLock              time.Duration
+	LoginAccountSlowAfter  int
+	LoginAccountWindow     time.Duration
+	LoginAccountDelay      time.Duration
 	LoginLimitTimeout      time.Duration
 	LoginLimitPause        time.Duration
 	SMTPHost               string
@@ -224,7 +227,43 @@ func loadLoginLimit(lookup Lookup, cfg *Config) error {
 	if err != nil {
 		return err
 	}
+	if err := loadLoginAccountSlowdown(lookup, cfg); err != nil {
+		return err
+	}
 	return loadLoginLimiterBounds(lookup, cfg)
+}
+
+// Bounds of the account slowdown: a delay longer than this would outlast the request deadline, and a window longer than a day
+// is not a rate any more.
+const (
+	maxLoginAccountSlowAfter = 1000
+	maxLoginAccountWindow    = 24 * time.Hour
+	maxLoginAccountDelay     = 5 * time.Second
+)
+
+// loadLoginAccountSlowdown reads the counter per email that slows the failed logins without locking the account
+// (HU-AUTH-005, STRIDE S). It only takes effect with Redis.
+func loadLoginAccountSlowdown(lookup Lookup, cfg *Config) error {
+	var err error
+	if cfg.LoginAccountSlowAfter, err = intValue(lookup, "APP_AUTH_LOGIN_ACCOUNT_SLOW_AFTER", 20); err != nil {
+		return err
+	}
+	if cfg.LoginAccountSlowAfter < 1 || cfg.LoginAccountSlowAfter > maxLoginAccountSlowAfter {
+		return fmt.Errorf("APP_AUTH_LOGIN_ACCOUNT_SLOW_AFTER %d is out of range 1-%d", cfg.LoginAccountSlowAfter, maxLoginAccountSlowAfter)
+	}
+	if cfg.LoginAccountWindow, err = durationValue(lookup, "APP_AUTH_LOGIN_ACCOUNT_WINDOW", time.Hour); err != nil {
+		return err
+	}
+	if cfg.LoginAccountWindow > maxLoginAccountWindow {
+		return fmt.Errorf("APP_AUTH_LOGIN_ACCOUNT_WINDOW %v is above the maximum %v", cfg.LoginAccountWindow, maxLoginAccountWindow)
+	}
+	if cfg.LoginAccountDelay, err = durationValue(lookup, "APP_AUTH_LOGIN_ACCOUNT_DELAY", time.Second); err != nil {
+		return err
+	}
+	if cfg.LoginAccountDelay > maxLoginAccountDelay {
+		return fmt.Errorf("APP_AUTH_LOGIN_ACCOUNT_DELAY %v is above the maximum %v", cfg.LoginAccountDelay, maxLoginAccountDelay)
+	}
+	return nil
 }
 
 // Bounds of the login limiter against Redis (ADR-048): the longest one call may wait and the longest pause after a failure.

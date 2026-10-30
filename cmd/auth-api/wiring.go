@@ -111,7 +111,7 @@ func newRoutes(ctx context.Context, logger *slog.Logger, cfg config.Config, open
 		pool.Close()
 		return nil, noop, fmt.Errorf("login limit: %w", err)
 	}
-	options = append(options, httpapi.WithLoginUser(newLoginUser(cfg, pool, issuer, redisState.attempts), loginGate))
+	options = append(options, httpapi.WithLoginUser(newLoginUser(cfg, pool, issuer, redisState), loginGate))
 	logger.Info("login route enabled", "maxConcurrency", loginGate.Limit(), "queueTimeout", loginGate.Wait().String())
 	options = append(options, httpapi.WithRefreshSession(newRefreshSession(cfg, pool, issuer)))
 	logger.Info("refresh route enabled")
@@ -175,6 +175,10 @@ type redisState struct {
 	revoked         out.RevokedTokens
 	attempts        out.LoginAttempts
 	passwordChanges out.PasswordChangeAttempts
+
+	// accountFailures slows the failed logins of one email (HU-AUTH-005); nil when there is no Redis.
+	accountFailures out.AccountLoginFailures
+	accountPolicy   model.AccountFailurePolicy
 }
 
 // openRedisState connects the Redis of the auth state when APP_AUTH_REDIS_URL is set (the client does not
@@ -193,6 +197,10 @@ func openRedisState(logger *slog.Logger, cfg config.Config) (redisState, func(),
 	if err != nil {
 		return redisState{}, nil, fmt.Errorf("password change limit: %w", err)
 	}
+	accountPolicy, err := model.NewAccountFailurePolicy(cfg.LoginAccountSlowAfter, cfg.LoginAccountWindow, cfg.LoginAccountDelay)
+	if err != nil {
+		return redisState{}, nil, fmt.Errorf("login account slowdown: %w", err)
+	}
 	if cfg.LoginLimitTimeout <= 0 || cfg.LoginLimitPause <= 0 {
 		return redisState{}, nil, errors.New("login attempt limit: the timeout and the pause must be positive")
 	}
@@ -202,7 +210,8 @@ func openRedisState(logger *slog.Logger, cfg config.Config) (redisState, func(),
 	}
 	attempts := redis.NewBoundedLoginAttempts(redis.NewLoginAttempts(client, policy), cfg.LoginLimitTimeout, cfg.LoginLimitPause, system.Clock{})
 	passwordChanges := redis.NewBoundedPasswordChangeAttempts(redis.NewPasswordChangeAttempts(client, passwordPolicy), cfg.LoginLimitTimeout, cfg.LoginLimitPause, system.Clock{})
-	state := redisState{revoked: redis.NewRevokedTokens(client), attempts: attempts, passwordChanges: passwordChanges}
+	accountFailures := redis.NewBoundedAccountLoginFailures(redis.NewAccountLoginFailures(client, accountPolicy.Window), cfg.LoginLimitTimeout, cfg.LoginLimitPause, system.Clock{})
+	state := redisState{revoked: redis.NewRevokedTokens(client), attempts: attempts, passwordChanges: passwordChanges, accountFailures: accountFailures, accountPolicy: accountPolicy}
 	return state, func() { _ = client.Close() }, nil
 }
 
@@ -254,16 +263,21 @@ func newRegisterUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer
 	})
 }
 
-func newLoginUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer, attempts out.LoginAttempts) *usecase.LoginUser {
+func newLoginUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer, state redisState) *usecase.LoginUser {
 	clock, ids := system.Clock{}, system.UUIDGenerator{}
+	var options []usecase.LoginOption
+	if state.accountFailures != nil {
+		options = append(options, usecase.WithAccountSlowdown(state.accountFailures, state.accountPolicy))
+	}
 	return usecase.NewLoginUser(
 		persistence.NewUserRepository(pool),
 		security.NewBcryptHasher(cfg.BcryptRounds),
 		issuer,
 		usecase.NewIssueRefreshToken(persistence.NewRefreshTokenRepository(pool), ids, clock, cfg.RefreshTokenTTL),
 		clock,
-		attempts,
+		state.attempts,
 		audit.NewLoginLockLog(slog.Default()),
+		options...,
 	)
 }
 
