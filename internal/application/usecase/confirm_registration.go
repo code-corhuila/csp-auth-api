@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/in"
 	"github.com/code-corhuila/csp-auth-api/internal/application/port/out"
@@ -69,6 +70,10 @@ func (c *ConfirmRegistration) Confirm(ctx context.Context, command in.ConfirmReg
 		return in.ConfirmRegistrationResult{}, err
 	}
 	return in.ConfirmRegistrationResult{Session: session}, nil
+}
+
+func lostRace(err error) bool {
+	return errors.Is(err, model.ErrIdempotencyKeyTaken) || errors.Is(err, model.ErrEmailAlreadyRegistered)
 }
 
 // confirmOnce runs one transaction: it returns the account of a replay or the one it just created.

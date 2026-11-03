@@ -8,6 +8,8 @@ import (
 	"github.com/code-corhuila/csp-auth-api/internal/domain/model"
 )
 
+const idempotencyKey = "key-0001-register"
+
 type fakeRegistrations struct {
 	journal   *journal
 	byKey     map[string]out.RegistrationRecord
