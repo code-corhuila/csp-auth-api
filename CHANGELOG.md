@@ -11,6 +11,12 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- First step of the registration that does not reveal which emails have an account (code-corhuila/csp-docs#282, STRIDE information disclosure, ADR-062, `auth-service.yaml`
+  1.17.0): the domain `RegistrationRequest` (a pending registration with the digest of its token, valid 24 hours and single use, at most 3 requests per address in a rolling
+  hour), the ports `RegistrationRequestRepository` and `RegistrationSender`, and the use case `RequestRegistration`, which does the same work for a free address and for one
+  with an account (it hashes the password, draws a token, looks the `Idempotency-Key` up and stores one request), and hands the link or the notice to the sender after the
+  commit. Not wired yet: the route and the adapters follow in the next changes. Unit tests of the domain and of the use case (equal steps, replay, conflict, limit, rollback).
+
 - Metrics of the routes (STRIDE D, code-corhuila/csp-docs#281, technical issue #210): `GET /metrics` in the Prometheus text format, on the port of the service,
   outside the contract and not routed by the gateway, with `auth_http_requests_total{route,method,outcome}` and `auth_http_request_duration_seconds{route,method}`
   (buckets 0.05, 0.1, 0.25, 0.5, 1 and 2.5 seconds, the ones of the metric catalog of the week 11 workshop). `route` is the pattern of the route, `unmatched` when
