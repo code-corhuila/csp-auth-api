@@ -23,7 +23,7 @@ func TestEveryRouteThatAnswers429UsesTheCodeOfTheNorm(t *testing.T) {
 		retry string
 	}{
 		"register bulkhead": {func() *httptest.ResponseRecorder {
-			return sendGated(registerPath, validBody(), WithRegisterUser(&fakeRegister{result: createdSession()}, fullGate()), true)
+			return sendGated(registerPath, validBody(), withRegister(&fakeRegister{result: requestedRegistration()}, fullGate()), true)
 		}, "1"},
 		"login bulkhead": {func() *httptest.ResponseRecorder {
 			return sendGated(loginPath, loginBody(), WithLoginUser(&fakeLogin{result: loggedInSession()}, fullGate()), false)

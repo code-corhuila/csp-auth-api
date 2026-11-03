@@ -71,16 +71,37 @@ func translateRegisterError(w http.ResponseWriter, traceID string, err error) {
 		}
 	}
 	switch {
-	case errors.Is(err, model.ErrEmailAlreadyRegistered):
-		writeJSON(w, http.StatusConflict, errorResponse{
-			Error: codeEmailRegistered, Message: "the email is already registered", TraceID: traceID,
-		})
 	case errors.Is(err, model.ErrIdempotencyKeyConflict):
 		writeIdempotencyConflict(w, traceID)
 	case errors.Is(err, model.ErrPasswordHasherBusy):
 		writeHasherBusy(w, traceID)
 	default:
 		slog.Error("register user failed", "traceId", traceID, "error", err)
+		writeInternal(w, traceID, err)
+	}
+}
+
+// translateConfirmRegistrationError is the only place that maps the errors of the registration confirmation to HTTP. A token
+// that is unknown, expired, used or superseded gets one fixed answer, so the client cannot tell which. The cause of an
+// unexpected error goes only to the log, which never sees the token.
+func translateConfirmRegistrationError(w http.ResponseWriter, traceID string, err error) {
+	switch {
+	case errors.Is(err, model.ErrInvalidIdempotencyKey):
+		writeValidation(w, traceID, []fieldError{{Field: headerIdempotencyKey, Message: err.Error()}})
+	case errors.Is(err, model.ErrInvalidResetToken):
+		writeValidation(w, traceID, []fieldError{{Field: "token", Message: err.Error()}})
+	case errors.Is(err, model.ErrRegistrationRejected):
+		writeJSON(w, http.StatusUnauthorized, errorResponse{
+			Error: codeInvalidToken, Message: "Registration token is invalid or expired", TraceID: traceID,
+		})
+	case errors.Is(err, model.ErrEmailAlreadyRegistered):
+		writeJSON(w, http.StatusConflict, errorResponse{
+			Error: codeEmailRegistered, Message: "the email is already registered", TraceID: traceID,
+		})
+	case errors.Is(err, model.ErrIdempotencyKeyConflict):
+		writeIdempotencyConflict(w, traceID)
+	default:
+		slog.Error("confirm registration failed", "traceId", traceID, "error", err)
 		writeInternal(w, traceID, err)
 	}
 }

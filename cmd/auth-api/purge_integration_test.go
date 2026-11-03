@@ -29,8 +29,8 @@ const day = 24 * time.Hour
 
 // The test calls the purge over HTTP the way csp-worker does, with a service token signed by the
 // key of the service, and checks the answers of the contract (401, 403, 200 and 400), that old
-// rows go in bounded batches, and that a registration repeated with a purged Idempotency-Key
-// answers 409 EMAIL_ALREADY_REGISTERED (ADR-030).
+// rows go in bounded batches, and that a confirmation repeated with a purged Idempotency-Key
+// is answered by its used token (ADR-030).
 func TestPurgeEndToEndAgainstTheDatabase(t *testing.T) {
 	url := os.Getenv("AUTH_TEST_DATABASE_URL")
 	if url == "" {
@@ -44,6 +44,7 @@ func TestPurgeEndToEndAgainstTheDatabase(t *testing.T) {
 	t.Cleanup(func() { _, _ = lock.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, purgeLockKey) })
 
 	cfg := testConfig(t)
+	useRegistrationRelay(t, &cfg)
 	cfg.DatabaseURL = url
 	cfg.BcryptRounds = 4
 	cfg.JWTPrivateKey = generatedKeyPEM(t)
@@ -85,7 +86,7 @@ func TestPurgeEndToEndAgainstTheDatabase(t *testing.T) {
 		ids := system.UUIDGenerator{}
 		email := "e2e-purge-user-" + ids.NewID() + "@example.com"
 		signUp := fmt.Sprintf(`{"email":%q,"password":%q,"name":"Ada Lovelace","phone":"+573001234567","address":"Calle 1 # 2-3"}`, email, e2ePassword)
-		_, payload := register(t, server.URL, ids.NewID(), signUp)
+		_, payload := registerAccount(t, server.URL, ids.NewID(), signUp)
 		access, _ := payload["accessToken"].(string)
 		if status, body := purgeCall(t, server.URL, access, `{}`); status != http.StatusUnauthorized || body["error"] != "UNAUTHORIZED" {
 			t.Errorf("status = %d, body = %v, want 401 UNAUTHORIZED", status, body)
@@ -107,7 +108,7 @@ func TestPurgeEndToEndAgainstTheDatabase(t *testing.T) {
 	email := "e2e-purge-" + ids.NewID() + "@example.com"
 	signUp := fmt.Sprintf(`{"email":%q,"password":%q,"name":"Ada Lovelace","phone":"+573001234567","address":"Calle 1 # 2-3"}`, email, e2ePassword)
 	idempotencyKey := ids.NewID()
-	status, registered := register(t, server.URL, idempotencyKey, signUp)
+	status, registered, confirmationToken := registerAccountToken(t, server.URL, idempotencyKey, signUp)
 	if status != http.StatusCreated {
 		t.Fatalf("register status = %d, want 201; body = %v", status, registered)
 	}
@@ -134,7 +135,7 @@ func TestPurgeEndToEndAgainstTheDatabase(t *testing.T) {
 	}
 	exec(`DELETE FROM auth.idempotency_key WHERE key = $1`, idempotencyKey)
 	exec(`INSERT INTO auth.idempotency_key (key, user_id, request_hash, created_at) VALUES ($1, $2, $3, NOW() - INTERVAL '8 days')`, idempotencyKey, userID, requestHash)
-	if status, _ := register(t, server.URL, idempotencyKey, signUp); status != http.StatusOK {
+	if status, _ := confirmRegistration(t, server.URL, idempotencyKey, confirmationToken); status != http.StatusOK {
 		t.Fatalf("replay before the purge: status = %d, want 200", status)
 	}
 
@@ -159,10 +160,29 @@ func TestPurgeEndToEndAgainstTheDatabase(t *testing.T) {
 		}
 	})
 
-	t.Run("the purged key no longer replays: the same registration is 409 EMAIL_ALREADY_REGISTERED", func(t *testing.T) {
-		status, payload := register(t, server.URL, idempotencyKey, signUp)
-		if status != http.StatusConflict || payload["error"] != "EMAIL_ALREADY_REGISTERED" {
-			t.Errorf("status = %d, body = %v, want 409 EMAIL_ALREADY_REGISTERED", status, payload)
+	t.Run("the purged key no longer replays: the same confirmation is 401 INVALID_TOKEN because the token was used", func(t *testing.T) {
+		status, payload := confirmRegistration(t, server.URL, idempotencyKey, confirmationToken)
+		if status != http.StatusUnauthorized || payload["error"] != "INVALID_TOKEN" {
+			t.Errorf("status = %d, body = %v, want 401 INVALID_TOKEN", status, payload)
+		}
+	})
+
+	t.Run("a registration request older than 7 days is purged and a younger one is kept", func(t *testing.T) {
+		old, young := ids.NewID(), ids.NewID()
+		for id, age := range map[string]string{old: "8 days", young: "1 day"} {
+			exec(`INSERT INTO auth.registration_request (id, idempotency_key, request_hash, email, created_at)
+				VALUES ($1, $2, repeat('a', 64), $3, NOW() - $4::interval)`, id, id, "purge-"+id+"@example.com", age)
+		}
+		drainPurge(t, server.URL, workerToken)
+		present := func(id string) bool {
+			var found bool
+			if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM auth.registration_request WHERE id = $1)`, id).Scan(&found); err != nil {
+				t.Fatal(err)
+			}
+			return found
+		}
+		if present(old) || !present(young) {
+			t.Errorf("the 8-day-old request present = %v, the 1-day-old one present = %v, want false and true", present(old), present(young))
 		}
 	})
 }

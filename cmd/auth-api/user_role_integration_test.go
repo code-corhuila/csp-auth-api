@@ -37,6 +37,7 @@ func TestChangeUserRoleEndToEndAgainstTheDatabase(t *testing.T) {
 	lock := lockAdministrators(t, ctx, url)
 
 	cfg := testConfig(t)
+	useRegistrationRelay(t, &cfg)
 	cfg.DatabaseURL = url
 	cfg.BcryptRounds = 4
 	cfg.JWTPrivateKey = generatedKeyPEM(t)
@@ -52,7 +53,7 @@ func TestChangeUserRoleEndToEndAgainstTheDatabase(t *testing.T) {
 	signUp := func(name string) (email, id, access, refreshToken string) {
 		email = name + "-" + ids.NewID() + "@example.com"
 		body := fmt.Sprintf(`{"email":%q,"password":%q,"name":"Ada Lovelace","phone":"+573001234567","address":"Calle 1 # 2-3"}`, email, e2ePassword)
-		status, payload := register(t, server.URL, ids.NewID(), body)
+		status, payload := registerAccount(t, server.URL, ids.NewID(), body)
 		if status != http.StatusCreated {
 			t.Fatalf("register status = %d, want 201; body = %v", status, payload)
 		}
