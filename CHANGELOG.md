@@ -7,6 +7,11 @@ All notable changes of `csp-auth-api` are recorded here. The format follows
 
 Everything below is in `develop`; it is promoted to `qa` and `main` only when it is ordered.
 
+### Removed
+
+- The use case `RegisterUser` and its port `in.RegisterUser`, which nothing calls since `POST /register` records a registration request and `POST /register/confirm` creates the
+  account (code-corhuila/csp-docs#282, ADR-062). The README, `deploy/compose.yml` and the purge section describe the new flow and `APP_AUTH_REGISTRATION_CONFIRM_URL`.
+
 ### Changed
 
 - **Breaking, before release 3.0.0** (code-corhuila/csp-docs#282, STRIDE information disclosure, ADR-062, `auth-service.yaml` 1.17.0): `POST /register` answers the same

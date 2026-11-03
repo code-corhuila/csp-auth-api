@@ -99,14 +99,3 @@ func TestResetPasswordAnswersTheBusyHasherAndChangesNothing(t *testing.T) {
 		})
 	}
 }
-
-func TestRegisterAnswersTheBusyHasherAndCreatesNothing(t *testing.T) {
-	f := newFixture()
-	f.hasher.err = model.ErrPasswordHasherBusy
-
-	_, err := f.useCase.Register(context.Background(), validCommand())
-
-	if !errors.Is(err, model.ErrPasswordHasherBusy) || len(f.sessions.commands) != 0 {
-		t.Errorf("error = %v, sessions = %d, want the busy hasher and no session", err, len(f.sessions.commands))
-	}
-}
