@@ -89,6 +89,7 @@ type Config struct {
 	EmailChangeQueueTimeout   time.Duration
 
 	PasswordResetURL            string
+	RegistrationConfirmURL      string
 	PasswordResetMaxConcurrency int
 	PasswordResetQueueTimeout   time.Duration
 
@@ -155,6 +156,9 @@ func Load(lookup Lookup) (Config, error) {
 		return Config{}, err
 	}
 	if err := loadPasswordReset(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
+	if err := loadRegistration(lookup, &cfg); err != nil {
 		return Config{}, err
 	}
 	if err := loadPasswordChangeLimit(lookup, &cfg); err != nil {
@@ -410,6 +414,18 @@ func loadPasswordReset(lookup Lookup, cfg *Config) error {
 	}
 	if cfg.SMTPHost != "" && cfg.PasswordResetMaxConcurrency >= cfg.DatabaseMaxConnections {
 		return fmt.Errorf("APP_AUTH_PASSWORD_RESET_MAX_CONCURRENCY %d must be below APP_AUTH_DATABASE_MAX_CONNECTIONS %d", cfg.PasswordResetMaxConcurrency, cfg.DatabaseMaxConnections)
+	}
+	return nil
+}
+
+// loadRegistration reads the page of the portal that the link to confirm a registration opens (issue csp-docs#282). Empty
+// means the messages of the registration are not delivered, which the start-up log says.
+func loadRegistration(lookup Lookup, cfg *Config) error {
+	cfg.RegistrationConfirmURL, _ = lookup("APP_AUTH_REGISTRATION_CONFIRM_URL")
+	if cfg.RegistrationConfirmURL != "" {
+		if link, err := url.Parse(cfg.RegistrationConfirmURL); err != nil || (link.Scheme != "http" && link.Scheme != "https") || link.Host == "" || link.Fragment != "" {
+			return errors.New("APP_AUTH_REGISTRATION_CONFIRM_URL must be an absolute http or https URL without a fragment")
+		}
 	}
 	return nil
 }

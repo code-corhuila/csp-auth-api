@@ -23,6 +23,7 @@ func TestTheScrapeShowsTheCredentialRoutesWithTheirOutcomesAndNoPersonalData(t *
 	cfg.RedisURL = redisURL
 	cfg.BcryptRounds = 4
 	cfg.JWTPrivateKey = generatedKeyPEM(t)
+	useRegistrationRelay(t, &cfg)
 	server := startLogoutServer(t, cfg)
 	email, _, _, _ := signUpUser(t, server.URL, "e2e-metrics")
 	wrong := fmt.Sprintf(`{"email":%q,"password":"Wrong-1234"}`, email)
@@ -43,6 +44,7 @@ func TestTheScrapeShowsTheCredentialRoutesWithTheirOutcomesAndNoPersonalData(t *
 	}
 	for _, want := range []string{
 		`auth_http_requests_total{route="/api/v1/auth/register",method="POST",outcome="success"}`,
+		`auth_http_requests_total{route="/api/v1/auth/register/confirm",method="POST",outcome="success"}`,
 		`auth_http_requests_total{route="/api/v1/auth/login",method="POST",outcome="client_error"} 1`,
 		`auth_http_requests_total{route="/api/v1/auth/login",method="POST",outcome="success"} 1`,
 		`auth_http_request_duration_seconds_count{route="/api/v1/auth/login",method="POST"} 2`,

@@ -53,6 +53,7 @@ func TestOwnProfileEndToEndAgainstTheDatabase(t *testing.T) {
 	}
 	ctx := context.Background()
 	cfg := testConfig(t)
+	useRegistrationRelay(t, &cfg)
 	cfg.DatabaseURL = databaseURL
 	cfg.RedisURL = redisURL
 	cfg.BcryptRounds = 4
