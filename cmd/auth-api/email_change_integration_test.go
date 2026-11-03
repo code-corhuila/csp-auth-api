@@ -107,6 +107,7 @@ func TestEmailChangeEndToEndAgainstTheDatabase(t *testing.T) {
 	cfg.JWTPrivateKey = generatedKeyPEM(t)
 	relay := startFakeSMTP(t)
 	relay.configure(&cfg)
+	shareRelayWithRegistration(t, &cfg, relay)
 	handler, closeDatabase, err := newHandler(ctx, discardLogger(), cfg, persistence.NewPool)
 	if err != nil {
 		t.Fatalf("newHandler() error = %v", err)
@@ -221,7 +222,7 @@ func TestEmailChangeEndToEndAgainstTheDatabase(t *testing.T) {
 		down := cfg
 		down.SMTPPort = 1
 		downServer := startLogoutServer(t, down)
-		_, downID, downAccess, _ := signUpUser(t, downServer.URL, "e2e-down")
+		_, downID, downAccess, _ := signUpUserDirectly(t, downServer.URL, "e2e-down")
 		target := "e2e-down-" + downID + "@example.com"
 
 		if status, _, _ := requestChange(t, downServer.URL, downAccess, target); status != http.StatusInternalServerError {
@@ -287,7 +288,7 @@ func TestEmailChangeEndToEndAgainstTheDatabase(t *testing.T) {
 		}
 		code := relay.codeFor(t, target)
 		registerBody := fmt.Sprintf(`{"email":%q,"password":%q,"name":"Ada Lovelace","phone":"+573001234567","address":"Calle 1 # 2-3"}`, target, e2ePassword)
-		if status, payload := register(t, server.URL, "e2e-taken-key-"+contestedID, registerBody); status != http.StatusCreated {
+		if status, payload := registerAccount(t, server.URL, "e2e-taken-key-"+contestedID, registerBody); status != http.StatusCreated {
 			t.Fatalf("register the account that takes the address: status = %d, body = %v", status, payload)
 		}
 

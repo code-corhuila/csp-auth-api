@@ -24,6 +24,7 @@ func TestRefreshTokenReuseEndToEndAgainstTheDatabase(t *testing.T) {
 		t.Skip("AUTH_TEST_DATABASE_URL is not set: the end-to-end test needs a PostgreSQL with the csp-auth-db migrations")
 	}
 	cfg := testConfig(t)
+	useRegistrationRelay(t, &cfg)
 	cfg.DatabaseURL = url
 	cfg.BcryptRounds = 4
 	cfg.JWTPrivateKey = generatedKeyPEM(t)
@@ -38,7 +39,7 @@ func TestRefreshTokenReuseEndToEndAgainstTheDatabase(t *testing.T) {
 	ids := system.UUIDGenerator{}
 	email := "e2e-reuse-" + ids.NewID() + "@example.com"
 	signUp := fmt.Sprintf(`{"email":%q,"password":%q,"name":"Ada Lovelace","phone":"+573001234567","address":"Calle 1 # 2-3"}`, email, e2ePassword)
-	if status, payload := register(t, server.URL, ids.NewID(), signUp); status != http.StatusCreated {
+	if status, payload := registerAccount(t, server.URL, ids.NewID(), signUp); status != http.StatusCreated {
 		t.Fatalf("register status = %d, want 201; body = %v", status, payload)
 	}
 	signIn := func() string {

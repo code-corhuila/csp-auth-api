@@ -18,31 +18,29 @@ const (
 	secret       = "Sup3rSecretPass"
 	validKey     = "key-12345678"
 	userID       = "11111111-2222-4333-8444-555555555555"
+	requestID    = "99999999-2222-4333-8444-555555555555"
 )
 
 type fakeRegister struct {
-	result  in.RegisterUserResult
+	result  in.RequestRegistrationResult
 	err     error
 	called  int
-	command in.RegisterUserCommand
+	command in.RequestRegistrationCommand
 }
 
-func (f *fakeRegister) Register(_ context.Context, command in.RegisterUserCommand) (in.RegisterUserResult, error) {
+func (f *fakeRegister) Request(_ context.Context, command in.RequestRegistrationCommand) (in.RequestRegistrationResult, error) {
 	f.called++
 	f.command = command
 	return f.result, f.err
 }
 
-func createdSession() in.RegisterUserResult {
-	return in.RegisterUserResult{Session: in.LoginUserResult{
-		AccessToken:  "access.jwt.value",
-		RefreshToken: "refresh-value",
-		ExpiresIn:    3600,
-		User: in.UserSummary{
-			ID: userID, Email: "maria@example.com", Name: "Maria Garcia",
-			Roles: []string{"CLIENT"}, Permissions: []string{"catalog:read"},
-		},
-	}}
+func requestedRegistration() in.RequestRegistrationResult {
+	return in.RequestRegistrationResult{RequestID: requestID}
+}
+
+// withRegister publishes only the first step of the registration, with a confirmation that is never reached.
+func withRegister(useCase in.RequestRegistration, gate *Bulkhead) Option {
+	return WithRegistration(useCase, &fakeConfirm{}, gate)
 }
 
 func validBody() string {
@@ -56,7 +54,7 @@ type attempt struct {
 	headers     map[string]string
 }
 
-func send(useCase in.RegisterUser, a attempt) *httptest.ResponseRecorder {
+func send(useCase in.RequestRegistration, a attempt) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(http.MethodPost, registerPath, strings.NewReader(a.body))
 	if a.contentType == "" {
 		a.contentType = "application/json"
@@ -69,7 +67,7 @@ func send(useCase in.RegisterUser, a attempt) *httptest.ResponseRecorder {
 		request.Header.Set(name, value)
 	}
 	rec := httptest.NewRecorder()
-	NewHandler(WithRegisterUser(useCase, openGate())).ServeHTTP(rec, request)
+	NewHandler(withRegister(useCase, openGate())).ServeHTTP(rec, request)
 	return rec
 }
 
@@ -100,17 +98,14 @@ func TestRegisterRouteExistsOnlyWhenTheUseCaseIsInjected(t *testing.T) {
 	}
 }
 
-func TestRegisterCreatesTheAccountAndAnswers201WithAuthResponse(t *testing.T) {
-	useCase := &fakeRegister{result: createdSession()}
-	rec := send(useCase, attempt{
-		body: validBody(), key: validKey,
-		headers: map[string]string{"X-Correlation-Id": "trace-abc-1", "User-Agent": "cinema-portal/1.0"},
-	})
+func TestRegisterAnswers201WithTheIdOfTheRegistrationRequestAndNothingElse(t *testing.T) {
+	useCase := &fakeRegister{result: requestedRegistration()}
+	rec := send(useCase, attempt{body: validBody(), key: validKey, headers: map[string]string{"X-Correlation-Id": "trace-abc-1"}})
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201: %s", rec.Code, rec.Body)
 	}
-	if got := rec.Header().Get("Location"); got != BasePath+"/users/"+userID {
+	if got := rec.Header().Get("Location"); got != BasePath+"/registrations/"+requestID {
 		t.Errorf("Location = %q", got)
 	}
 	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
@@ -120,14 +115,8 @@ func TestRegisterCreatesTheAccountAndAnswers201WithAuthResponse(t *testing.T) {
 		t.Errorf("X-Correlation-Id = %q, want the received one", got)
 	}
 	body := decode(t, rec)
-	user := body["user"].(map[string]any)
-	if body["expiresIn"] != float64(3600) || user["name"] != "Maria Garcia" {
-		t.Errorf("unexpected body %v", body)
-	}
-	for _, leaked := range []string{"phone", "address", "password", "passwordHash"} {
-		if _, ok := user[leaked]; ok {
-			t.Errorf("user exposes %q", leaked)
-		}
+	if len(body) != 1 || body["id"] != requestID {
+		t.Errorf("body = %v, want only the id of the request", body)
 	}
 	if strings.Contains(rec.Body.String(), secret) {
 		t.Error("the response contains the password")
@@ -135,12 +124,12 @@ func TestRegisterCreatesTheAccountAndAnswers201WithAuthResponse(t *testing.T) {
 }
 
 func TestRegisterPassesTheRawRequestToTheUseCase(t *testing.T) {
-	useCase := &fakeRegister{result: createdSession()}
-	send(useCase, attempt{body: validBody(), key: validKey, headers: map[string]string{"User-Agent": "cinema-portal/1.0"}})
+	useCase := &fakeRegister{result: requestedRegistration()}
+	send(useCase, attempt{body: validBody(), key: validKey})
 
-	want := in.RegisterUserCommand{
+	want := in.RequestRegistrationCommand{
 		IdempotencyKey: validKey, Email: "Maria@Example.com", Password: secret, Name: "Maria Garcia",
-		Phone: "3001234567", Address: "Calle 123 #45-67", UserAgent: "cinema-portal/1.0",
+		Phone: "3001234567", Address: "Calle 123 #45-67",
 	}
 	if useCase.command != want {
 		t.Errorf("command = %+v, want %+v", useCase.command, want)
@@ -150,7 +139,7 @@ func TestRegisterPassesTheRawRequestToTheUseCase(t *testing.T) {
 func TestRegisterGeneratesACorrelationIdWhenNoneIsSafe(t *testing.T) {
 	for name, received := range map[string]string{"absent": "", "too long": strings.Repeat("a", 129), "spaces": "has space"} {
 		t.Run(name, func(t *testing.T) {
-			rec := send(&fakeRegister{result: createdSession()}, attempt{
+			rec := send(&fakeRegister{result: requestedRegistration()}, attempt{
 				body: validBody(), key: validKey, headers: map[string]string{"X-Correlation-Id": received},
 			})
 			got := rec.Header().Get("X-Correlation-Id")
@@ -161,10 +150,9 @@ func TestRegisterGeneratesACorrelationIdWhenNoneIsSafe(t *testing.T) {
 	}
 }
 
-func TestRegisterReplayAnswers200WithoutTokens(t *testing.T) {
-	replay := createdSession()
+func TestRegisterReplayAnswers200WithTheSameBodyAndNoLocation(t *testing.T) {
+	replay := requestedRegistration()
 	replay.Replayed = true
-	replay.Session.AccessToken, replay.Session.RefreshToken, replay.Session.ExpiresIn = "", "", 0
 	rec := send(&fakeRegister{result: replay}, attempt{body: validBody(), key: validKey})
 
 	if rec.Code != http.StatusOK {
@@ -173,11 +161,17 @@ func TestRegisterReplayAnswers200WithoutTokens(t *testing.T) {
 	if rec.Header().Get("Location") != "" {
 		t.Error("a replay must not carry Location")
 	}
-	body := decode(t, rec)
-	for _, token := range []string{"accessToken", "refreshToken", "expiresIn", "user"} {
-		if _, ok := body[token]; ok {
-			t.Errorf("replay exposes %q", token)
-		}
+	if body := decode(t, rec); len(body) != 1 || body["id"] != requestID {
+		t.Errorf("body = %v, want the id of the first request", body)
+	}
+}
+
+func TestRegisterAnswersTheSameShapeForEveryAddress(t *testing.T) {
+	free := send(&fakeRegister{result: requestedRegistration()}, attempt{body: validBody(), key: validKey})
+	taken := send(&fakeRegister{result: in.RequestRegistrationResult{RequestID: "88888888-2222-4333-8444-555555555555"}}, attempt{body: validBody(), key: validKey})
+
+	if free.Code != taken.Code || len(decode(t, free)) != len(decode(t, taken)) || free.Header().Get("Content-Type") != taken.Header().Get("Content-Type") {
+		t.Errorf("free %d %s / taken %d %s: status, shape and content type must match", free.Code, free.Body, taken.Code, taken.Body)
 	}
 }
 
@@ -271,10 +265,10 @@ func TestRegisterTranslatesUseCaseErrors(t *testing.T) {
 		code       string
 		detailName string
 	}{
-		{"email taken", model.ErrEmailAlreadyRegistered, http.StatusConflict, "EMAIL_ALREADY_REGISTERED", ""},
 		{"key reused", model.ErrIdempotencyKeyConflict, http.StatusConflict, "IDEMPOTENCY_KEY_CONFLICT", ""},
+		{"busy hasher", model.ErrPasswordHasherBusy, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", ""},
 		{"wrapped domain validation", errors.Join(errors.New("ctx"), model.ErrInvalidPhone), http.StatusBadRequest, "VALIDATION_ERROR", "phone"},
-		{"replay without account", model.ErrUserNotFound, http.StatusInternalServerError, "INTERNAL_ERROR", ""},
+		{"an email taken is not an error of this route", model.ErrEmailAlreadyRegistered, http.StatusInternalServerError, "INTERNAL_ERROR", ""},
 		{"driver failure", errors.New("pq: connection refused at 10.0.0.5:5432 password=" + secret), http.StatusInternalServerError, "INTERNAL_ERROR", ""},
 	}
 	for _, c := range cases {
