@@ -117,9 +117,18 @@ To run it with the database:
 curl -i -X POST http://localhost:8081/api/v1/auth/register   -H 'Content-Type: application/json'   -H "Idempotency-Key: $(uuidgen)"   -d '{"email":"ada@example.com","password":"<a password of 8 to 72 bytes>","name":"Ada Lovelace"}'
 ```
 
-It requires the `Idempotency-Key` header and a JSON body of at most 1 MiB; it answers `201` with the tokens and the
-user, `200` with the user alone on a replay, `400` with one `details` entry per invalid field, and `409` when the
-email is registered or the key was used by another request. `X-Correlation-Id` is echoed or generated.
+It requires the `Idempotency-Key` header and a JSON body of at most 1 MiB. It answers `201` with `{ "id" }`, the id of the registration
+request, `200` with the same `id` on a replay of the key, `400` with one `details` entry per invalid field and `409 IDEMPOTENCY_KEY_CONFLICT`
+when the key was used by another request. **The answer is the same whether the email already has an account or not** (code-corhuila/csp-docs#282,
+ADR-062), so the route does not reveal who is registered, and it creates no account. A free email receives a message with the link
+`APP_AUTH_REGISTRATION_CONFIRM_URL` followed by `#token=<token>`; an email that has an account receives a notice and nothing is created; an
+address with 3 requests in the last hour receives nothing. `POST /api/v1/auth/register/confirm` (`Idempotency-Key` and `{ "token" }`) redeems
+the token, creates the account with its `CLIENT` role and the `UserRegistered` event, and answers `201` with the tokens and the user, `200` with
+the user alone on a replay, `401 INVALID_TOKEN` for an unknown, expired, used or superseded token and `409` when the email got an account
+meanwhile. The messages are delivered after the commit by a queue in memory, so the duration of the request does not depend on the relay. Without
+`APP_AUTH_SMTP_HOST` and `APP_AUTH_REGISTRATION_CONFIRM_URL` the routes answer the same and every delivery fails with a `WARN`: no registration can
+be confirmed. Locally, `--profile mail up mailpit` with `APP_AUTH_SMTP_HOST=mailpit`, port `1025` and `APP_AUTH_SMTP_TLS=none` shows the messages.
+`X-Correlation-Id` is echoed or generated.
 
 `POST /api/v1/auth/login` (HU-AUTH-002) is enabled by the same two settings as `/register`:
 
@@ -281,10 +290,10 @@ curl -i -X POST http://localhost:8081/api/v1/auth/internal/maintenance/purge   -
 ```
 
 The body is optional and `batchSize` is 1 to 500 (default 100, otherwise `400`). It answers `200` with
-`{"processedCount":N,"hasMore":true|false}`: the rows deleted in this call over the seven tables and whether any
-eligible row is left, so the caller repeats it until `hasMore` is `false`. A repeated call is safe. After the purge of an
-`Idempotency-Key`, the same registration answers `409 EMAIL_ALREADY_REGISTERED` instead of the `200` replay. A missing or
-invalid token is `401` and a valid token of another subject is `403`.
+`{"processedCount":N,"hasMore":true|false}`: the rows deleted in this call over the eight tables (the registration requests included, which hold a
+password hash and contact data until the owner confirms) and whether any eligible row is left, so the caller repeats it until `hasMore` is `false`.
+A repeated call is safe. After the purge of an `Idempotency-Key` of a confirmation, the same confirmation answers `401 INVALID_TOKEN`, because its
+token was used. A missing or invalid token is `401` and a valid token of another subject is `403`.
 
 The end-to-end tests of these routes (`cmd/auth-api`, tag `integration`) uses the same `AUTH_TEST_DATABASE_URL`:
 
@@ -441,7 +450,8 @@ Every limit is explicit (Norma 5.3.10) and is read at start; a value out of rang
 | `APP_AUTH_HTTP_MAX_HEADER_BYTES` | `65536` | Largest request header (1 to 1048576); a larger one answers `431`. |
 | `APP_AUTH_MAX_BODY_BYTES` | `1048576` | Largest request body (1 to 16777216); a larger one answers `400 VALIDATION_ERROR`. |
 | `APP_AUTH_PASSWORD_RESET_MAX_BODY_BYTES` | `4096` | Largest body of `POST /forgot-password` and `POST /reset-password`, at most `APP_AUTH_MAX_BODY_BYTES`. |
-| `APP_AUTH_REGISTER_MAX_CONCURRENCY` | `8` | Bulkhead of `POST /register`. At least 1 and, with a database, below `APP_AUTH_DATABASE_MAX_CONNECTIONS`. |
+| `APP_AUTH_REGISTER_MAX_CONCURRENCY` | `8` | Bulkhead of `POST /register` and `POST /register/confirm`. At least 1 and, with a database, below `APP_AUTH_DATABASE_MAX_CONNECTIONS`. |
+| `APP_AUTH_REGISTRATION_CONFIRM_URL` | empty | Page of the portal that the link to confirm a registration opens: an absolute `http` or `https` URL without a fragment. Empty, or without `APP_AUTH_SMTP_HOST`: the routes answer as usual and no message is delivered, so no registration can be confirmed. |
 | `APP_AUTH_LOGIN_MAX_CONCURRENCY` | `8` | Bulkhead of `POST /login`, same rules. |
 | `APP_AUTH_BCRYPT_MAX_CONCURRENT` | `4` | Password hashes or comparisons that run at once, all routes together (login, register, password change, password reset), 1 to 64. It is inside the bulkheads above: they protect the database pool per route, this protects the CPU. |
 | `APP_AUTH_METRICS_ENABLED` | `true` | Publishes `GET /metrics` (Prometheus text format 0.0.4) on the port of the service: `auth_http_requests_total{route,method,outcome}` and `auth_http_request_duration_seconds{route,method}` (buckets 0.05, 0.1, 0.25, 0.5, 1 and 2.5 s). `route` is the pattern of the route (`unmatched` when none matched), the wait of the slowdown per account is not counted as latency, and no email, address or user id is ever a label. It is outside the contract: the gateway does not route it, so it is reachable on the `platform` network only (ADR-061). |
