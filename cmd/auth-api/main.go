@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -13,40 +14,61 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/code-corhuila/csp-auth-api/internal/adapter/in/httpapi"
+	"github.com/code-corhuila/csp-auth-api/internal/adapter/out/persistence"
 	"github.com/code-corhuila/csp-auth-api/internal/config"
+	"github.com/code-corhuila/csp-auth-api/internal/platform/logging"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	if err := run(logger); err != nil {
+	logger := newLogger(os.Stdout)
+	slog.SetDefault(logger)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx, logger, os.LookupEnv); err != nil {
 		logger.Error("auth-api stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger) error {
-	cfg, err := config.Load(os.LookupEnv)
+// newLogger writes JSON lines, and adds the traceId of the request to every record logged with its context (Norma 5.3.9).
+func newLogger(out io.Writer) *slog.Logger {
+	return slog.New(logging.NewTraceHandler(slog.NewJSONHandler(out, nil)))
+}
+
+func run(ctx context.Context, logger *slog.Logger, lookup config.Lookup) error {
+	cfg, err := config.Load(lookup)
 	if err != nil {
 		return err
 	}
 
+	listener, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(cfg.Port)))
+	if err != nil {
+		return err
+	}
+	return serve(ctx, logger, cfg, listener)
+}
+
+// serve answers on listener until ctx is cancelled or the server fails. Taking the listener
+// lets a test bind its own port instead of guessing a free one.
+func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, listener net.Listener) error {
+	handler, closeDatabase, err := newHandler(ctx, logger, cfg, persistence.NewPool)
+	if err != nil {
+		return err
+	}
+	defer closeDatabase()
 	server := &http.Server{
-		Addr:              net.JoinHostPort("", strconv.Itoa(cfg.Port)),
-		Handler:           httpapi.NewHandler(),
+		Handler:           handler,
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,
+		MaxHeaderBytes:    int(cfg.MaxHeaderBytes),
 		IdleTimeout:       cfg.IdleTimeout,
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	failed := make(chan error, 1)
 	go func() {
-		logger.Info("auth-api listening", "addr", server.Addr)
-		failed <- server.ListenAndServe()
+		logger.Info("auth-api listening", "addr", listener.Addr().String())
+		failed <- server.Serve(listener)
 	}()
 
 	select {

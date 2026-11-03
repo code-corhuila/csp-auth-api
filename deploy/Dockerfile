@@ -1,13 +1,15 @@
 FROM golang:1.22-alpine AS build
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/auth-api ./cmd/auth-api
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/auth-token ./cmd/auth-token
 
 FROM alpine:3.20
 COPY --from=build /out/auth-api /usr/local/bin/auth-api
+COPY --from=build /out/auth-token /usr/local/bin/auth-token
 USER 10001
 EXPOSE 8081
 ENTRYPOINT ["/usr/local/bin/auth-api"]

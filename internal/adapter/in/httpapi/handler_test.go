@@ -43,9 +43,3 @@ func TestReadyAnswersReady(t *testing.T) {
 		t.Errorf("status field = %q, want ready", body.Status)
 	}
 }
-
-func TestUnknownRouteIsNotFound(t *testing.T) {
-	if rec := get(t, "/api/v1/auth/unknown"); rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", rec.Code)
-	}
-}

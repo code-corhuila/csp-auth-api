@@ -24,3 +24,12 @@ func TestParseRoleRejectsUnknownNames(t *testing.T) {
 		}
 	}
 }
+
+func TestOnlyRemovingAdminEndsTheSessionsOfTheUser(t *testing.T) {
+	if !RoleAdmin.EndsSessionsWhenRemoved() {
+		t.Error("ADMIN.EndsSessionsWhenRemoved() = false, want true: the permissions travel in the access token")
+	}
+	if RoleClient.EndsSessionsWhenRemoved() {
+		t.Error("CLIENT.EndsSessionsWhenRemoved() = true, want false")
+	}
+}
