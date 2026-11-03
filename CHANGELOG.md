@@ -9,6 +9,16 @@ All notable changes of `csp-auth-api` are recorded here. The format follows
 
 Everything below is in `develop`; it is promoted to `qa` and `main` only when it is ordered.
 
+### Changed
+
+- **Breaking, before release 3.0.0** (code-corhuila/csp-docs#282, STRIDE information disclosure, ADR-062, `auth-service.yaml` 1.17.0): `POST /register` answers the same
+  status, headers and body shape whether the email already has an account or not, and creates no account: `201 { "id" }` with `Location` for a new `Idempotency-Key`, `200` with
+  the same id for a replay, `409 IDEMPOTENCY_KEY_CONFLICT` for another request. After the commit it mails the link to a free address (valid 24 hours, single use), a notice to the
+  owner of an address that has an account, and nothing to an address with 3 requests in the last hour (`SMTPRegistrationSender`, a bounded queue in memory like the password
+  reset one; `UnconfiguredRegistrationSender` and a `WARN` when the relay or `APP_AUTH_REGISTRATION_CONFIRM_URL` is missing). It no longer answers `EMAIL_ALREADY_REGISTERED`
+  nor returns tokens: the new `POST /register/confirm` creates the account and answers `201 AuthResponse`, `200 UserSummary` for a replay, `401 INVALID_TOKEN` or `409`, and
+  `UserRegistered` is published there. Tests that need an account insert it directly and sign in; the ones that test the registration read the link from an in-process relay.
+
 ### Added
 
 - Second step of the registration and its storage (code-corhuila/csp-docs#282, ADR-062): the use case `ConfirmRegistration` (redeems the token and creates the account, its

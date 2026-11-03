@@ -101,26 +101,49 @@ const traceID = "550e8400-e29b-41d4-a716-446655440000"
 func withTrace() map[string]string { return map[string]string{"X-Correlation-Id": traceID} }
 
 func TestRegisterResponsesFulfillTheContract(t *testing.T) {
-	replay := createdSession()
+	replay := requestedRegistration()
 	replay.Replayed = true
 	cases := map[string]struct {
-		useCase in.RegisterUser
+		useCase in.RequestRegistration
 		a       attempt
 	}{
-		"201 created":                {&fakeRegister{result: createdSession()}, attempt{body: validBody(), key: validKey, headers: withTrace()}},
-		"200 replay":                 {&fakeRegister{result: replay}, attempt{body: validBody(), key: validKey, headers: withTrace()}},
-		"400 invalid fields":         {&fakeRegister{}, attempt{body: `{"email":"nope","password":"weakpw"}`, key: "short", headers: withTrace()}},
-		"400 unreadable body":        {&fakeRegister{}, attempt{body: `{"email":`, key: validKey}},
-		"400 email too long":         {&fakeRegister{}, attempt{body: strings.Replace(validBody(), "Maria@Example.com", addressOfLength(model.MaxEmailLength+1), 1), key: validKey, headers: withTrace()}},
-		"400 domain validation":      {&fakeRegister{err: model.ErrInvalidPhone}, attempt{body: validBody(), key: validKey, headers: withTrace()}},
-		"409 email registered":       {&fakeRegister{err: model.ErrEmailAlreadyRegistered}, attempt{body: validBody(), key: validKey, headers: withTrace()}},
-		"409 key reused":             {&fakeRegister{err: model.ErrIdempotencyKeyConflict}, attempt{body: validBody(), key: validKey, headers: withTrace()}},
-		"500 unexpected":             {&fakeRegister{err: errors.New("driver failure")}, attempt{body: validBody(), key: validKey, headers: withTrace()}},
-		"500 replay without account": {&fakeRegister{err: model.ErrUserNotFound}, attempt{body: validBody(), key: validKey}},
+		"201 recorded":          {&fakeRegister{result: requestedRegistration()}, attempt{body: validBody(), key: validKey, headers: withTrace()}},
+		"200 replay":            {&fakeRegister{result: replay}, attempt{body: validBody(), key: validKey, headers: withTrace()}},
+		"400 invalid fields":    {&fakeRegister{}, attempt{body: `{"email":"nope","password":"weakpw"}`, key: "short", headers: withTrace()}},
+		"400 unreadable body":   {&fakeRegister{}, attempt{body: `{"email":`, key: validKey}},
+		"400 email too long":    {&fakeRegister{}, attempt{body: strings.Replace(validBody(), "Maria@Example.com", addressOfLength(model.MaxEmailLength+1), 1), key: validKey, headers: withTrace()}},
+		"400 domain validation": {&fakeRegister{err: model.ErrInvalidPhone}, attempt{body: validBody(), key: validKey, headers: withTrace()}},
+		"503 hasher busy":       {&fakeRegister{err: model.ErrPasswordHasherBusy}, attempt{body: validBody(), key: validKey, headers: withTrace()}},
+		"409 key reused":        {&fakeRegister{err: model.ErrIdempotencyKeyConflict}, attempt{body: validBody(), key: validKey, headers: withTrace()}},
+		"500 unexpected":        {&fakeRegister{err: errors.New("driver failure")}, attempt{body: validBody(), key: validKey, headers: withTrace()}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			requireContract(t, http.MethodPost, registerPath, send(c.useCase, c.a))
+		})
+	}
+}
+
+func TestConfirmRegistrationResponsesFulfillTheContract(t *testing.T) {
+	replay := createdSession()
+	replay.Replayed = true
+	cases := map[string]struct {
+		useCase in.ConfirmRegistration
+		a       attempt
+	}{
+		"201 created":                {&fakeConfirm{result: createdSession()}, attempt{body: confirmBody(), key: validKey, headers: withTrace()}},
+		"200 replay":                 {&fakeConfirm{result: replay}, attempt{body: confirmBody(), key: validKey, headers: withTrace()}},
+		"400 invalid fields":         {&fakeConfirm{}, attempt{body: `{"token":"nope"}`, key: "short", headers: withTrace()}},
+		"400 unreadable body":        {&fakeConfirm{}, attempt{body: `{"token":`, key: validKey}},
+		"401 rejected token":         {&fakeConfirm{err: model.ErrRegistrationRejected}, attempt{body: confirmBody(), key: validKey, headers: withTrace()}},
+		"409 email registered":       {&fakeConfirm{err: model.ErrEmailAlreadyRegistered}, attempt{body: confirmBody(), key: validKey, headers: withTrace()}},
+		"409 key reused":             {&fakeConfirm{err: model.ErrIdempotencyKeyConflict}, attempt{body: confirmBody(), key: validKey, headers: withTrace()}},
+		"500 unexpected":             {&fakeConfirm{err: errors.New("driver failure")}, attempt{body: confirmBody(), key: validKey, headers: withTrace()}},
+		"500 replay without account": {&fakeConfirm{err: model.ErrUserNotFound}, attempt{body: confirmBody(), key: validKey}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			requireContract(t, http.MethodPost, confirmPath, sendConfirm(c.useCase, c.a))
 		})
 	}
 }
