@@ -35,6 +35,7 @@ func TestLogoutEndToEndAgainstTheDatabaseAndRedis(t *testing.T) {
 		t.Skip("AUTH_TEST_DATABASE_URL and AUTH_TEST_REDIS_URL are not set: the end-to-end test needs PostgreSQL with the csp-auth-db migrations and the Redis of csp-infra-redis")
 	}
 	cfg := testConfig(t)
+	useRegistrationRelay(t, &cfg)
 	cfg.DatabaseURL = databaseURL
 	cfg.RedisURL = redisURL
 	cfg.BcryptRounds = 4
@@ -159,10 +160,13 @@ func TestLogoutEndToEndAgainstTheDatabaseAndRedis(t *testing.T) {
 // signUpUser registers a user with a unique email and returns the email, the id and the session.
 func signUpUser(t *testing.T, baseURL, name string) (email, id, access, refreshToken string) {
 	t.Helper()
+	if registrationRelay == nil {
+		return signUpUserDirectly(t, baseURL, name)
+	}
 	ids := system.UUIDGenerator{}
 	email = name + "-" + ids.NewID() + "@example.com"
 	body := fmt.Sprintf(`{"email":%q,"password":%q,"name":"Ada Lovelace","phone":"+573001234567","address":"Calle 1 # 2-3"}`, email, e2ePassword)
-	status, payload := register(t, baseURL, ids.NewID(), body)
+	status, payload := registerAccount(t, baseURL, ids.NewID(), body)
 	if status != http.StatusCreated {
 		t.Fatalf("register status = %d, want 201; body = %v", status, payload)
 	}

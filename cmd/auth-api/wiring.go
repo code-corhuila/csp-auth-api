@@ -104,7 +104,12 @@ func newRoutes(ctx context.Context, logger *slog.Logger, cfg config.Config, open
 		pool.Close()
 		return nil, noop, fmt.Errorf("register limit: %w", err)
 	}
-	options = append(options, httpapi.WithRegisterUser(newRegisterUser(cfg, pool, issuer, hasher), registerGate))
+	registration, closeRegistration, err := registrationRoutes(cfg, logger, pool, issuer, hasher, registerGate)
+	if err != nil {
+		pool.Close()
+		return nil, noop, err
+	}
+	options = append(options, registration)
 	logger.Info("register route enabled", "maxConcurrency", registerGate.Limit(), "queueTimeout", registerGate.Wait().String())
 	redisState, closeRedis, err := openRedisState(logger, cfg)
 	if err != nil {
@@ -168,6 +173,7 @@ func newRoutes(ctx context.Context, logger *slog.Logger, cfg config.Config, open
 		logger.Info("logout route enabled")
 	}
 	return build(options...), func() {
+		closeRegistration()
 		closePasswordReset()
 		closeRedis()
 		pool.Close()
@@ -253,21 +259,6 @@ func (noPasswordChangeAttempts) Locked(context.Context, string) (time.Duration, 
 func (noPasswordChangeAttempts) RecordFailure(context.Context, string) error { return nil }
 
 func (noPasswordChangeAttempts) Clear(context.Context, string) error { return nil }
-
-func newRegisterUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer, hasher out.PasswordHasher) *usecase.RegisterUser {
-	clock, ids := system.Clock{}, system.UUIDGenerator{}
-	return usecase.NewRegisterUser(usecase.RegisterUserPorts{
-		Users:        persistence.NewUserRepository(pool),
-		Keys:         persistence.NewIdempotencyKeyRepository(pool),
-		Outbox:       persistence.NewOutboxWriter(pool),
-		Hasher:       hasher,
-		IDs:          ids,
-		Clock:        clock,
-		Transactions: persistence.NewTransactionManager(pool),
-		Tokens:       issuer,
-		Sessions:     usecase.NewIssueRefreshToken(persistence.NewRefreshTokenRepository(pool), ids, clock, cfg.RefreshTokenTTL),
-	})
-}
 
 func newLoginUser(cfg config.Config, pool *pgxpool.Pool, issuer *token.Issuer, hasher out.PasswordHasher, state redisState) *usecase.LoginUser {
 	clock, ids := system.Clock{}, system.UUIDGenerator{}

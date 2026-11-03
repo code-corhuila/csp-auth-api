@@ -27,6 +27,7 @@ func TestListUsersEndToEndAgainstTheDatabase(t *testing.T) {
 	}
 	ctx := context.Background()
 	cfg := testConfig(t)
+	useRegistrationRelay(t, &cfg)
 	cfg.DatabaseURL = databaseURL
 	cfg.BcryptRounds = 4
 	cfg.JWTPrivateKey = generatedKeyPEM(t)
@@ -43,7 +44,7 @@ func TestListUsersEndToEndAgainstTheDatabase(t *testing.T) {
 	signUp := func(suffix string) (email, id, access string) {
 		email = prefix + suffix + "@example.com"
 		body := fmt.Sprintf(`{"email":%q,"password":%q,"name":"Ada Lovelace","phone":"+573001234567","address":"Calle 1 # 2-3"}`, email, e2ePassword)
-		status, payload := register(t, server.URL, ids.NewID(), body)
+		status, payload := registerAccount(t, server.URL, ids.NewID(), body)
 		if status != http.StatusCreated {
 			t.Fatalf("register status = %d, want 201; body = %v", status, payload)
 		}

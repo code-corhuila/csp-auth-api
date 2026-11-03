@@ -15,6 +15,8 @@ import (
 const (
 	subject            = "Código de verificación de tu correo"
 	passwordResetTopic = "Restablece tu contraseña"
+	registrationTopic  = "Confirma tu registro"
+	accountNoticeTopic = "Intento de registro con tu correo"
 	senderName         = "Cinesync Platform"
 )
 
@@ -37,6 +39,24 @@ func buildResetMessage(from, to, link string, expiresAt, now time.Time, messageI
 		"Hola,\r\n\r\nRecibimos una solicitud para restablecer tu contraseña. Abre este enlace para elegir una nueva:\r\n\r\n%s\r\n\r\n"+
 			"El enlace es válido durante %d %s y puede usarse una sola vez.\r\n\r\n"+
 			"Si no lo solicitaste, puedes ignorar este mensaje.\r\n", link, minutes, unit))
+}
+
+// buildRegistrationMessage writes the plain-text UTF-8 message in Spanish that carries the link to confirm a registration
+// (issue csp-docs#282), with the same rules as buildMessage.
+func buildRegistrationMessage(from, to, link string, expiresAt, now time.Time, messageID string) ([]byte, error) {
+	minutes, unit := lifetime(expiresAt, now)
+	return assemble(from, to, registrationTopic, now, messageID, fmt.Sprintf(
+		"Hola,\r\n\r\nRecibimos una solicitud para crear una cuenta con este correo. Abre este enlace para confirmarla:\r\n\r\n%s\r\n\r\n"+
+			"El enlace es válido durante %d %s y puede usarse una sola vez.\r\n\r\n"+
+			"Si no lo solicitaste, puedes ignorar este mensaje: no se creará ninguna cuenta.\r\n", link, minutes, unit))
+}
+
+// buildAccountNoticeMessage writes the plain-text UTF-8 message in Spanish that tells the owner of an account that someone
+// tried to register with their address (issue csp-docs#282). It carries no link and no secret.
+func buildAccountNoticeMessage(from, to string, now time.Time, messageID string) ([]byte, error) {
+	return assemble(from, to, accountNoticeTopic, now, messageID,
+		"Hola,\r\n\r\nAlguien intentó crear una cuenta con este correo, pero ya tienes una. No se creó nada y tu cuenta no cambió.\r\n\r\n"+
+			"Si fuiste tú, inicia sesión o usa \"Olvidé mi contraseña\". Si no, puedes ignorar este mensaje.\r\n")
 }
 
 // lifetime is the whole minutes left until expiresAt, never under one, with the Spanish word for them.

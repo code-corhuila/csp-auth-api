@@ -20,17 +20,17 @@ func openGate() *Bulkhead {
 // waitingRegister is a use case that waits for the context, like a request queued for a pooled database connection.
 type waitingRegister struct{}
 
-func (waitingRegister) Register(ctx context.Context, _ in.RegisterUserCommand) (in.RegisterUserResult, error) {
+func (waitingRegister) Request(ctx context.Context, _ in.RequestRegistrationCommand) (in.RequestRegistrationResult, error) {
 	<-ctx.Done()
-	return in.RegisterUserResult{}, fmt.Errorf("acquire a connection: %w", ctx.Err())
+	return in.RequestRegistrationResult{}, fmt.Errorf("acquire a connection: %w", ctx.Err())
 }
 
-func serveWithLimits(limits Limits, useCase in.RegisterUser, a attempt) *httptest.ResponseRecorder {
+func serveWithLimits(limits Limits, useCase in.RequestRegistration, a attempt) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(http.MethodPost, registerPath, strings.NewReader(a.body))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Idempotency-Key", validKey)
 	rec := httptest.NewRecorder()
-	WithLimits(NewHandler(WithRegisterUser(useCase, openGate())), limits).ServeHTTP(rec, request)
+	WithLimits(NewHandler(withRegister(useCase, openGate())), limits).ServeHTTP(rec, request)
 	return rec
 }
 
@@ -123,13 +123,13 @@ func TestWithoutLimitsTheHandlersUseTheFallback(t *testing.T) {
 }
 
 func TestRegisterAndLoginRefuseWith429WhenTheBulkheadIsFull(t *testing.T) {
-	registerUse, loginUse := &fakeRegister{result: createdSession()}, &fakeLogin{result: loggedInSession()}
+	registerUse, loginUse := &fakeRegister{result: requestedRegistration()}, &fakeLogin{result: loggedInSession()}
 	routes := map[string]struct {
 		send  func(*Bulkhead) *httptest.ResponseRecorder
 		calls *int
 	}{
 		"register": {func(gate *Bulkhead) *httptest.ResponseRecorder {
-			return sendGated(registerPath, validBody(), WithRegisterUser(registerUse, gate), true)
+			return sendGated(registerPath, validBody(), withRegister(registerUse, gate), true)
 		}, &registerUse.called},
 		"login": {func(gate *Bulkhead) *httptest.ResponseRecorder {
 			return sendGated(loginPath, loginBody(), WithLoginUser(loginUse, gate), false)
@@ -164,7 +164,7 @@ func TestAnInvalidRegisterOrLoginDoesNotTakeASlot(t *testing.T) {
 	release, _ := gate.Acquire(context.Background())
 	defer release()
 
-	registerRec := sendGated(registerPath, `{}`, WithRegisterUser(&fakeRegister{}, gate), true)
+	registerRec := sendGated(registerPath, `{}`, withRegister(&fakeRegister{}, gate), true)
 	loginRec := sendGated(loginPath, `{}`, WithLoginUser(&fakeLogin{}, gate), false)
 
 	if registerRec.Code != http.StatusBadRequest || loginRec.Code != http.StatusBadRequest {
