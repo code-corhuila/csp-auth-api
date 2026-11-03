@@ -364,6 +364,7 @@ func newPurgeOldRecords(pool *pgxpool.Pool) *usecase.PurgeOldRecords {
 		persistence.NewPasswordResetPurger(pool),
 		persistence.NewPasswordResetKeyPurger(pool),
 		persistence.NewEmailChangeKeyPurger(pool),
+		persistence.NewRegistrationRequestPurger(pool),
 		system.Clock{},
 	)
 }

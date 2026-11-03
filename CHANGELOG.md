@@ -11,6 +11,12 @@ Everything below is in `develop`; it is promoted to `qa` and `main` only when it
 
 ### Added
 
+- Second step of the registration and its storage (code-corhuila/csp-docs#282, ADR-062): the use case `ConfirmRegistration` (redeems the token and creates the account, its
+  `CLIENT` role, the key and the `UserRegistered` event in one transaction; a replay of the key is `200` without tokens, another token is `IDEMPOTENCY_KEY_CONFLICT`, a used,
+  expired or unknown token is `ErrRegistrationRejected`), the adapter `RegistrationRequestRepository` over `auth.registration_request` (advisory lock per address, rolling count,
+  one pending request per address, the key as unique index) and the purge of `auth.registration_request` rows older than 7 days (ADR-030). Needs the migrations V041 to V045
+  of csp-auth-db. Not wired yet. Unit tests of the use case and of the purge; integration tests of the repository, including concurrent requests and confirmations.
+
 - First step of the registration that does not reveal which emails have an account (code-corhuila/csp-docs#282, STRIDE information disclosure, ADR-062, `auth-service.yaml`
   1.17.0): the domain `RegistrationRequest` (a pending registration with the digest of its token, valid 24 hours and single use, at most 3 requests per address in a rolling
   hour), the ports `RegistrationRequestRepository` and `RegistrationSender`, and the use case `RequestRegistration`, which does the same work for a free address and for one

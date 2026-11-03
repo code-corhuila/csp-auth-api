@@ -55,6 +55,13 @@ func NewEmailChangeKeyPurger(pool *pgxpool.Pool) out.PurgeableRecords {
 	return &agedRows{pool: pool, table: "auth.email_change_idempotency_key", key: "key", eligible: "created_at < $1", orderBy: "created_at, key"}
 }
 
+// NewRegistrationRequestPurger purges auth.registration_request rows created before the cutoff (ADR-030, issue
+// csp-docs#282). The rows of a registration that was never confirmed hold a password hash and contact data, so they are
+// not kept past the retention.
+func NewRegistrationRequestPurger(pool *pgxpool.Pool) out.PurgeableRecords {
+	return &agedRows{pool: pool, table: "auth.registration_request", key: "id", eligible: "created_at < $1", orderBy: "created_at, id"}
+}
+
 // NewEmailVerificationPurger purges auth.email_verification rows that expired before the cutoff,
 // whether they were verified or not (ADR-030). The code is stored in clear, so the rows are
 // not kept past the retention.

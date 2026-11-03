@@ -23,7 +23,7 @@ const day = 24 * time.Hour
 // rows first, so the counts of the test are its own.
 type purgeFixture struct {
 	fixture
-	outbox, tokens, keys, verifications, resets, resetKeys, emailKeys *agedRows
+	outbox, tokens, keys, verifications, resets, resetKeys, emailKeys, registrations *agedRows
 }
 
 func newPurgeFixture(t *testing.T) purgeFixture {
@@ -49,6 +49,7 @@ func newPurgeFixture(t *testing.T) purgeFixture {
 		resets:        NewPasswordResetPurger(f.pool).(*agedRows),
 		resetKeys:     NewPasswordResetKeyPurger(f.pool).(*agedRows),
 		emailKeys:     NewEmailChangeKeyPurger(f.pool).(*agedRows),
+		registrations: NewRegistrationRequestPurger(f.pool).(*agedRows),
 	}
 	p.drain(t)
 	return p
@@ -60,7 +61,7 @@ func (p purgeFixture) drain(t *testing.T) {
 	for _, step := range []struct {
 		records *agedRows
 		cutoff  time.Time
-	}{{p.outbox, now.Add(-30 * day)}, {p.tokens, now.Add(-30 * day)}, {p.keys, now.Add(-7 * day)}, {p.verifications, now.Add(-7 * day)}, {p.resets, now.Add(-7 * day)}, {p.resetKeys, now.Add(-7 * day)}, {p.emailKeys, now.Add(-7 * day)}} {
+	}{{p.outbox, now.Add(-30 * day)}, {p.tokens, now.Add(-30 * day)}, {p.keys, now.Add(-7 * day)}, {p.verifications, now.Add(-7 * day)}, {p.resets, now.Add(-7 * day)}, {p.resetKeys, now.Add(-7 * day)}, {p.emailKeys, now.Add(-7 * day)}, {p.registrations, now.Add(-7 * day)}} {
 		for {
 			deleted, err := step.records.DeleteOlderThan(context.Background(), step.cutoff, 500)
 			if err != nil {
@@ -187,6 +188,19 @@ func (p purgeFixture) seedEmailKey(t *testing.T, age time.Duration) string {
 	return key
 }
 
+// seedRegistration stores a registration request of the given age that created nothing, as one is left for an address with an
+// account.
+func (p purgeFixture) seedRegistration(t *testing.T, age time.Duration) string {
+	t.Helper()
+	id := newUUID(t)
+	if _, err := p.pool.Exec(context.Background(),
+		`INSERT INTO auth.registration_request (id, idempotency_key, request_hash, email, created_at) VALUES ($1, $2, repeat('a', 64), $3, $4)`,
+		id, "purge-"+id, "purge-"+id+"@example.com", time.Now().Add(-age)); err != nil {
+		t.Fatalf("seed a registration request: %v", err)
+	}
+	return id
+}
+
 func (p purgeFixture) present(t *testing.T, table, column, id string) bool {
 	t.Helper()
 	var found bool
@@ -287,7 +301,7 @@ func TestPurgeUseCaseOverTheRealTablesIsBoundedByTheBatchSizeAndFinishesInTwoCal
 	youngResetKey := p.seedResetKey(t, day)
 	emailKeys := []string{p.seedEmailKey(t, 8*day), p.seedEmailKey(t, 9*day)}
 	youngEmailKey := p.seedEmailKey(t, day)
-	purge := usecase.NewPurgeOldRecords(p.outbox, p.tokens, p.keys, p.verifications, p.resets, p.resetKeys, p.emailKeys, system.Clock{})
+	purge := usecase.NewPurgeOldRecords(p.outbox, p.tokens, p.keys, p.verifications, p.resets, p.resetKeys, p.emailKeys, p.registrations, system.Clock{})
 
 	first, err := purge.Purge(ctx, in.PurgeOldRecordsCommand{BatchSize: 3})
 
@@ -393,6 +407,27 @@ func TestEmailChangeKeyPurgerDeletesOnlyKeysOlderThanTheCutoffAndOnlyUpToTheLimi
 	}
 	if left, _ := p.emailKeys.ExistOlderThan(ctx, cutoff); left || !p.present(t, "auth.email_change_idempotency_key", "key", young) {
 		t.Errorf("ExistOlderThan() = %v, young key present = %v, want false and true", left, p.present(t, "auth.email_change_idempotency_key", "key", young))
+	}
+}
+
+func TestRegistrationRequestPurgerDeletesOnlyRequestsOlderThanTheCutoffAndOnlyUpToTheLimit(t *testing.T) {
+	p, ctx := newPurgeFixture(t), context.Background()
+	old := []string{p.seedRegistration(t, 10*day), p.seedRegistration(t, 8*day)}
+	young := p.seedRegistration(t, 6*day)
+	cutoff := time.Now().Add(-7 * day)
+
+	first, err := p.registrations.DeleteOlderThan(ctx, cutoff, 1)
+	if err != nil || first != 1 || p.present(t, "auth.registration_request", "id", old[0]) || !p.present(t, "auth.registration_request", "id", old[1]) {
+		t.Fatalf("DeleteOlderThan(limit 1) = %d, %v, want only the oldest request to go", first, err)
+	}
+	if left, _ := p.registrations.ExistOlderThan(ctx, cutoff); !left {
+		t.Error("ExistOlderThan() = false, want true: one old request is left")
+	}
+	if rest, err := p.registrations.DeleteOlderThan(ctx, cutoff, 5); err != nil || rest != 1 {
+		t.Fatalf("second DeleteOlderThan(limit 5) = %d, %v, want the 1 left", rest, err)
+	}
+	if left, _ := p.registrations.ExistOlderThan(ctx, cutoff); left || !p.present(t, "auth.registration_request", "id", young) {
+		t.Errorf("ExistOlderThan() = %v, young request present = %v, want false and true", left, p.present(t, "auth.registration_request", "id", young))
 	}
 }
 
