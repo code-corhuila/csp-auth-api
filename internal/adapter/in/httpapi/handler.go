@@ -4,17 +4,32 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/code-corhuila/csp-auth-api/internal/application/port/in"
 )
 
 // BasePath is the prefix of every route of the service (see the auth-service contract).
 const BasePath = "/api/v1/auth"
 
-// NewHandler returns the router of the service.
-func NewHandler() http.Handler {
+// Option adds a route whose use case the composition root provides.
+type Option func(*http.ServeMux)
+
+// WithPublicKeys publishes keys at GET /jwks, public and without authentication.
+func WithPublicKeys(keys in.PublicKeys) Option {
+	return func(mux *http.ServeMux) {
+		mux.HandleFunc("GET "+BasePath+"/jwks", jwks(keys))
+	}
+}
+
+// NewHandler returns the router of the service, wrapped by the root step (correlation id, error envelope, recover).
+func NewHandler(options ...Option) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+BasePath+"/health", health)
 	mux.HandleFunc("GET "+BasePath+"/health/ready", ready)
-	return mux
+	for _, option := range options {
+		option(mux)
+	}
+	return root(mux)
 }
 
 func health(w http.ResponseWriter, _ *http.Request) {

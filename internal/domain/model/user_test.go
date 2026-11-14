@@ -13,7 +13,10 @@ func newTestUser(t *testing.T, roles ...Role) *User {
 	if err != nil {
 		t.Fatalf("NewEmail() error = %v", err)
 	}
-	user, err := NewUser("550e8400-e29b-41d4-a716-446655440000", email, validHash, roles)
+	phone, _ := NewPhone("3001234567")
+	address, _ := NewAddress("Calle 123 #45-67")
+	name, _ := NewName("Ana Pérez")
+	user, err := NewUser("550e8400-e29b-41d4-a716-446655440000", name, email, validHash, phone, address, roles)
 	if err != nil {
 		t.Fatalf("NewUser() error = %v", err)
 	}
@@ -33,6 +36,23 @@ func TestNewUserStartsActiveAndCanAuthenticate(t *testing.T) {
 	}
 }
 
+func TestNewUserKeepsContactData(t *testing.T) {
+	user := newTestUser(t, RoleClient)
+	if got := user.Phone().String(); got != "3001234567" {
+		t.Errorf("Phone() = %q, want 3001234567", got)
+	}
+	if got := user.Address().String(); got != "Calle 123 #45-67" {
+		t.Errorf("Address() = %q, want Calle 123 #45-67", got)
+	}
+}
+
+func TestNewUserKeepsItsName(t *testing.T) {
+	user := newTestUser(t, RoleClient)
+	if got := user.Name().String(); got != "Ana Pérez" {
+		t.Errorf("Name() = %q, want Ana Pérez", got)
+	}
+}
+
 func TestNewUserKeepsEachRoleOnce(t *testing.T) {
 	user := newTestUser(t, RoleClient, RoleClient, RoleAdmin)
 	if got := len(user.Roles()); got != 2 {
@@ -42,6 +62,9 @@ func TestNewUserKeepsEachRoleOnce(t *testing.T) {
 
 func TestNewUserRejectsInvalidInput(t *testing.T) {
 	email, _ := NewEmail("dev@example.com")
+	phone, _ := NewPhone("3001234567")
+	address, _ := NewAddress("Calle 123 #45-67")
+	userName, _ := NewName("Ana Pérez")
 	cases := map[string]struct {
 		id    string
 		hash  string
@@ -56,7 +79,7 @@ func TestNewUserRejectsInvalidInput(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := NewUser(c.id, email, c.hash, c.roles); !errors.Is(err, c.want) {
+			if _, err := NewUser(c.id, userName, email, c.hash, phone, address, c.roles); !errors.Is(err, c.want) {
 				t.Fatalf("NewUser() error = %v, want %v", err, c.want)
 			}
 		})
@@ -88,5 +111,57 @@ func TestRolesReturnsACopy(t *testing.T) {
 	user.Roles()[0] = RoleAdmin
 	if user.HasRole(RoleAdmin) {
 		t.Error("changing the returned slice must not change the user")
+	}
+}
+
+func TestUserExposesItsIdentity(t *testing.T) {
+	user := newTestUser(t, RoleClient)
+	if got := user.ID(); got != "550e8400-e29b-41d4-a716-446655440000" {
+		t.Errorf("ID() = %q, want the id given to NewUser", got)
+	}
+	if got := user.Email().String(); got != "dev@example.com" {
+		t.Errorf("Email() = %q, want dev@example.com", got)
+	}
+	if got := user.PasswordHash(); got != validHash {
+		t.Errorf("PasswordHash() = %q, want the hash given to NewUser", got)
+	}
+}
+
+func TestRestoreUserKeepsTheStoredStatusAndContactData(t *testing.T) {
+	email, _ := NewEmail("dev@example.com")
+	name, _ := NewName("Ana Pérez")
+
+	user, err := RestoreUser("user-1", name, email, validHash, Phone{}, Address{}, []Role{RoleClient, RoleClient}, UserLocked)
+
+	if err != nil {
+		t.Fatalf("RestoreUser() error = %v", err)
+	}
+	if user.Status() != UserLocked || user.EnsureCanAuthenticate() != ErrUserLocked {
+		t.Errorf("status = %v, want LOCKED", user.Status())
+	}
+	if user.Phone().String() != "" || len(user.Roles()) != 1 {
+		t.Errorf("phone = %q roles = %v, want empty phone and one role", user.Phone(), user.Roles())
+	}
+}
+
+func TestRestoreUserKeepsTheInvariants(t *testing.T) {
+	email, _ := NewEmail("dev@example.com")
+	name, _ := NewName("Ana Pérez")
+	cases := map[string]struct {
+		id, hash string
+		roles    []Role
+		status   UserStatus
+		want     error
+	}{
+		"empty id":       {"", validHash, []Role{RoleClient}, UserActive, ErrInvalidUserID},
+		"plain password": {"u", "Secret123", []Role{RoleClient}, UserActive, ErrInvalidPasswordHash},
+		"no roles":       {"u", validHash, nil, UserActive, ErrNoRoles},
+		"unknown role":   {"u", validHash, []Role{"ROOT"}, UserActive, ErrUnknownRole},
+		"unknown status": {"u", validHash, []Role{RoleClient}, "DELETED", ErrInvalidUserStatus},
+	}
+	for name_, c := range cases {
+		if _, err := RestoreUser(c.id, name, email, c.hash, Phone{}, Address{}, c.roles, c.status); !errors.Is(err, c.want) {
+			t.Errorf("%s: error = %v, want %v", name_, err, c.want)
+		}
 	}
 }

@@ -1,0 +1,9 @@
+# Placeholder of the profile `mail-relay` of compose.yml, used only when MAILPIT_RELAY_FILE is not set: the host does not exist, so
+# nothing can be relayed. The real file (host, port, STARTTLS, user and password of the provider) is rendered by
+# csp-infra-postgres/scripts/mailpit-relay.sh into a git-ignored file and never goes in this repository.
+host: relay.invalid
+port: 587
+starttls: true
+auth: plain
+username: unused
+password: unused
